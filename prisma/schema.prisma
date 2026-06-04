@@ -1,0 +1,11 @@
+// Prisma is configured for PostgreSQL/Neon. Add models after the baseball data
+// model is approved in an OpenSpec change.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
