@@ -10,7 +10,7 @@
 
 ## 2. Verification
 
-- [ ] Run Prisma validation/generation.
-- [ ] Run typecheck.
-- [ ] Run tests.
-- [ ] Run compliance review.
+- [x] Run Prisma validation/generation.
+- [x] Run typecheck.
+- [x] Run tests.
+- [x] Run compliance review.

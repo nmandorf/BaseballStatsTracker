@@ -7,8 +7,10 @@ import {
   loadFirstGameState,
   subscribeFirstGameState,
 } from "@/lib/firstGameStorage";
+import { useActiveTeam } from "@/lib/teamStorage";
 
 export function useFirstGameState() {
+  const activeTeam = useActiveTeam();
   const state = useSyncExternalStore(
     subscribeFirstGameState,
     loadFirstGameState,
@@ -16,8 +18,12 @@ export function useFirstGameState() {
   );
 
   useEffect(() => {
-    hydrateFirstGameStateFromPrisma();
-  }, []);
+    if (!activeTeam?.id) {
+      return;
+    }
+
+    hydrateFirstGameStateFromPrisma({ force: true });
+  }, [activeTeam?.id]);
 
   return state;
 }

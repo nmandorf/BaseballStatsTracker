@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { getMissingFirebaseConfig } from "@/lib/firebase";
+import { hydrateFirstGameStateFromPrisma } from "@/lib/firstGameStorage";
 import { hydrateActiveTeamFromBackend } from "@/lib/teamStorage";
 
 type AuthGateProps = {
@@ -18,9 +19,13 @@ export function AuthGate({ children }: AuthGateProps) {
   const loginHref = `/login?next=${encodeURIComponent(pathname ?? "/roster")}`;
 
   useEffect(() => {
-    if (user) {
-      void hydrateActiveTeamFromBackend();
+    if (!user) {
+      return;
     }
+
+    void hydrateActiveTeamFromBackend().then(() => {
+      hydrateFirstGameStateFromPrisma({ force: true });
+    });
   }, [user]);
 
   if (isLoading) {
