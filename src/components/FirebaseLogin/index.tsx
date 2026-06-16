@@ -3,7 +3,15 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { ArrowRight, CircleDotDashed, Plus, RefreshCw, UsersRound } from "lucide-react";
+import {
+  ArrowRight,
+  CircleDotDashed,
+  LockKeyhole,
+  Mail,
+  Plus,
+  RefreshCw,
+  UsersRound,
+} from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 import { hydrateFirstGameStateFromPrisma } from "@/lib/firstGameStorage";
 import {
@@ -22,21 +30,97 @@ import { cn } from "@/lib/utils";
 import type { ActiveTeam } from "@/types/player";
 
 const firebaseUiContainerId = "firebaseui-auth-container";
+const unauthorizedDomainCode = "auth/unauthorized-domain";
 
-function getSafeRedirect(path: string | null) {
+type FirebaseLoginProps = {
+  defaultRedirect?: string;
+  onTeamSelected?: (team: ActiveTeam) => void;
+  showHomeLink?: boolean;
+};
+
+type FirebaseAuthError = {
+  code?: string;
+  message?: string;
+};
+
+type EmailAuthMode = "login" | "create";
+
+function getSafeRedirect(path: string | null, fallback: string) {
   if (!path || !path.startsWith("/") || path.startsWith("//")) {
-    return "/roster";
+    return fallback;
   }
 
   return path;
 }
 
-export function FirebaseLogin() {
+function isFirebaseAuthError(error: unknown): error is FirebaseAuthError {
+  return Boolean(error) && typeof error === "object";
+}
+
+function getCurrentAuthHost() {
+  if (typeof window === "undefined") {
+    return "this app domain";
+  }
+
+  return window.location.host;
+}
+
+function getFirebaseAuthErrorMessage(error: unknown) {
+  if (!isFirebaseAuthError(error)) {
+    return "Firebase sign-in could not start.";
+  }
+
+  const errorCode = error.code ?? "";
+  const errorMessage = error.message ?? "";
+
+  if (
+    errorCode === unauthorizedDomainCode ||
+    errorMessage.includes(unauthorizedDomainCode) ||
+    errorMessage.toLowerCase().includes("domain is not authorized")
+  ) {
+    return `Google sign-in is blocked because ${getCurrentAuthHost()} is not authorized for this Firebase project. Add this host in Firebase Console > Authentication > Settings > Authorized domains, then try again.`;
+  }
+
+  if (errorCode.startsWith("auth/")) {
+    return `Firebase sign-in could not complete (${errorCode}). Try again or check the Firebase Authentication provider settings.`;
+  }
+
+  return "Firebase sign-in could not complete. Try again or check the Firebase Authentication provider settings.";
+}
+
+function getEmailAuthErrorMessage(error: unknown) {
+  if (!isFirebaseAuthError(error)) {
+    return "Email sign-in could not complete. Check your email and password, then try again.";
+  }
+
+  switch (error.code) {
+    case "auth/email-already-in-use":
+      return "That email already has an account. Use Log in instead.";
+    case "auth/invalid-credential":
+    case "auth/user-not-found":
+    case "auth/wrong-password":
+      return "That email and password did not match an existing account.";
+    case "auth/invalid-email":
+      return "Enter a valid email address.";
+    case "auth/weak-password":
+      return "Use a password with at least 6 characters.";
+    case "auth/operation-not-allowed":
+      return "Email/password sign-in is not enabled for this Firebase project.";
+    default:
+      return "Email sign-in could not complete. Check your email and password, then try again.";
+  }
+}
+
+export function FirebaseLogin({
+  defaultRedirect = "/roster",
+  onTeamSelected,
+  showHomeLink = true,
+}: FirebaseLoginProps) {
   const searchParams = useSearchParams();
   const { isConfigured, isLoading, user } = useAuth();
   const uiStarted = useRef(false);
   const [error, setError] = useState<string | null>(null);
-  const redirectTo = getSafeRedirect(searchParams?.get("next") ?? null);
+  const redirectTo = getSafeRedirect(searchParams?.get("next") ?? null, defaultRedirect);
 
   useEffect(() => {
     if (!isConfigured || isLoading || user || uiStarted.current) {
@@ -59,6 +143,11 @@ export function FirebaseLogin() {
 
         existingUi.start(`#${firebaseUiContainerId}`, {
           callbacks: {
+            signInFailure: (nextError) => {
+              setError(getFirebaseAuthErrorMessage(nextError));
+
+              return Promise.resolve();
+            },
             signInSuccessWithAuthResult: () => {
               return false;
             },
@@ -71,21 +160,13 @@ export function FirebaseLogin() {
                 prompt: "select_account",
               },
             },
-            {
-              provider: firebase.auth.EmailAuthProvider.PROVIDER_ID,
-              requireDisplayName: false,
-            },
           ],
           tosUrl: "/",
           privacyPolicyUrl: "/",
         });
         uiStarted.current = true;
       } catch (nextError) {
-        setError(
-          nextError instanceof Error
-            ? nextError.message
-            : "Firebase sign-in could not start.",
-        );
+        setError(getFirebaseAuthErrorMessage(nextError));
       }
     }
 
@@ -115,10 +196,10 @@ export function FirebaseLogin() {
           </div>
           <div className="grid gap-2">
             <h1 className="text-3xl font-black tracking-normal">
-              Sign in to your team&apos;s stats.
+              Sign in or create your team account.
             </h1>
             <p className="max-w-md text-sm font-semibold text-white/78">
-              Google or email sign-in keeps roster, game setup, batting order, and stat entry behind a familiar team login.
+              Use Google, or use email to log in if you already have an account or sign up if you are new.
             </p>
           </div>
         </div>
@@ -134,7 +215,7 @@ export function FirebaseLogin() {
             <p className="text-sm font-medium text-[var(--muted-foreground)]">
               {user
                 ? "Pick an existing team or create a new one. Roster and stat saves will use the selected team record."
-                : "You'll choose a team after sign-in. Email sign-in works even if you do not use Google."}
+                : "Use Google, log in with an existing email account, or create a new email account. You'll choose a team after signing in."}
             </p>
           </div>
 
@@ -151,31 +232,178 @@ export function FirebaseLogin() {
           ) : null}
 
           {isConfigured && !user ? (
-            <div
-              className="min-h-24"
-              id={firebaseUiContainerId}
-            />
+            <div className="grid gap-4">
+              <div
+                className="min-h-16"
+                id={firebaseUiContainerId}
+              />
+              <EmailPasswordAuthForm />
+            </div>
           ) : null}
 
           {isConfigured && user ? (
-            <SignedInTeamSelector redirectTo={redirectTo} />
+            <SignedInTeamSelector
+              onTeamSelected={onTeamSelected}
+              redirectTo={redirectTo}
+            />
           ) : null}
 
-          <div className="mt-5 border-t border-[var(--border)] pt-4">
-            <Link
-              className="text-sm font-bold text-[var(--accent)]"
-              href="/"
-            >
-              Back to home
-            </Link>
-          </div>
+          {showHomeLink ? (
+            <div className="mt-5 border-t border-[var(--border)] pt-4">
+              <Link
+                className="text-sm font-bold text-[var(--accent)]"
+                href="/"
+              >
+                Back to home
+              </Link>
+            </div>
+          ) : null}
         </div>
       </div>
     </section>
   );
 }
 
-function SignedInTeamSelector({ redirectTo }: { redirectTo: string }) {
+function EmailPasswordAuthForm() {
+  const [mode, setMode] = useState<EmailAuthMode>("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const isLoginMode = mode === "login";
+
+  async function submitEmailAuth(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const trimmedEmail = email.trim();
+
+    if (!trimmedEmail || !password) {
+      setEmailError("Email and password are required.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    setEmailError(null);
+
+    try {
+      const auth = getFirebaseAuth();
+
+      if (isLoginMode) {
+        await auth.signInWithEmailAndPassword(trimmedEmail, password);
+      } else {
+        await auth.createUserWithEmailAndPassword(trimmedEmail, password);
+      }
+    } catch (nextError) {
+      setEmailError(getEmailAuthErrorMessage(nextError));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function switchMode(nextMode: EmailAuthMode) {
+    setMode(nextMode);
+    setEmailError(null);
+  }
+
+  return (
+    <form
+      className="grid gap-4 rounded-lg border border-[var(--border)] bg-[var(--background)] p-4"
+      onSubmit={submitEmailAuth}
+    >
+      <div className="grid gap-2">
+        <div className="grid grid-cols-2 gap-2 rounded-lg bg-[var(--surface)] p-1">
+          <button
+            className={cn(
+              "inline-flex min-h-11 items-center justify-center rounded-md px-3 text-sm font-bold transition",
+              isLoginMode
+                ? "bg-[var(--accent)] text-white shadow-sm shadow-[var(--accent)]/15"
+                : "text-[var(--muted-foreground)] hover:bg-[var(--card)] hover:text-foreground",
+            )}
+            onClick={() => switchMode("login")}
+            type="button"
+          >
+            Log in
+          </button>
+          <button
+            className={cn(
+              "inline-flex min-h-11 items-center justify-center rounded-md px-3 text-sm font-bold transition",
+              !isLoginMode
+                ? "bg-[var(--accent)] text-white shadow-sm shadow-[var(--accent)]/15"
+                : "text-[var(--muted-foreground)] hover:bg-[var(--card)] hover:text-foreground",
+            )}
+            onClick={() => switchMode("create")}
+            type="button"
+          >
+            Create account
+          </button>
+        </div>
+        <p className="text-sm font-medium text-[var(--muted-foreground)]">
+          {isLoginMode
+            ? "Use this if you already made an email/password account."
+            : "Use this once to make a new email/password account."}
+        </p>
+      </div>
+
+      <label className="grid gap-2">
+        <span className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-normal text-[var(--muted-foreground)]">
+          <Mail className="size-4 text-[var(--accent)]" aria-hidden="true" />
+          Email
+        </span>
+        <input
+          autoComplete="email"
+          className="min-h-12 rounded-lg border border-[var(--border)] bg-white px-3 text-base font-semibold text-foreground outline-none placeholder:text-[var(--muted-foreground)] focus:border-[var(--accent)]"
+          inputMode="email"
+          onChange={(event) => setEmail(event.target.value)}
+          placeholder="you@example.com"
+          type="email"
+          value={email}
+        />
+      </label>
+
+      <label className="grid gap-2">
+        <span className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-normal text-[var(--muted-foreground)]">
+          <LockKeyhole className="size-4 text-[var(--accent)]" aria-hidden="true" />
+          Password
+        </span>
+        <input
+          autoComplete={isLoginMode ? "current-password" : "new-password"}
+          className="min-h-12 rounded-lg border border-[var(--border)] bg-white px-3 text-base font-semibold text-foreground outline-none placeholder:text-[var(--muted-foreground)] focus:border-[var(--accent)]"
+          minLength={6}
+          onChange={(event) => setPassword(event.target.value)}
+          placeholder={isLoginMode ? "Password" : "At least 6 characters"}
+          type="password"
+          value={password}
+        />
+      </label>
+
+      {emailError ? (
+        <div className="rounded-lg border border-[var(--danger)]/25 bg-[var(--danger-soft)] p-3 text-sm font-semibold text-[var(--danger)]">
+          {emailError}
+        </div>
+      ) : null}
+
+      <button
+        className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white shadow-sm shadow-[var(--accent)]/20 disabled:opacity-60"
+        disabled={isSubmitting}
+        type="submit"
+      >
+        {isSubmitting
+          ? "Working..."
+          : isLoginMode
+            ? "Log in with email"
+            : "Create email account"}
+        <ArrowRight className="size-4" aria-hidden="true" />
+      </button>
+    </form>
+  );
+}
+
+function SignedInTeamSelector({
+  onTeamSelected,
+  redirectTo,
+}: {
+  onTeamSelected?: (team: ActiveTeam) => void;
+  redirectTo: string;
+}) {
   const router = useRouter();
   const [teams, setTeams] = useState<ActiveTeam[]>([]);
   const [activeTeamId, setActiveTeamId] = useState<string | null>(null);
@@ -231,6 +459,7 @@ function SignedInTeamSelector({ redirectTo }: { redirectTo: string }) {
     saveActiveTeam(team);
     savePregameSetup(createDefaultPregameSetup(team));
     hydrateFirstGameStateFromPrisma({ force: true });
+    onTeamSelected?.(team);
     router.replace(redirectTo);
   }
 
@@ -251,6 +480,7 @@ function SignedInTeamSelector({ redirectTo }: { redirectTo: string }) {
       saveActiveTeam(team);
       savePregameSetup(createDefaultPregameSetup(team));
       hydrateFirstGameStateFromPrisma({ force: true });
+      onTeamSelected?.(team);
       setTeams((currentTeams) => [
         team,
         ...currentTeams.filter((currentTeam) => currentTeam.id !== team.id),

@@ -1,13 +1,10 @@
 import { AppShell } from "@/components/AppShell";
-import { getQuickScoresSchedule } from "@/lib/quickscoresSchedule";
-import { HomeHeroSection } from "@/sections/HomeHeroSection";
+import { HomeAuthEntry } from "@/components/HomeAuthEntry";
 
-export async function HomePage() {
-  const schedule = await getQuickScoresSchedule();
-
+export function HomePage() {
   return (
     <AppShell activeNav="home">
-      <HomeHeroSection schedule={schedule} />
+      <HomeAuthEntry />
     </AppShell>
   );
 }
