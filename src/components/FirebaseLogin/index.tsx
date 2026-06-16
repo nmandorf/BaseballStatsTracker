@@ -476,7 +476,7 @@ function SignedInTeamSelector({
     setTeamError(null);
 
     try {
-      const team = await createBackendTeam(nextTeamName, { fallbackToLocal: false });
+      const team = await createBackendTeam(nextTeamName);
       saveActiveTeam(team);
       savePregameSetup(createDefaultPregameSetup(team));
       hydrateFirstGameStateFromPrisma({ force: true });

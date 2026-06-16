@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   createActiveTeam,
+  createBackendTeam,
   createEmptyPlayerInput,
   createPlayerFromInput,
   createZeroPlayerStats,
@@ -97,4 +98,20 @@ test("active team persistence starts empty and round-trips saved teams", () => {
   resetActiveTeam();
   assert.equal(loadActiveTeam(), null);
   delete global.window;
+});
+
+test("createBackendTeam returns a usable local team when the backend is unavailable", async () => {
+  const originalFetch = global.fetch;
+
+  global.fetch = async () => new Response(null, { status: 503 });
+
+  try {
+    const team = await createBackendTeam("Fallback Crew");
+
+    assert.equal(team.name, "Fallback Crew");
+    assert.equal(team.id, "fallback-crew");
+    assert.deepEqual(team.players, []);
+  } finally {
+    global.fetch = originalFetch;
+  }
 });
