@@ -6,6 +6,7 @@ import {
 } from "@/generated/prisma/enums";
 import { notFoundError, validationError } from "@/lib/appErrors";
 import { getPrisma } from "@/lib/prisma";
+import { legacyTeamAccount, type TeamAccount } from "@/lib/teamAccount";
 import type { ActiveTeam, BattingSide, Player, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
 import type { PlayerStats } from "@/types/stats";
 
@@ -13,9 +14,10 @@ const defaultSeasonYear = new Date().getFullYear();
 
 type TeamWithPlayers = Awaited<ReturnType<typeof fetchTeamById>>;
 
-export async function listTeamsFromBackend() {
+export async function listTeamsFromBackend(account: TeamAccount = legacyTeamAccount) {
   const prisma = getPrisma();
   const teams = await prisma.team.findMany({
+    where: { ownerUid: account.uid },
     orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
     include: teamInclude(),
   });
@@ -23,11 +25,15 @@ export async function listTeamsFromBackend() {
   return teams.map((team) => serializeTeam(team));
 }
 
-export async function loadTeamFromBackend(teamId?: string) {
+export async function loadTeamFromBackend(
+  teamId?: string,
+  account: TeamAccount = legacyTeamAccount,
+) {
   const prisma = getPrisma();
   const team = teamId
-    ? await fetchTeamById(teamId)
+    ? await fetchTeamById(teamId, account)
     : await prisma.team.findFirst({
+        where: { ownerUid: account.uid },
         orderBy: { updatedAt: "desc" },
         include: teamInclude(),
       });
@@ -35,7 +41,11 @@ export async function loadTeamFromBackend(teamId?: string) {
   return team ? serializeTeam(team) : null;
 }
 
-export async function createTeamInBackend(name: string, seasonYear = defaultSeasonYear) {
+export async function createTeamInBackend(
+  name: string,
+  account: TeamAccount = legacyTeamAccount,
+  seasonYear = defaultSeasonYear,
+) {
   const teamName = name.trim();
 
   if (!teamName) {
@@ -45,9 +55,21 @@ export async function createTeamInBackend(name: string, seasonYear = defaultSeas
   const prisma = getPrisma();
   const team = await prisma.$transaction(async (tx) => {
     const savedTeam = await tx.team.upsert({
-      where: { name: teamName },
-      create: { name: teamName },
-      update: { name: teamName },
+      where: {
+        ownerUid_name: {
+          ownerUid: account.uid,
+          name: teamName,
+        },
+      },
+      create: {
+        name: teamName,
+        ownerUid: account.uid,
+        ownerEmail: account.email,
+      },
+      update: {
+        name: teamName,
+        ownerEmail: account.email,
+      },
     });
 
     await tx.season.upsert({
@@ -70,28 +92,38 @@ export async function createTeamInBackend(name: string, seasonYear = defaultSeas
     return savedTeam;
   });
 
-  return loadTeamFromBackend(team.id);
+  return loadTeamFromBackend(team.id, account);
 }
 
-export async function upsertActiveTeamInBackend(team: ActiveTeam, seasonYear = defaultSeasonYear) {
+export async function upsertActiveTeamInBackend(
+  team: ActiveTeam,
+  account: TeamAccount = legacyTeamAccount,
+  seasonYear = defaultSeasonYear,
+) {
   const prisma = getPrisma();
   let savedTeamId = team.id;
 
   await prisma.$transaction(async (tx) => {
     const existingTeam = await tx.team.findFirst({
       where: {
+        ownerUid: account.uid,
         OR: [{ id: team.id }, { name: team.name }],
       },
     });
     const savedTeam = existingTeam
       ? await tx.team.update({
           where: { id: existingTeam.id },
-          data: { name: team.name },
+          data: {
+            name: team.name,
+            ownerEmail: account.email,
+          },
         })
       : await tx.team.create({
           data: {
             id: team.id,
             name: team.name,
+            ownerUid: account.uid,
+            ownerEmail: account.email,
           },
         });
 
@@ -147,13 +179,14 @@ export async function upsertActiveTeamInBackend(team: ActiveTeam, seasonYear = d
     }
   });
 
-  return loadTeamFromBackend(savedTeamId);
+  return loadTeamFromBackend(savedTeamId, account);
 }
 
 export async function addPlayerToTeamInBackend(
   teamId: string,
   input: PlayerProfileInput,
   seedOrder?: number,
+  account: TeamAccount = legacyTeamAccount,
   seasonYear = defaultSeasonYear,
 ) {
   const playerName = input.name.trim();
@@ -165,8 +198,11 @@ export async function addPlayerToTeamInBackend(
   const prisma = getPrisma();
 
   await prisma.$transaction(async (tx) => {
-    const team = await tx.team.findUnique({
-      where: { id: teamId },
+    const team = await tx.team.findFirst({
+      where: {
+        id: teamId,
+        ownerUid: account.uid,
+      },
       include: { _count: { select: { players: true } } },
     });
 
@@ -224,7 +260,7 @@ export async function addPlayerToTeamInBackend(
     });
   });
 
-  return loadTeamFromBackend(teamId);
+  return loadTeamFromBackend(teamId, account);
 }
 
 export function createBackendPlayerFromInput(input: PlayerProfileInput, seedOrder: number): Player {
@@ -247,11 +283,17 @@ export function createBackendPlayerFromInput(input: PlayerProfileInput, seedOrde
   };
 }
 
-async function fetchTeamById(teamId: string) {
+async function fetchTeamById(
+  teamId: string,
+  account: TeamAccount = legacyTeamAccount,
+) {
   const prisma = getPrisma();
 
-  return prisma.team.findUnique({
-    where: { id: teamId },
+  return prisma.team.findFirst({
+    where: {
+      id: teamId,
+      ownerUid: account.uid,
+    },
     include: teamInclude(),
   });
 }
@@ -273,6 +315,8 @@ function teamInclude() {
 function serializeTeam(team: NonNullable<TeamWithPlayers>): ActiveTeam {
   return {
     id: team.id,
+    ownerUid: team.ownerUid,
+    ownerEmail: team.ownerEmail,
     name: team.name,
     players: team.players.map((player, index) => ({
       id: player.id,

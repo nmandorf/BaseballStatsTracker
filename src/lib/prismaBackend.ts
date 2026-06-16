@@ -16,6 +16,7 @@ import {
 } from "@/generated/prisma/enums";
 import { getPrisma } from "@/lib/prisma";
 import { defaultGameRules, seedPlayers, testTeamName } from "@/lib/seedTeam";
+import { legacyTeamAccount, type TeamAccount } from "@/lib/teamAccount";
 import { getPlayerGameStats, getTeamGameTotals, occupiedBaseEntries, type GameState } from "@/lib/gameEngine";
 import { addStats } from "@/lib/statCalculations";
 import type { BatterResult, LocalGameStatus, OutType } from "@/types/game";
@@ -28,6 +29,7 @@ type SaveFirstGameSnapshotOptions = {
   seasonYear?: number;
   gameDate?: Date;
   team?: ActiveTeam;
+  account?: TeamAccount;
 };
 
 type SavedFirstGameSnapshot = {
@@ -44,13 +46,25 @@ export function getFirstGameId(seasonYear = defaultSeasonYear, teamId = testTeam
   return `first-game-${teamId}-${seasonYear}`;
 }
 
-export async function ensureStarterTeam(seasonYear = defaultSeasonYear) {
+export async function ensureStarterTeam(
+  seasonYear = defaultSeasonYear,
+  account: TeamAccount = legacyTeamAccount,
+) {
   const prisma = getPrisma();
 
   return prisma.$transaction(async (tx) => {
     const team = await tx.team.upsert({
-      where: { name: testTeamName },
-      create: { name: testTeamName },
+      where: {
+        ownerUid_name: {
+          ownerUid: account.uid,
+          name: testTeamName,
+        },
+      },
+      create: {
+        name: testTeamName,
+        ownerUid: account.uid,
+        ownerEmail: account.email,
+      },
       update: {},
     });
     const season = await tx.season.upsert({
@@ -109,9 +123,10 @@ export async function saveFirstGameSnapshotToPrisma(
 ): Promise<SavedFirstGameSnapshot> {
   const prisma = getPrisma();
   const seasonYear = options.seasonYear ?? defaultSeasonYear;
+  const account = options.account ?? legacyTeamAccount;
 
   return prisma.$transaction(async (tx) => {
-    const team = await upsertSnapshotTeam(tx, options.team);
+    const team = await upsertSnapshotTeam(tx, options.team, account);
     const season = await tx.season.upsert({
       where: {
         teamId_year: {
@@ -343,10 +358,17 @@ export async function saveFirstGameSnapshotToPrisma(
 export async function loadFirstGameSnapshotFromPrisma(
   seasonYear = defaultSeasonYear,
   teamId = testTeamName,
+  account: TeamAccount = legacyTeamAccount,
 ) {
   const prisma = getPrisma();
+  const team = await findAccountTeam(prisma, teamId, account);
+
+  if (!team) {
+    return null;
+  }
+
   const game = await prisma.game.findUnique({
-    where: { id: getFirstGameId(seasonYear, teamId) },
+    where: { id: getFirstGameId(seasonYear, team.id) },
     select: { snapshot: true },
   });
 
@@ -356,12 +378,13 @@ export async function loadFirstGameSnapshotFromPrisma(
 export async function resetFirstGameSnapshotInPrisma(
   seasonYear = defaultSeasonYear,
   teamId = testTeamName,
+  account: TeamAccount = legacyTeamAccount,
 ) {
   const prisma = getPrisma();
 
   return prisma.$transaction(async (tx) => {
-    const team = await tx.team.findUnique({
-      where: teamId === testTeamName ? { name: testTeamName } : { id: teamId },
+    const team = await tx.team.findFirst({
+      where: teamLookupWhere(teamId, account),
       select: { id: true },
     });
 
@@ -378,25 +401,67 @@ export async function resetFirstGameSnapshotInPrisma(
 async function upsertSnapshotTeam(
   tx: Prisma.TransactionClient,
   activeTeam: ActiveTeam | undefined,
+  account: TeamAccount,
 ) {
   if (activeTeam) {
-    return tx.team.upsert({
-      where: { id: activeTeam.id },
-      create: {
+    const existingTeam = await tx.team.findFirst({
+      where: {
+        ownerUid: account.uid,
+        OR: [{ id: activeTeam.id }, { name: activeTeam.name }],
+      },
+    });
+
+    if (existingTeam) {
+      return tx.team.update({
+        where: { id: existingTeam.id },
+        data: {
+          name: activeTeam.name,
+          ownerEmail: account.email,
+        },
+      });
+    }
+
+    return tx.team.create({
+      data: {
         id: activeTeam.id,
         name: activeTeam.name,
-      },
-      update: {
-        name: activeTeam.name,
+        ownerUid: account.uid,
+        ownerEmail: account.email,
       },
     });
   }
 
   return tx.team.upsert({
-    where: { name: testTeamName },
-    create: { name: testTeamName },
+    where: {
+      ownerUid_name: {
+        ownerUid: account.uid,
+        name: testTeamName,
+      },
+    },
+    create: {
+      name: testTeamName,
+      ownerUid: account.uid,
+      ownerEmail: account.email,
+    },
     update: {},
   });
+}
+
+async function findAccountTeam(
+  prisma: ReturnType<typeof getPrisma>,
+  teamId: string,
+  account: TeamAccount,
+) {
+  return prisma.team.findFirst({
+    where: teamLookupWhere(teamId, account),
+    select: { id: true },
+  });
+}
+
+function teamLookupWhere(teamId: string, account: TeamAccount) {
+  return teamId === testTeamName
+    ? { name: testTeamName, ownerUid: account.uid }
+    : { id: teamId, ownerUid: account.uid };
 }
 
 function toPlayerCreate(teamId: string, player: Player) {

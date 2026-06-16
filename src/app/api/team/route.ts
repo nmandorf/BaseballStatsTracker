@@ -5,6 +5,7 @@ import {
   upsertActiveTeamInBackend,
 } from "@/lib/teamBackend";
 import { apiErrorResponse } from "@/lib/appErrors";
+import { readTeamAccountFromRequest } from "@/lib/teamAccount";
 import type { ActiveTeam } from "@/types/player";
 
 export const runtime = "nodejs";
@@ -16,16 +17,20 @@ type TeamPayload = {
 
 export async function GET(request: Request) {
   try {
+    const account = readTeamAccountFromRequest(request);
     const url = new URL(request.url);
     const shouldListTeams = url.searchParams.get("list") === "1";
 
     if (shouldListTeams) {
-      const teams = await listTeamsFromBackend();
+      const teams = await listTeamsFromBackend(account);
 
       return Response.json({ teams });
     }
 
-    const team = await loadTeamFromBackend(url.searchParams.get("teamId") ?? undefined);
+    const team = await loadTeamFromBackend(
+      url.searchParams.get("teamId") ?? undefined,
+      account,
+    );
 
     return Response.json({ team });
   } catch (error) {
@@ -35,10 +40,11 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const account = readTeamAccountFromRequest(request);
     const payload = (await request.json()) as TeamPayload;
     const team = payload.team
-      ? await upsertActiveTeamInBackend(payload.team)
-      : await createTeamInBackend(String(payload.name ?? ""));
+      ? await upsertActiveTeamInBackend(payload.team, account)
+      : await createTeamInBackend(String(payload.name ?? ""), account);
 
     return Response.json({ team }, { status: 201 });
   } catch (error) {

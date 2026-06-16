@@ -1,6 +1,6 @@
 import type { GameState } from "@/lib/gameEngine";
 import { createInitialGameState, upsertCompletedGame } from "@/lib/gameEngine";
-import { loadActiveTeam } from "@/lib/teamStorage";
+import { getTeamAccountHeaders, loadActiveTeam } from "@/lib/teamStorage";
 
 const storageKey = "baseball-tracker:first-game-state:v1";
 const completedGameHistoryStorageKey = "baseball-tracker:completed-game-history:v1";
@@ -192,6 +192,7 @@ export function hydrateFirstGameStateFromPrisma(options: { force?: boolean } = {
 
   fetch(`/api/first-game${query}`, {
     cache: "no-store",
+    headers: getTeamAccountHeaders(),
   })
     .then(async (response) => {
       if (!response.ok) {
@@ -244,9 +245,9 @@ function queueFirstGamePrismaSync(state: GameState) {
 
   fetch("/api/first-game", {
     method: "POST",
-    headers: {
+    headers: getTeamAccountHeaders({
       "Content-Type": "application/json",
-    },
+    }),
     body: JSON.stringify({
       state,
       team: activeTeam,
@@ -264,6 +265,7 @@ function queueFirstGamePrismaReset() {
 
   fetch(`/api/first-game${query}`, {
     method: "DELETE",
+    headers: getTeamAccountHeaders(),
   }).catch(() => {
     // Reset local state even if Prisma is unavailable.
   });

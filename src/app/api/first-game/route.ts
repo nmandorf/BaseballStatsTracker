@@ -5,6 +5,7 @@ import {
   saveFirstGameSnapshotToPrisma,
 } from "@/lib/prismaBackend";
 import { apiErrorResponse, validationError } from "@/lib/appErrors";
+import { readTeamAccountFromRequest } from "@/lib/teamAccount";
 import type { GameState } from "@/lib/gameEngine";
 import type { ActiveTeam } from "@/types/player";
 
@@ -17,10 +18,15 @@ type FirstGameSyncPayload = {
 
 export async function GET(request: Request) {
   try {
+    const account = readTeamAccountFromRequest(request);
     const url = new URL(request.url);
     const teamId = url.searchParams.get("teamId") ?? undefined;
-    const { team, season } = await ensureStarterTeam();
-    const state = await loadFirstGameSnapshotFromPrisma(season.year, teamId ?? team.id);
+    const { team, season } = await ensureStarterTeam(undefined, account);
+    const state = await loadFirstGameSnapshotFromPrisma(
+      season.year,
+      teamId ?? team.id,
+      account,
+    );
 
     return Response.json({
       team: {
@@ -41,9 +47,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const account = readTeamAccountFromRequest(request);
     const payload = await parseJson(request);
     const { state, team } = parseFirstGameSyncPayload(payload);
-    const saved = await saveFirstGameSnapshotToPrisma(state, { team });
+    const saved = await saveFirstGameSnapshotToPrisma(state, { team, account });
 
     return Response.json(saved, { status: 201 });
   } catch (error) {
@@ -53,9 +60,10 @@ export async function POST(request: Request) {
 
 export async function DELETE(request: Request) {
   try {
+    const account = readTeamAccountFromRequest(request);
     const url = new URL(request.url);
     const teamId = url.searchParams.get("teamId") ?? undefined;
-    const reset = await resetFirstGameSnapshotInPrisma(undefined, teamId);
+    const reset = await resetFirstGameSnapshotInPrisma(undefined, teamId, account);
 
     return Response.json(reset);
   } catch (error) {

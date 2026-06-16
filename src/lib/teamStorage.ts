@@ -2,6 +2,8 @@
 
 import { useSyncExternalStore } from "react";
 import { createZeroStats } from "./statCalculations.ts";
+import { getFirebaseAuth, isFirebaseConfigured } from "./firebase.ts";
+import { normalizeTeamAccount, teamAccountHeaders, type TeamAccount } from "./teamAccount.ts";
 import type { ActiveTeam, BattingSide, Player, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
 import type { PlayerStats } from "@/types/stats";
 
@@ -55,9 +57,12 @@ export function createPlayerFromInput(input: PlayerProfileInput, seedOrder: numb
 
 export function createActiveTeam(name: string, players: Player[]): ActiveTeam {
   const now = new Date().toISOString();
+  const account = getSignedInTeamAccount();
 
   return {
     id: createSlug(name.trim()) || `team-${Date.now()}`,
+    ownerUid: account?.uid,
+    ownerEmail: account?.email,
     name: name.trim(),
     players: players.map((player, index) => ({ ...player, seedOrder: index + 1 })),
     createdAt: now,
@@ -193,9 +198,9 @@ export async function createBackendTeam(
   try {
     const response = await fetch("/api/team", {
       method: "POST",
-      headers: {
+      headers: getTeamAccountHeaders({
         "Content-Type": "application/json",
-      },
+      }),
       body: JSON.stringify({ name }),
     });
 
@@ -220,7 +225,10 @@ export async function loadAvailableTeamsFromBackend() {
   const activeTeam = loadActiveTeam();
 
   try {
-    const response = await fetch("/api/team?list=1", { cache: "no-store" });
+    const response = await fetch("/api/team?list=1", {
+      cache: "no-store",
+      headers: getTeamAccountHeaders(),
+    });
 
     if (!response.ok) {
       return activeTeam ? [activeTeam] : [];
@@ -258,9 +266,9 @@ export async function addPlayerToBackendTeam(
   try {
     const response = await fetch(`/api/team/${encodeURIComponent(team.id)}/players`, {
       method: "POST",
-      headers: {
+      headers: getTeamAccountHeaders({
         "Content-Type": "application/json",
-      },
+      }),
       body: JSON.stringify({ input, seedOrder }),
     });
 
@@ -299,7 +307,10 @@ export async function hydrateActiveTeamFromBackend() {
   const query = activeTeam?.id ? `?teamId=${encodeURIComponent(activeTeam.id)}` : "";
 
   try {
-    const response = await fetch(`/api/team${query}`, { cache: "no-store" });
+    const response = await fetch(`/api/team${query}`, {
+      cache: "no-store",
+      headers: getTeamAccountHeaders(),
+    });
 
     if (!response.ok) {
       return activeTeam;
@@ -317,6 +328,10 @@ export async function hydrateActiveTeamFromBackend() {
   }
 
   return activeTeam;
+}
+
+export function getTeamAccountHeaders(baseHeaders: Record<string, string> = {}) {
+  return teamAccountHeaders(getSignedInTeamAccount(), baseHeaders);
 }
 
 function writeActiveTeam(team: Partial<ActiveTeam>) {
@@ -341,9 +356,9 @@ function writeActiveTeam(team: Partial<ActiveTeam>) {
 function queueActiveTeamBackendSync(team: ActiveTeam) {
   fetch("/api/team", {
     method: "POST",
-    headers: {
+    headers: getTeamAccountHeaders({
       "Content-Type": "application/json",
-    },
+    }),
     body: JSON.stringify({ team }),
   })
     .then(() => undefined)
@@ -361,6 +376,8 @@ function normalizeActiveTeam(team: Partial<ActiveTeam>): ActiveTeam | null {
 
   return {
     id: typeof team.id === "string" && team.id ? team.id : createSlug(team.name),
+    ownerUid: typeof team.ownerUid === "string" && team.ownerUid ? team.ownerUid : getSignedInTeamAccount()?.uid,
+    ownerEmail: typeof team.ownerEmail === "string" && team.ownerEmail ? team.ownerEmail : getSignedInTeamAccount()?.email,
     name: team.name.trim(),
     players: team.players
       .map((player, index) => normalizePlayer(player, index + 1))
@@ -368,6 +385,28 @@ function normalizeActiveTeam(team: Partial<ActiveTeam>): ActiveTeam | null {
     createdAt: typeof team.createdAt === "string" ? team.createdAt : now,
     updatedAt: typeof team.updatedAt === "string" ? team.updatedAt : now,
   };
+}
+
+function getSignedInTeamAccount(): TeamAccount | null {
+  if (
+    typeof window === "undefined" ||
+    typeof document === "undefined" ||
+    !isFirebaseConfigured()
+  ) {
+    return null;
+  }
+
+  try {
+    const user = getFirebaseAuth().currentUser;
+
+    if (!user) {
+      return null;
+    }
+
+    return normalizeTeamAccount(user.uid, user.email);
+  } catch {
+    return null;
+  }
 }
 
 function normalizePlayer(player: Partial<Player>, seedOrder: number): Player | null {

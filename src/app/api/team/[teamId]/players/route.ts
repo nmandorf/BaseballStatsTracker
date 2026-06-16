@@ -1,5 +1,6 @@
 import { addPlayerToTeamInBackend } from "@/lib/teamBackend";
 import { apiErrorResponse, validationError } from "@/lib/appErrors";
+import { readTeamAccountFromRequest } from "@/lib/teamAccount";
 import type { PlayerProfileInput } from "@/types/player";
 
 export const runtime = "nodejs";
@@ -14,6 +15,7 @@ export async function POST(
   context: { params: Promise<{ teamId: string }> },
 ) {
   try {
+    const account = readTeamAccountFromRequest(request);
     const { teamId } = await context.params;
     const payload = (await request.json()) as AddPlayerPayload;
 
@@ -21,7 +23,12 @@ export async function POST(
       throw validationError("PLAYER_INPUT_REQUIRED", "Player input is required.", { field: "input" });
     }
 
-    const team = await addPlayerToTeamInBackend(teamId, payload.input, payload.seedOrder);
+    const team = await addPlayerToTeamInBackend(
+      teamId,
+      payload.input,
+      payload.seedOrder,
+      account,
+    );
 
     return Response.json({ team }, { status: 201 });
   } catch (error) {

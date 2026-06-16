@@ -23,6 +23,8 @@ export type Player = {
 
 export type ActiveTeam = {
   id: string;
+  ownerUid?: string;
+  ownerEmail?: string | null;
   name: string;
   players: Player[];
   createdAt: string;
