@@ -46,3 +46,10 @@ yarn pm
 
 OpenSpec is initialized for Codex and Cursor. Use OpenSpec changes before
 building app features so implementation stays aligned with the approved spec.
+
+## Agent Workflow
+
+Project-specific agent instructions live in `AGENTS.md`. Engineering standards
+and the code-review checklist live in `docs/engineering-principles.md`; app
+implementation prompts should include a separate sub-agent compliance review
+when that capability is available.

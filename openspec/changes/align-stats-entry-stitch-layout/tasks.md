@@ -1,0 +1,5 @@
+- [x] Capture the Stitch MCP Stats Entry design brief.
+- [x] Add a focused OpenSpec change for the Stats Entry layout alignment.
+- [x] Update Stats Entry to use the fixed mobile-first Stitch flow.
+- [x] Apply matching visual tokens and component styling.
+- [x] Run validation and visually verify the live screen.

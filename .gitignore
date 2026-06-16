@@ -34,6 +34,10 @@ yarn-error.log*
 .env*
 !.env.example
 
+# local MCP credentials
+.cursor/mcp.json
+.codex/config.toml
+
 # vercel
 .vercel
 

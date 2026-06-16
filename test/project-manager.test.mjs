@@ -27,6 +27,7 @@ test("proposeOperations does not create duplicate tasks with matching normalized
     hasProjectManagerTests: true,
     hasAppEntrypoint: false,
     hasPrismaScaffold: true,
+    hasUiIntakeArtifact: true,
     hasDomainTypes: true,
     hasLineupRules: true,
     hasStatCalculations: true,
@@ -209,6 +210,110 @@ test("inspectProject detects the PM scaffold", () => {
   assert.equal(project.hasProjectManagerTests, true);
 });
 
+test("inspectProject detects the UI intake artifact", () => {
+  const rootDir = createProjectFixture();
+
+  assert.equal(inspectProject(rootDir).hasUiIntakeArtifact, false);
+
+  addUiIntakeArtifact(rootDir);
+
+  assert.equal(inspectProject(rootDir).hasUiIntakeArtifact, true);
+});
+
+test("buildProjectOverview includes the UI intake signal", () => {
+  const overview = buildProjectOverview({
+    ...createCompleteProjectSignals(),
+    hasUiIntakeArtifact: true
+  });
+
+  assert.match(overview, /UI intake artifact: yes/);
+});
+
+test("inspectProject detects functional first-game MVP signals", () => {
+  const rootDir = createProjectFixture();
+  mkdirSync(path.join(rootDir, "openspec", "changes", "build-first-game-functional-app"), { recursive: true });
+  mkdirSync(path.join(rootDir, "src", "lib"), { recursive: true });
+  mkdirSync(path.join(rootDir, "prisma"), { recursive: true });
+  writeFileSync(path.join(rootDir, "openspec", "changes", "build-first-game-functional-app", "proposal.md"), "# Build\n");
+  writeFileSync(path.join(rootDir, "src", "lib", "seedTeam.ts"), "export const seedPlayers = [];\n");
+  writeFileSync(path.join(rootDir, "src", "lib", "gameEngine.ts"), "export {};\n");
+  writeFileSync(path.join(rootDir, "src", "lib", "firstGameStorage.ts"), "export {};\n");
+  writeFileSync(path.join(rootDir, "prisma", "schema.prisma"), "model RunnerAdvancement { id String @id }\n");
+
+  const project = inspectProject(rootDir);
+
+  assert.equal(project.hasFunctionalMvpOpenSpec, true);
+  assert.equal(project.hasSeedTeam, true);
+  assert.equal(project.hasGameEngine, true);
+  assert.equal(project.hasFirstGameStorage, true);
+  assert.equal(project.hasPrismaBaseballModels, true);
+});
+
+test("inspectProject detects end-game stats summary signal", () => {
+  const rootDir = createProjectFixture();
+  mkdirSync(path.join(rootDir, "openspec", "changes", "add-end-game-summary"), { recursive: true });
+  mkdirSync(path.join(rootDir, "src", "lib"), { recursive: true });
+  mkdirSync(path.join(rootDir, "src", "sections", "StatsEntrySection"), { recursive: true });
+  writeFileSync(path.join(rootDir, "openspec", "changes", "add-end-game-summary", "proposal.md"), "# End Game\n");
+  writeFileSync(path.join(rootDir, "src", "lib", "gameEngine.ts"), "export function endGame() {}\n");
+  writeFileSync(path.join(rootDir, "src", "sections", "StatsEntrySection", "index.tsx"), "function EndGameSummary() {}\n");
+
+  assert.equal(inspectProject(rootDir).hasEndGameSummary, true);
+});
+
+test("proposeOperations does not duplicate the UI intake roadmap item", () => {
+  const project = {
+    ...createCompleteProjectSignals(),
+    hasUiIntakeArtifact: true
+  };
+  const tasks = [
+    {
+      id: "pm",
+      name: "Project Manager: Baseball Stats Tracker",
+      description: buildProjectOverview(project),
+      status: { status: "to do" }
+    },
+    {
+      id: "ui-intake",
+      name: "add ui intake to project manager kanban",
+      status: { status: "to do" }
+    }
+  ];
+
+  const operations = proposeOperations({ tasks, project });
+
+  assert.equal(
+    operations.some((operation) => operation.type === "create_task" && operation.taskName === "Add UI intake to project manager Kanban"),
+    false
+  );
+});
+
+test("proposeOperations marks existing UI intake item done when artifact exists", () => {
+  const project = {
+    ...createCompleteProjectSignals(),
+    hasUiIntakeArtifact: true
+  };
+  const tasks = [
+    {
+      id: "done-reference",
+      name: "Already done",
+      status: { status: "done" }
+    },
+    {
+      id: "ui-intake",
+      name: "Add UI intake to project manager Kanban",
+      status: { status: "to do" }
+    }
+  ];
+
+  const operations = proposeOperations({ tasks, project });
+
+  assert.deepEqual(
+    operations.find((operation) => operation.taskId === "ui-intake")?.patch,
+    { status: "done" }
+  );
+});
+
 function createProjectFixture() {
   const rootDir = mkdtempSync(path.join(tmpdir(), "baseball-pm-"));
   mkdirSync(path.join(rootDir, "scripts"));
@@ -220,6 +325,11 @@ function createProjectFixture() {
   return rootDir;
 }
 
+function addUiIntakeArtifact(rootDir) {
+  mkdirSync(path.join(rootDir, "docs"));
+  writeFileSync(path.join(rootDir, "docs", "ui-intake.md"), "# UI Intake\n");
+}
+
 function createCompleteProjectSignals() {
   return {
     hasPackageJson: true,
@@ -228,6 +338,13 @@ function createCompleteProjectSignals() {
     hasProjectManagerTests: true,
     hasAppEntrypoint: true,
     hasPrismaScaffold: true,
+    hasUiIntakeArtifact: true,
+    hasFunctionalMvpOpenSpec: true,
+    hasSeedTeam: true,
+    hasFirstGameStorage: true,
+    hasGameEngine: true,
+    hasEndGameSummary: true,
+    hasPrismaBaseballModels: true,
     hasDomainTypes: true,
     hasLineupRules: true,
     hasStatCalculations: true,
@@ -237,6 +354,7 @@ function createCompleteProjectSignals() {
       "scripts/project-manager.mjs",
       "scripts/clickup-client.mjs",
       "test/project-manager.test.mjs",
+      "docs/ui-intake.md",
       "src/app/page.tsx",
       "src/lib/prisma.ts",
       "prisma/schema.prisma"

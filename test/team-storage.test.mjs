@@ -1,0 +1,100 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import {
+  createActiveTeam,
+  createEmptyPlayerInput,
+  createPlayerFromInput,
+  createZeroPlayerStats,
+  loadActiveTeam,
+  resetActiveTeam,
+  saveActiveTeam,
+} from "../src/lib/teamStorage.ts";
+
+test("createZeroPlayerStats defaults every tracked stat to zero", () => {
+  const stats = createZeroPlayerStats();
+
+  assert.deepEqual(Object.values(stats), Array(Object.keys(stats).length).fill(0));
+});
+
+test("createPlayerFromInput saves zero starting stats by default", () => {
+  const input = createEmptyPlayerInput(1);
+  input.name = "Noa Cohen";
+  input.gender = "Female";
+  input.speedRating = "Fast";
+
+  const player = createPlayerFromInput(input, 1);
+
+  assert.equal(player.name, "Noa Cohen");
+  assert.equal(player.gender, "Female");
+  assert.equal(player.speedRating, "Fast");
+  assert.equal(player.seasonStats.plateAppearances, 0);
+  assert.equal(player.seasonStats.rbis, 0);
+});
+
+test("createPlayerFromInput preserves entered starting stats and notes", () => {
+  const input = createEmptyPlayerInput(2);
+  input.name = "Maya Johnson";
+  input.gender = "Female";
+  input.notes = "Experienced line-drive hitter";
+  input.contactNotes = "Hits gaps, Good runner";
+  input.startingStats = {
+    ...input.startingStats,
+    plateAppearances: 12,
+    atBats: 10,
+    hits: 7,
+    doubles: 2,
+    walks: 2,
+    runs: 5,
+    rbis: 4,
+  };
+
+  const player = createPlayerFromInput(input, 2);
+
+  assert.equal(player.notes, "Experienced line-drive hitter");
+  assert.deepEqual(player.contactNotes, ["Hits gaps", "Good runner"]);
+  assert.equal(player.seasonStats.plateAppearances, 12);
+  assert.equal(player.seasonStats.hits, 7);
+  assert.equal(player.seasonStats.rbis, 4);
+});
+
+test("createActiveTeam scopes players to the created team", () => {
+  const input = createEmptyPlayerInput(1);
+  input.name = "Jordan Lee";
+  input.gender = "Male";
+  const player = createPlayerFromInput(input, 1);
+
+  const team = createActiveTeam("Kobe's Peeps", [player]);
+
+  assert.equal(team.name, "Kobe's Peeps");
+  assert.equal(team.players.length, 1);
+  assert.equal(team.players[0].seedOrder, 1);
+});
+
+test("active team persistence starts empty and round-trips saved teams", () => {
+  const store = new Map();
+  global.window = {
+    localStorage: {
+      getItem: (key) => store.get(key) ?? null,
+      removeItem: (key) => store.delete(key),
+      setItem: (key, value) => store.set(key, value),
+    },
+    addEventListener: () => {},
+    dispatchEvent: () => true,
+    removeEventListener: () => {},
+  };
+
+  assert.equal(loadActiveTeam(), null);
+
+  const input = createEmptyPlayerInput(1);
+  input.name = "Alex Smith";
+  input.gender = "Male";
+  const team = createActiveTeam("Tuesday Crew", [createPlayerFromInput(input, 1)]);
+
+  saveActiveTeam(team);
+  assert.equal(loadActiveTeam()?.name, "Tuesday Crew");
+  assert.equal(loadActiveTeam()?.players[0].name, "Alex Smith");
+
+  resetActiveTeam();
+  assert.equal(loadActiveTeam(), null);
+  delete global.window;
+});

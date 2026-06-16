@@ -9,3 +9,439 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+model Team {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  players     Player[]
+  seasons     Season[]
+  games       Game[]
+  gameStats   TeamGameStats[]
+  seasonStats TeamSeasonStats[]
+  records     TeamRecord[]
+}
+
+model Season {
+  id        String    @id @default(cuid())
+  teamId    String
+  year      Int
+  label     String?
+  startsOn  DateTime?
+  endsOn    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  team        Team                @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  games       Game[]
+  playerStats PlayerSeasonStats[]
+  teamStats   TeamSeasonStats?
+  records     TeamRecord[]
+
+  @@unique([teamId, year])
+  @@index([teamId])
+}
+
+model Player {
+  id              String       @id @default(cuid())
+  teamId          String
+  name            String
+  gender          PlayerGender @default(UNKNOWN)
+  bats            BattingSide  @default(UNKNOWN)
+  throws          ThrowingSide @default(UNKNOWN)
+  primaryPosition String?
+  speedRating     SpeedRating  @default(AVERAGE)
+  notes           String?
+  contactNotes    String[]     @default([])
+  roleHint        String?
+  seedOrder       Int?
+  isActive        Boolean      @default(true)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  team            Team                @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  lineupEntries   GameLineup[]
+  atBats          AtBat[]             @relation("BatterAtBats")
+  runnerMovements RunnerAdvancement[]
+  gameStats       PlayerGameStats[]
+  seasonStats     PlayerSeasonStats[]
+
+  @@unique([teamId, name])
+  @@index([teamId])
+}
+
+model Game {
+  id                 String      @id @default(cuid())
+  teamId             String
+  seasonId           String?
+  opponent           String
+  date               DateTime
+  isHome             Boolean     @default(true)
+  teamScore          Int         @default(0)
+  opponentScore      Int         @default(0)
+  inning             Int         @default(1)
+  half               InningHalf  @default(TOP)
+  outs               Int         @default(0)
+  currentBatterIndex Int         @default(0)
+  bases              Json?
+  snapshot           Json?
+  status             GameStatus  @default(SCHEDULED)
+  result             GameResult?
+  notes              String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  team      Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  season    Season?           @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+  lineup    GameLineup[]
+  atBats    AtBat[]
+  stats     PlayerGameStats[]
+  teamStats TeamGameStats?
+  rules     GameRuleSettings?
+
+  @@index([teamId])
+  @@index([seasonId])
+}
+
+model GameRuleSettings {
+  id                     String              @id @default(cuid())
+  gameId                 String              @unique
+  homeRunLimitEnabled    Boolean             @default(false)
+  homeRunLimit           Int?
+  afterHomeRunLimit      HomeRunLimitOutcome @default(OUT)
+  runLimitPerInning      Int?
+  mercyRule              String?
+  courtesyRunnersAllowed Boolean             @default(true)
+  walksAllowed           Boolean             @default(true)
+  sacFliesTracked        Boolean             @default(true)
+  errorsTracked          Boolean             @default(true)
+  fieldersChoicesTracked Boolean             @default(true)
+  createdAt              DateTime            @default(now())
+  updatedAt              DateTime            @updatedAt
+
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+}
+
+model GameLineup {
+  id                   String   @id @default(cuid())
+  gameId               String
+  playerId             String
+  battingOrderPosition Int
+  isActive             Boolean  @default(true)
+  createdAt            DateTime @default(now())
+
+  game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, battingOrderPosition])
+  @@unique([gameId, playerId])
+  @@index([playerId])
+}
+
+model AtBat {
+  id          String       @id @default(cuid())
+  gameId      String
+  inning      Int
+  batterId    String
+  outsBefore  Int
+  result      BatterResult
+  outType     OutType?
+  basesBefore Json
+  runsScored  Int          @default(0)
+  rbis        Int          @default(0)
+  outsOnPlay  Int          @default(0)
+  basesAfter  Json
+  notes       String?
+  createdAt   DateTime     @default(now())
+
+  game               Game                @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  batter             Player              @relation("BatterAtBats", fields: [batterId], references: [id], onDelete: Cascade)
+  runnerAdvancements RunnerAdvancement[]
+
+  @@index([gameId])
+  @@index([batterId])
+}
+
+model RunnerAdvancement {
+  id               String        @id @default(cuid())
+  atBatId          String
+  playerId         String
+  originalPlayerId String?
+  fromBase         RunnerStart
+  toBase           RunnerEnd
+  advancedBases    Int           @default(0)
+  scored           Boolean       @default(false)
+  out              Boolean       @default(false)
+  rbiCredited      Boolean       @default(false)
+  reason           AdvanceReason
+
+  atBat  AtBat  @relation(fields: [atBatId], references: [id], onDelete: Cascade)
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@index([atBatId])
+  @@index([playerId])
+}
+
+model PlayerGameStats {
+  id                 String @id @default(cuid())
+  gameId             String
+  playerId           String
+  gamesPlayed        Int    @default(1)
+  plateAppearances   Int    @default(0)
+  atBats             Int    @default(0)
+  hits               Int    @default(0)
+  singles            Int    @default(0)
+  doubles            Int    @default(0)
+  triples            Int    @default(0)
+  homeRuns           Int    @default(0)
+  walks              Int    @default(0)
+  reachedOnError     Int    @default(0)
+  fieldersChoice     Int    @default(0)
+  sacFlies           Int    @default(0)
+  outs               Int    @default(0)
+  groundouts         Int    @default(0)
+  flyouts            Int    @default(0)
+  lineouts           Int    @default(0)
+  strikeoutsLooking  Int    @default(0)
+  strikeoutsSwinging Int    @default(0)
+  otherOuts          Int    @default(0)
+  doublePlays        Int    @default(0)
+  productiveOuts     Int    @default(0)
+  runs               Int    @default(0)
+  rbis               Int    @default(0)
+
+  game   Game   @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([gameId, playerId])
+  @@index([playerId])
+}
+
+model PlayerSeasonStats {
+  id                 String  @id @default(cuid())
+  playerId           String
+  seasonId           String?
+  season             Int
+  gamesPlayed        Int     @default(0)
+  plateAppearances   Int     @default(0)
+  atBats             Int     @default(0)
+  hits               Int     @default(0)
+  singles            Int     @default(0)
+  doubles            Int     @default(0)
+  triples            Int     @default(0)
+  homeRuns           Int     @default(0)
+  walks              Int     @default(0)
+  reachedOnError     Int     @default(0)
+  fieldersChoice     Int     @default(0)
+  sacFlies           Int     @default(0)
+  outs               Int     @default(0)
+  groundouts         Int     @default(0)
+  flyouts            Int     @default(0)
+  lineouts           Int     @default(0)
+  strikeoutsLooking  Int     @default(0)
+  strikeoutsSwinging Int     @default(0)
+  otherOuts          Int     @default(0)
+  doublePlays        Int     @default(0)
+  productiveOuts     Int     @default(0)
+  runs               Int     @default(0)
+  rbis               Int     @default(0)
+
+  player       Player  @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  seasonRecord Season? @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+
+  @@unique([playerId, season])
+  @@index([seasonId])
+}
+
+model TeamGameStats {
+  id                 String @id @default(cuid())
+  teamId             String
+  gameId             String @unique
+  plateAppearances   Int    @default(0)
+  atBats             Int    @default(0)
+  hits               Int    @default(0)
+  singles            Int    @default(0)
+  doubles            Int    @default(0)
+  triples            Int    @default(0)
+  homeRuns           Int    @default(0)
+  walks              Int    @default(0)
+  reachedOnError     Int    @default(0)
+  fieldersChoice     Int    @default(0)
+  sacFlies           Int    @default(0)
+  outs               Int    @default(0)
+  groundouts         Int    @default(0)
+  flyouts            Int    @default(0)
+  lineouts           Int    @default(0)
+  strikeoutsLooking  Int    @default(0)
+  strikeoutsSwinging Int    @default(0)
+  otherOuts          Int    @default(0)
+  doublePlays        Int    @default(0)
+  productiveOuts     Int    @default(0)
+  runs               Int    @default(0)
+  rbis               Int    @default(0)
+  opponentRuns       Int    @default(0)
+  leftOnBase         Int    @default(0)
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  game Game @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@index([teamId])
+}
+
+model TeamSeasonStats {
+  id                 String   @id @default(cuid())
+  teamId             String
+  seasonId           String   @unique
+  gamesPlayed        Int      @default(0)
+  wins               Int      @default(0)
+  losses             Int      @default(0)
+  ties               Int      @default(0)
+  runsFor            Int      @default(0)
+  runsAgainst        Int      @default(0)
+  plateAppearances   Int      @default(0)
+  atBats             Int      @default(0)
+  hits               Int      @default(0)
+  singles            Int      @default(0)
+  doubles            Int      @default(0)
+  triples            Int      @default(0)
+  homeRuns           Int      @default(0)
+  walks              Int      @default(0)
+  reachedOnError     Int      @default(0)
+  fieldersChoice     Int      @default(0)
+  sacFlies           Int      @default(0)
+  outs               Int      @default(0)
+  groundouts         Int      @default(0)
+  flyouts            Int      @default(0)
+  lineouts           Int      @default(0)
+  strikeoutsLooking  Int      @default(0)
+  strikeoutsSwinging Int      @default(0)
+  otherOuts          Int      @default(0)
+  doublePlays        Int      @default(0)
+  productiveOuts     Int      @default(0)
+  runs               Int      @default(0)
+  rbis               Int      @default(0)
+  updatedAt          DateTime @updatedAt
+
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+
+  @@index([teamId])
+}
+
+model TeamRecord {
+  id          String   @id @default(cuid())
+  teamId      String
+  seasonId    String?
+  label       String
+  wins        Int      @default(0)
+  losses      Int      @default(0)
+  ties        Int      @default(0)
+  runsFor     Int      @default(0)
+  runsAgainst Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  team   Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  season Season? @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+
+  @@unique([teamId, seasonId, label])
+  @@index([teamId])
+  @@index([seasonId])
+}
+
+enum BattingSide {
+  RIGHT
+  LEFT
+  SWITCH
+  UNKNOWN
+}
+
+enum ThrowingSide {
+  RIGHT
+  LEFT
+  UNKNOWN
+}
+
+enum SpeedRating {
+  FAST
+  AVERAGE
+  SLOW
+}
+
+enum PlayerGender {
+  FEMALE
+  MALE
+  UNKNOWN
+}
+
+enum InningHalf {
+  TOP
+  BOTTOM
+}
+
+enum GameStatus {
+  SCHEDULED
+  IN_PROGRESS
+  FINAL
+}
+
+enum GameResult {
+  WIN
+  LOSS
+  TIE
+}
+
+enum BatterResult {
+  SINGLE
+  DOUBLE
+  TRIPLE
+  HOME_RUN
+  WALK
+  REACHED_ON_ERROR
+  FIELDERS_CHOICE
+  SAC_FLY
+  OUT
+  DOUBLE_PLAY
+}
+
+enum OutType {
+  GROUNDOUT
+  FLYOUT
+  LINEOUT
+  STRIKEOUT_LOOKING
+  STRIKEOUT_SWINGING
+  OTHER_OUT
+}
+
+enum RunnerStart {
+  BATTER
+  FIRST
+  SECOND
+  THIRD
+}
+
+enum RunnerEnd {
+  FIRST
+  SECOND
+  THIRD
+  HOME
+  OUT
+}
+
+enum AdvanceReason {
+  HIT
+  WALK
+  ERROR
+  FIELDERS_CHOICE
+  SAC_FLY
+  OUT
+  RUNNER_DECISION
+}
+
+enum HomeRunLimitOutcome {
+  OUT
+  SINGLE
+  OTHER
+}

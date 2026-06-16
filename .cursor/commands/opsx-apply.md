@@ -78,7 +78,18 @@ Implement tasks from an OpenSpec change.
    - Error or blocker encountered → report and wait for guidance
    - User interrupts
 
-7. **On completion or pause, show status**
+7. **Run compliance review before final output**
+
+   Before reporting implementation complete, run a separate sub-agent/code-compliance review when sub-agents are available. Ask it to check the changed code against:
+   - `AGENTS.md`
+   - `docs/engineering-principles.md`
+   - Relevant OpenSpec artifacts for the selected change
+   - Mobile-first app direction
+   - Stats Entry workflow and runner/RBI constraints when touched
+
+   Resolve any material findings or clearly report the residual risk before finalizing.
+
+8. **On completion or pause, show status**
 
    Display:
    - Tasks completed this session

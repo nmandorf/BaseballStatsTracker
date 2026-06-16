@@ -1,0 +1,297 @@
+import type { GameState } from "@/lib/gameEngine";
+import { createInitialGameState, upsertCompletedGame } from "@/lib/gameEngine";
+import { loadActiveTeam } from "@/lib/teamStorage";
+
+const storageKey = "baseball-tracker:first-game-state:v1";
+const completedGameHistoryStorageKey = "baseball-tracker:completed-game-history:v1";
+const storageEventName = "baseball-tracker:first-game-state-updated";
+const serverState = createInitialGameState([]);
+const serverCompletedGames: GameState[] = [];
+let cachedRaw: string | null | undefined;
+let cachedTeamId: string | null | undefined;
+let cachedState: GameState | undefined;
+let cachedCompletedRaw: string | null | undefined;
+let cachedCompletedTeamId: string | null | undefined;
+let cachedCompletedGames: GameState[] | undefined;
+let hydrateStarted = false;
+
+export function loadFirstGameState(): GameState {
+  if (typeof window === "undefined") {
+    return serverState;
+  }
+
+  const raw = window.localStorage.getItem(storageKey);
+  const activeTeam = loadActiveTeam();
+  const activeTeamId = activeTeam?.id ?? null;
+
+  if (raw === cachedRaw && activeTeamId === cachedTeamId && cachedState) {
+    return cachedState;
+  }
+
+  if (!activeTeam) {
+    cachedRaw = raw;
+    cachedTeamId = activeTeamId;
+    cachedState = createInitialGameState([]);
+    return cachedState;
+  }
+
+  if (!raw) {
+    cachedRaw = raw;
+    cachedTeamId = activeTeamId;
+    cachedState = createInitialGameState(activeTeam.players);
+    return cachedState;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as GameState;
+
+    if (!Array.isArray(parsed.lineup) || !parsed.statsByPlayerId) {
+      cachedRaw = raw;
+      cachedTeamId = activeTeamId;
+      cachedState = createInitialGameState(activeTeam.players);
+      return cachedState;
+    }
+
+    cachedRaw = raw;
+    cachedTeamId = activeTeamId;
+    cachedState = normalizeGameState(parsed, activeTeam.players);
+    return cachedState;
+  } catch {
+    cachedRaw = raw;
+    cachedTeamId = activeTeamId;
+    cachedState = createInitialGameState(activeTeam.players);
+    return cachedState;
+  }
+}
+
+export function saveFirstGameState(state: GameState) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  if (state.status === "FINAL") {
+    upsertCompletedGameHistory(state);
+  }
+
+  writeFirstGameState(state);
+  queueFirstGamePrismaSync(state);
+}
+
+export function resetFirstGameState() {
+  if (typeof window === "undefined") {
+    return serverState;
+  }
+
+  const activeTeam = loadActiveTeam();
+
+  window.localStorage.removeItem(storageKey);
+  cachedRaw = null;
+  cachedTeamId = activeTeam?.id ?? null;
+  cachedState = createInitialGameState(activeTeam?.players ?? []);
+  window.dispatchEvent(new Event(storageEventName));
+  queueFirstGamePrismaReset();
+  return cachedState;
+}
+
+export function subscribeFirstGameState(onStoreChange: () => void) {
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+
+  window.addEventListener("storage", onStoreChange);
+  window.addEventListener(storageEventName, onStoreChange);
+
+  return () => {
+    window.removeEventListener("storage", onStoreChange);
+    window.removeEventListener(storageEventName, onStoreChange);
+  };
+}
+
+export function getFirstGameServerSnapshot() {
+  return serverState;
+}
+
+export function loadCompletedGameStates(): GameState[] {
+  if (typeof window === "undefined") {
+    return serverCompletedGames;
+  }
+
+  const raw = window.localStorage.getItem(completedGameHistoryStorageKey);
+  const activeTeam = loadActiveTeam();
+  const activeTeamId = activeTeam?.id ?? null;
+
+  if (raw === cachedCompletedRaw && activeTeamId === cachedCompletedTeamId && cachedCompletedGames) {
+    return cachedCompletedGames;
+  }
+
+  if (!activeTeam) {
+    cachedCompletedRaw = raw;
+    cachedCompletedTeamId = activeTeamId;
+    cachedCompletedGames = [];
+    return cachedCompletedGames;
+  }
+
+  const fallbackActiveGame = loadFirstGameState();
+  const fallbackGames = fallbackActiveGame.status === "FINAL" ? [fallbackActiveGame] : [];
+
+  if (!raw) {
+    cachedCompletedRaw = raw;
+    cachedCompletedTeamId = activeTeamId;
+    cachedCompletedGames = fallbackGames;
+    return cachedCompletedGames;
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as GameState[];
+
+    if (!Array.isArray(parsed)) {
+      cachedCompletedRaw = raw;
+      cachedCompletedTeamId = activeTeamId;
+      cachedCompletedGames = fallbackGames;
+      return cachedCompletedGames;
+    }
+
+    cachedCompletedRaw = raw;
+    cachedCompletedTeamId = activeTeamId;
+    cachedCompletedGames = parsed
+      .map((game) => normalizeGameState(game, activeTeam.players))
+      .filter((game) => game.status === "FINAL");
+    return cachedCompletedGames;
+  } catch {
+    cachedCompletedRaw = raw;
+    cachedCompletedTeamId = activeTeamId;
+    cachedCompletedGames = fallbackGames;
+    return cachedCompletedGames;
+  }
+}
+
+export function upsertCompletedGameHistory(state: GameState) {
+  if (typeof window === "undefined" || state.status !== "FINAL") {
+    return;
+  }
+
+  writeCompletedGameStates(upsertCompletedGame(loadCompletedGameStates(), state));
+}
+
+export function subscribeCompletedGameStates(onStoreChange: () => void) {
+  return subscribeFirstGameState(onStoreChange);
+}
+
+export function getCompletedGameStatesServerSnapshot() {
+  return serverCompletedGames;
+}
+
+export function hydrateFirstGameStateFromPrisma(options: { force?: boolean } = {}) {
+  if (typeof window === "undefined" || (hydrateStarted && !options.force)) {
+    return;
+  }
+
+  hydrateStarted = true;
+  const activeTeam = loadActiveTeam();
+  const query = activeTeam?.id ? `?teamId=${encodeURIComponent(activeTeam.id)}` : "";
+
+  fetch(`/api/first-game${query}`, {
+    cache: "no-store",
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        return null;
+      }
+
+      return (await response.json()) as { state?: GameState | null };
+    })
+    .then((payload) => {
+      const latestActiveTeam = loadActiveTeam();
+
+      if (!payload?.state) {
+        writeFirstGameState(createInitialGameState(latestActiveTeam?.players ?? []));
+        return;
+      }
+
+      writeFirstGameState(payload.state);
+
+      if (payload.state.status === "FINAL") {
+        upsertCompletedGameHistory(payload.state);
+      }
+    })
+    .catch(() => {
+      // Local scoring stays available when Prisma is not configured.
+    });
+}
+
+function writeFirstGameState(state: GameState) {
+  const raw = JSON.stringify(state);
+
+  cachedRaw = raw;
+  cachedTeamId = loadActiveTeam()?.id ?? null;
+  cachedState = state;
+  window.localStorage.setItem(storageKey, raw);
+  window.dispatchEvent(new Event(storageEventName));
+}
+
+function writeCompletedGameStates(games: GameState[]) {
+  const raw = JSON.stringify(games);
+
+  cachedCompletedRaw = raw;
+  cachedCompletedTeamId = loadActiveTeam()?.id ?? null;
+  cachedCompletedGames = games;
+  window.localStorage.setItem(completedGameHistoryStorageKey, raw);
+  window.dispatchEvent(new Event(storageEventName));
+}
+
+function queueFirstGamePrismaSync(state: GameState) {
+  const activeTeam = loadActiveTeam();
+
+  fetch("/api/first-game", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      state,
+      team: activeTeam,
+    }),
+  })
+    .then(() => undefined)
+    .catch(() => {
+      // Keep the local game usable if DATABASE_URL or the network is unavailable.
+    });
+}
+
+function queueFirstGamePrismaReset() {
+  const activeTeam = loadActiveTeam();
+  const query = activeTeam?.id ? `?teamId=${encodeURIComponent(activeTeam.id)}` : "";
+
+  fetch(`/api/first-game${query}`, {
+    method: "DELETE",
+  }).catch(() => {
+    // Reset local state even if Prisma is unavailable.
+  });
+}
+
+function normalizeGameState(state: GameState, activePlayers: GameState["lineup"]): GameState {
+  const activePlayerIds = new Set(activePlayers.map((player) => player.id));
+  const stateUsesActiveTeam = state.lineup.some((player) => activePlayerIds.has(player.id));
+
+  if (!stateUsesActiveTeam) {
+    return createInitialGameState(activePlayers);
+  }
+
+  return {
+    ...state,
+    lineup: state.lineup.map((player) => {
+      const activePlayer = activePlayers.find((item) => item.id === player.id);
+
+      return activePlayer
+        ? {
+            ...activePlayer,
+            seasonStats: player.seasonStats,
+          }
+        : player;
+    }),
+    status: state.status ?? "PREGAME",
+    endedAt: state.endedAt ?? null,
+    opponent: state.opponent ?? "Opponent",
+    isHome: state.isHome ?? false,
+  };
+}

@@ -1,9 +1,26 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "../components/OutTypeModal/OutTypeModal.css";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fffaf2;
+  --foreground: #1f2118;
+  --card: #ffffff;
+  --surface: #f6f0e4;
+  --surface-strong: #ebe2d1;
+  --muted-foreground: #6b665b;
+  --border: #ded4c2;
+  --accent: #2e7d32;
+  --accent-strong: #174f20;
+  --accent-soft: #e8f5e9;
+  --success: #2e7d32;
+  --success-soft: #e8f5e9;
+  --warning: #a46800;
+  --warning-soft: #fff1c7;
+  --danger: #b3261e;
+  --danger-soft: #ffdad6;
+  --amber: #f2b84b;
+  --amber-soft: #fff1cf;
   --radius: 0.5rem;
 }
 
@@ -14,14 +31,33 @@
   --font-mono: "Geist Mono", "Geist Mono Fallback", ui-monospace, monospace;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  color-scheme: light;
+  scroll-behavior: smooth;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
+  font-feature-settings:
+    "rlig" 1,
+    "calt" 1;
+}
+
+::selection {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+button:not(:disabled),
+a[href],
+select:not(:disabled),
+summary,
+[role="button"]:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
+
+button:disabled,
+[aria-disabled="true"] {
+  cursor: not-allowed;
 }

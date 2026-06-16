@@ -44,6 +44,15 @@ export function inspectProject(rootDir = repoRoot) {
     hasProjectManagerTests: files.some((file) => file.startsWith("test/") && file.endsWith(".test.mjs")),
     hasAppEntrypoint: hasAnyAppEntrypoint,
     hasPrismaScaffold: files.includes("prisma/schema.prisma") && files.includes("src/lib/prisma.ts"),
+    hasUiIntakeArtifact: files.includes("docs/ui-intake.md"),
+    hasFunctionalMvpOpenSpec: files.includes("openspec/changes/build-first-game-functional-app/proposal.md"),
+    hasSeedTeam: files.includes("src/lib/seedTeam.ts"),
+    hasFirstGameStorage: files.includes("src/lib/firstGameStorage.ts"),
+    hasGameEngine: files.includes("src/lib/gameEngine.ts"),
+    hasEndGameSummary: files.includes("openspec/changes/add-end-game-summary/proposal.md") &&
+      fileIncludesText(rootDir, "src/lib/gameEngine.ts", "export function endGame") &&
+      fileIncludesText(rootDir, "src/sections/StatsEntrySection/index.tsx", "EndGameSummary"),
+    hasPrismaBaseballModels: fileIncludesText(rootDir, "prisma/schema.prisma", "model RunnerAdvancement"),
     hasDomainTypes: ["src/types/player.ts", "src/types/game.ts", "src/types/stats.ts", "src/types/runner.ts"].every((file) =>
       files.includes(file)
     ),
@@ -86,6 +95,13 @@ export function buildProjectOverview(project) {
     `Lineup rules helper: ${formatYesNo(project.hasLineupRules)}`,
     `Stat calculations helper: ${formatYesNo(project.hasStatCalculations)}`,
     `Prisma scaffold: ${formatYesNo(project.hasPrismaScaffold)}`,
+    `UI intake artifact: ${formatYesNo(project.hasUiIntakeArtifact)}`,
+    `Functional MVP OpenSpec: ${formatYesNo(project.hasFunctionalMvpOpenSpec)}`,
+    `Seed 10-player team: ${formatYesNo(project.hasSeedTeam)}`,
+    `Live game engine: ${formatYesNo(project.hasGameEngine)}`,
+    `End-game stats summary: ${formatYesNo(project.hasEndGameSummary)}`,
+    `First-game local persistence: ${formatYesNo(project.hasFirstGameStorage)}`,
+    `Prisma baseball models: ${formatYesNo(project.hasPrismaBaseballModels)}`,
     `Git status: ${gitSummary}`,
     "",
     "Near-Term Focus",
@@ -106,8 +122,8 @@ export function buildPlannedWork(project) {
         "Create the local CLI that reviews repo progress and proposes ClickUp Kanban updates.",
         "",
         "Acceptance:",
-        "- `npm run pm` performs a dry-run review.",
-        "- `npm run pm -- --apply` applies proposed ClickUp task operations."
+        "- `yarn pm` performs a dry-run review.",
+        "- `yarn pm -- --apply` applies proposed ClickUp task operations."
       ].join("\n")
     },
     {
@@ -117,7 +133,7 @@ export function buildPlannedWork(project) {
         "Cover the ClickUp request builder, duplicate task matching, dry-run behavior, and apply behavior.",
         "",
         "Acceptance:",
-        "- `npm test` passes locally.",
+        "- `yarn test` passes locally.",
         "- Dry-run mode performs no ClickUp writes."
       ].join("\n")
     },
@@ -158,6 +174,18 @@ export function buildPlannedWork(project) {
         "- Prisma schema exists.",
         "- Prisma client helper exists.",
         "- Generated Prisma files are ignored by PM project scans."
+      ].join("\n")
+    },
+    {
+      name: "Add UI intake to project manager Kanban",
+      complete: project.hasUiIntakeArtifact,
+      markdownContent: [
+        "Capture approved external UI source material so the project manager can add it to the Kanban board without committing provider credentials.",
+        "",
+        "Acceptance:",
+        "- `docs/ui-intake.md` exists and identifies the UI source, scope, constraints, and follow-up work.",
+        "- MCP provider API keys stay in local or ignored configuration.",
+        "- Generated UI is treated as an input artifact until a matching OpenSpec change approves implementation."
       ].join("\n")
     },
     {
@@ -210,7 +238,7 @@ export function buildPlannedWork(project) {
     },
     {
       name: "Build batting order recommendation engine",
-      complete: false,
+      complete: project.hasLineupRules,
       markdownContent: [
         "Recommend a batting order from ratings, stats, and clear softball/baseball logic.",
         "",
@@ -283,7 +311,7 @@ export function buildPlannedWork(project) {
     },
     {
       name: "Build live game state engine",
-      complete: false,
+      complete: project.hasGameEngine,
       markdownContent: [
         "Keep the game state correct after every saved play.",
         "",
@@ -295,7 +323,7 @@ export function buildPlannedWork(project) {
     },
     {
       name: "Build player stats calculation system",
-      complete: false,
+      complete: project.hasStatCalculations,
       markdownContent: [
         "Store and calculate player stats in a structured way across games and seasons.",
         "",
@@ -307,7 +335,7 @@ export function buildPlannedWork(project) {
     },
     {
       name: "Define SQL and Prisma data models",
-      complete: false,
+      complete: project.hasPrismaBaseballModels,
       markdownContent: [
         "Create the relational data model that supports teams, players, games, lineups, plays, runner movement, stats, notes, and ratings.",
         "",
@@ -327,6 +355,54 @@ export function buildPlannedWork(project) {
         "- Roster, game setup, lineup, plays, runner movements, stats, notes, and ratings can be saved and loaded.",
         "- Writes validate required data.",
         "- API/server actions keep client state and database state consistent."
+      ].join("\n")
+    },
+    {
+      name: "Create functional first-game OpenSpec",
+      complete: project.hasFunctionalMvpOpenSpec,
+      markdownContent: [
+        "Create the approved OpenSpec slice for the first functional scoring loop.",
+        "",
+        "Acceptance:",
+        "- OpenSpec change exists for first-game functional app work.",
+        "- Scope covers seed team, lineup logic, stats entry engine, runner movement, RBI, stats, and data model."
+      ].join("\n")
+    },
+    {
+      name: "Seed 10-player first-game test team",
+      complete: project.hasSeedTeam,
+      markdownContent: [
+        "Provide a starter team for the first game of the season.",
+        "",
+        "Acceptance:",
+        "- The app has 10 named active players.",
+        "- Every tracked player stat starts at zero.",
+        "- Roster, setup, order, and stats entry share the same team data."
+      ].join("\n")
+    },
+    {
+      name: "Persist first-game local scoring state",
+      complete: project.hasFirstGameStorage,
+      markdownContent: [
+        "Keep the local first-game state available across refreshes and screen navigation during review.",
+        "",
+        "Acceptance:",
+        "- Saved plays update local browser state.",
+        "- Roster and batting order can read updated first-game stats.",
+        "- The user can reset to the zero-stat first-game state."
+      ].join("\n")
+    },
+    {
+      name: "Build end-game stats summary",
+      complete: project.hasEndGameSummary,
+      markdownContent: [
+        "Let the analyst end the current first game and review the final stats.",
+        "",
+        "Acceptance:",
+        "- Stats Entry has an End Game action.",
+        "- Ending the game persists a final state and clears live bases.",
+        "- Final score, team totals, saved plays, and player offensive stats are shown.",
+        "- Live scoring controls are hidden once the game is final."
       ].join("\n")
     },
     {
@@ -583,7 +659,7 @@ export async function runProjectManager({
     const results = await applyOperations(client, operations);
     stdout.write(`\nApplied ${results.length} ClickUp operation(s).\n`);
   } else if (!apply) {
-    stdout.write("\nDry-run only. Re-run with `npm run pm -- --apply` to apply these operations.\n");
+    stdout.write("\nDry-run only. Re-run with `yarn pm -- --apply` to apply these operations.\n");
   }
 
   return 0;
@@ -617,6 +693,16 @@ function stripOptionalQuotes(value) {
   }
 
   return value;
+}
+
+function fileIncludesText(rootDir, relativePath, text) {
+  const absolutePath = path.join(rootDir, relativePath);
+
+  if (!existsSync(absolutePath)) {
+    return false;
+  }
+
+  return readFileSync(absolutePath, "utf8").includes(text);
 }
 
 function listProjectFiles(rootDir) {

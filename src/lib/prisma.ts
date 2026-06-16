@@ -1,4 +1,4 @@
-import { PrismaNeon } from "@prisma/adapter-neon";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "@/generated/prisma/client";
 
 let prisma: PrismaClient | null = null;
@@ -11,7 +11,7 @@ export function getPrisma() {
       throw new Error("DATABASE_URL is required to initialize Prisma.");
     }
 
-    const adapter = new PrismaNeon({ connectionString });
+    const adapter = new PrismaPg({ connectionString });
     prisma = new PrismaClient({ adapter });
   }
 

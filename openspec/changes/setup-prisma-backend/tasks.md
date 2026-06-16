@@ -1,0 +1,5 @@
+- [x] Review current Prisma and Next.js backend guidance.
+- [x] Extend Prisma schema for team data, stats, and records.
+- [x] Add server-side persistence helpers for seed data and game snapshots.
+- [x] Validate schema and regenerate Prisma client.
+- [x] Run project checks.

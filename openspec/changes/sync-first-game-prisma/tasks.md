@@ -1,0 +1,5 @@
+- [x] Define the Prisma sync scope for first-game frontend actions.
+- [x] Add backend load/reset helpers for first-game state.
+- [x] Add client-side sync helper with local fallback.
+- [x] Wire frontend game actions to Prisma sync.
+- [x] Validate with typecheck, lint, tests, and schema checks.
