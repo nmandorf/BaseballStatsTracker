@@ -1,12 +1,15 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { getPlayerSeasonStats } from "@/lib/gameEngine";
 import type { ActiveTeam } from "@/types/player";
 import type { Player } from "@/types/player";
-import type { GameState } from "@/lib/gameEngine";
-import { recommendBattingOrder, validateLineupPlayerPool } from "@/lib/lineupRules";
-import { loadActiveTeam } from "@/lib/teamStorage";
+import type { GameRules } from "@/types/game";
+import type { GameState } from "./gameEngine.ts";
+import { getPlayerSeasonStats } from "./gameEngine.ts";
+import { normalizeGameRules } from "./gameRules.ts";
+import { recommendBattingOrder, validateLineupPlayerPool } from "./lineupRules.ts";
+import { defaultGameRules } from "./seedTeam.ts";
+import { loadActiveTeam } from "./teamStorage.ts";
 
 export type LineupSizeOption = "9" | "10" | "11" | "Everyone";
 export type PregameSetupStatus = "SETUP" | "GENERATED" | "ACCEPTED" | "STARTED";
@@ -18,8 +21,16 @@ export type PregameSetup = {
   selectedPlayerIds: string[];
   generatedLineupIds: string[];
   acceptedLineupIds: string[];
+  gameRules: GameRules;
   status: PregameSetupStatus;
   updatedAt: string | null;
+};
+
+export type SuggestedLineupResolution = {
+  lineupIds: string[];
+  canGenerate: boolean;
+  emptyReason: string | null;
+  warnings: string[];
 };
 
 const storageKey = "baseball-tracker:pregame-setup:v1";
@@ -32,6 +43,7 @@ const defaultSetup: PregameSetup = {
   selectedPlayerIds: [],
   generatedLineupIds: [],
   acceptedLineupIds: [],
+  gameRules: defaultGameRules,
   status: "SETUP",
   updatedAt: null,
 };
@@ -48,6 +60,7 @@ export function createDefaultPregameSetup(activeTeam?: ActiveTeam | null): Prega
     selectedPlayerIds: activePlayers,
     generatedLineupIds: [...defaultSetup.generatedLineupIds],
     acceptedLineupIds: [...defaultSetup.acceptedLineupIds],
+    gameRules: { ...defaultGameRules },
   };
 }
 
@@ -156,6 +169,52 @@ export function generateLineupIds(setup: PregameSetup, state: GameState, activeT
     .map((row) => row.player.id);
 }
 
+export function resolveSuggestedLineupIds(
+  setup: PregameSetup,
+  state: GameState,
+  activeTeam: ActiveTeam | null,
+): SuggestedLineupResolution {
+  const pool = buildPregamePlayerPool(setup, state, activeTeam);
+  const validation = validateLineupPlayerPool(pool);
+
+  if (!pool.length) {
+    return {
+      lineupIds: [],
+      canGenerate: false,
+      emptyReason: "Select active players in Game Setup before reviewing the order.",
+      warnings: validation.warnings,
+    };
+  }
+
+  if (!validation.isLeagueCompliant) {
+    return {
+      lineupIds: [],
+      canGenerate: false,
+      emptyReason: "Update the selected player pool before generating a lineup.",
+      warnings: validation.warnings,
+    };
+  }
+
+  const generatedLineupIds = generateLineupIds(setup, state, activeTeam);
+  const lineupIds = setup.generatedLineupIds.length ? setup.generatedLineupIds : generatedLineupIds;
+
+  if (!lineupIds.length) {
+    return {
+      lineupIds: [],
+      canGenerate: true,
+      emptyReason: "Generate the lineup from today's selected players.",
+      warnings: [],
+    };
+  }
+
+  return {
+    lineupIds,
+    canGenerate: true,
+    emptyReason: null,
+    warnings: [],
+  };
+}
+
 export function resolveLineupPlayers(lineupIds: string[], state: GameState, activeTeam: ActiveTeam | null) {
   const playersById = new Map(buildRosterWithStats(state, activeTeam?.players ?? []).map((player) => [player.id, player]));
 
@@ -199,10 +258,12 @@ function normalizePregameSetup(setup: Partial<PregameSetup>, activeTeam?: Active
     selectedPlayerIds,
     generatedLineupIds,
     acceptedLineupIds,
+    gameRules: normalizeGameRules(setup.gameRules),
     status: isPregameStatus(setup.status) ? setup.status : fallback.status,
     updatedAt: typeof setup.updatedAt === "string" ? setup.updatedAt : null,
   };
 }
+
 
 function isLineupSize(value: unknown): value is LineupSizeOption {
   return value === "9" || value === "10" || value === "11" || value === "Everyone";

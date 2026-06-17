@@ -54,7 +54,7 @@ export function SeasonStatsSection() {
           <StatTile helper={`${seasonTotals.outs} outs`} label="Out%" value={formatPercent(seasonTotals.outs / Math.max(1, seasonTotals.plateAppearances))} />
         </div>
 
-        <div className="mt-4 grid items-stretch gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="mt-4 grid min-w-0 items-stretch gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
           <StatsPlayerTable label="Season Player Stats" rows={seasonRows} />
           <GameHistoryCard games={gameHistory} />
         </div>

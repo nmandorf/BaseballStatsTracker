@@ -3,7 +3,7 @@ import { GameSetupSection } from "@/sections/GameSetupSection";
 
 export function GameSetupPage() {
   return (
-    <AppShell activeNav="game" requireAuth>
+    <AppShell activeNav={null} requireAuth>
       <GameSetupSection />
     </AppShell>
   );

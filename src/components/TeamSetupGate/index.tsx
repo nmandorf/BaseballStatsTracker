@@ -98,7 +98,7 @@ export function TeamSetupGate({
                   className="min-h-11 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 font-semibold outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
                   disabled={Boolean(confirmedTeamName)}
                   onChange={(event) => setTeamName(event.target.value)}
-                  placeholder="Kobe's Peeps"
+                  placeholder="Team name"
                   value={teamName}
                 />
               </label>

@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowDown,
@@ -25,6 +26,7 @@ import { recommendBattingOrder, validateLineupGenderRules, validateLineupPlayerP
 import {
   buildPregamePlayerPool,
   generateLineupIds,
+  resolveSuggestedLineupIds,
   savePregameSetup,
   usePregameSetup,
 } from "@/lib/pregameSetupStorage";
@@ -40,38 +42,32 @@ export function BattingOrderSection() {
   const firstGameState = useFirstGameState();
   const [manualOrderIds, setManualOrderIds] = useState<string[] | null>(null);
 
-  const generatedLineupIds = setup.generatedLineupIds.length
-    ? setup.generatedLineupIds
-    : generateLineupIds(setup, firstGameState, activeTeam);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, firstGameState, activeTeam);
+  const generatedLineupIds = suggestedLineup.lineupIds;
   const playerPoolValidation = validateLineupPlayerPool(buildPregamePlayerPool(setup, firstGameState, activeTeam));
-  const recommendedLineup = useMemo(
-    () => {
-      const recommendedRowsById = new Map(
-        recommendBattingOrder(buildPregamePlayerPool(setup, firstGameState, activeTeam)).map((row) => [row.player.id, row]),
-      );
-
-      return generatedLineupIds
-        .map((playerId) => recommendedRowsById.get(playerId))
-        .filter((row): row is RecommendedLineupRow => Boolean(row));
-    },
-    [activeTeam, firstGameState, generatedLineupIds, setup],
+  const recommendedRowsById = new Map(
+    recommendBattingOrder(buildPregamePlayerPool(setup, firstGameState, activeTeam)).map((row) => [row.player.id, row]),
   );
-  const lineup = useMemo(() => {
-    if (!manualOrderIds) {
-      return recommendedLineup;
-    }
-
-    const rowsByPlayerId = new Map(recommendedLineup.map((row) => [row.player.id, row]));
-    return manualOrderIds
-      .map((playerId) => rowsByPlayerId.get(playerId))
-      .filter((row): row is RecommendedLineupRow => Boolean(row));
-  }, [manualOrderIds, recommendedLineup]);
+  const recommendedLineup = generatedLineupIds
+    .map((playerId) => recommendedRowsById.get(playerId))
+    .filter((row): row is RecommendedLineupRow => Boolean(row));
+  const rowsByPlayerId = new Map(recommendedLineup.map((row) => [row.player.id, row]));
+  const lineup = manualOrderIds
+    ? manualOrderIds
+        .map((playerId) => rowsByPlayerId.get(playerId))
+        .filter((row): row is RecommendedLineupRow => Boolean(row))
+    : recommendedLineup;
   const [selectedPriority, setSelectedPriority] = useState("OBP");
   const lineupValidation = validateLineupGenderRules(lineup.map((row) => row.player));
   const acceptedMatchesLineup =
     lineup.length > 0 &&
     setup.acceptedLineupIds.length === lineup.length &&
     setup.acceptedLineupIds.every((playerId, index) => playerId === lineup[index]?.player.id);
+  const lineupWarnings = [
+    ...suggestedLineup.warnings,
+    ...playerPoolValidation.warnings,
+    ...(lineup.length ? lineupValidation.warnings : []),
+  ].filter((warning, index, warnings) => warnings.indexOf(warning) === index);
 
   if (!activeTeam) {
     return <TeamSetupGate title="Create your team before reviewing the batting order." />;
@@ -137,6 +133,7 @@ export function BattingOrderSection() {
       createInitialGameState(players, {
         opponent: setup.opponent || "Opponent",
         isHome: setup.isHome,
+        gameRules: setup.gameRules,
         status: "IN_PROGRESS",
       }),
     );
@@ -152,22 +149,24 @@ export function BattingOrderSection() {
   return (
     <section className="bg-background py-6 sm:py-8">
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8">
-        <ScreenHeader
-          description="Review the lineup generated from today's selected players and season stats. The coach can move hitters, accept the order, then start live scoring."
-          eyebrow="Batting order"
-          icon={ListOrdered}
-          status="Coach approval"
-          title={`Approve ${activeTeam.name} vs. ${setup.opponent || "TBD"}.`}
-        />
+        <div className="grid gap-4 lg:grid-cols-[1.18fr_0.82fr]">
+          <div className="order-2 lg:order-1 lg:col-span-2">
+            <ScreenHeader
+              description="Review the lineup generated from today's selected players and season stats. The coach can move hitters, accept the order, then start live scoring."
+              eyebrow="Batting order"
+              icon={ListOrdered}
+              status="Coach approval"
+              title={`Approve ${activeTeam.name} vs. ${setup.opponent || "TBD"}.`}
+            />
+          </div>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-3">
-          <StatTile helper="Tap priority below" icon={BarChart3} label="Top metric" tone="accent" value={selectedPriority} />
-          <StatTile helper={`Current #4: ${lineup[3]?.player.name.split(" ")[0] ?? "TBD"}`} icon={Medal} label="Power slot" tone="warning" value="#4" />
-          <StatTile helper={`Current #10: ${lineup[9]?.player.name.split(" ")[0] ?? "TBD"}`} icon={MoveDown} label="Last spot" tone="success" value="Turn" />
-        </div>
+          <div className="order-3 grid gap-3 sm:grid-cols-3 lg:order-2 lg:col-span-2">
+            <StatTile helper="Tap priority below" icon={BarChart3} label="Top metric" tone="accent" value={selectedPriority} />
+            <StatTile helper={`Current #4: ${lineup[3]?.player.name.split(" ")[0] ?? "TBD"}`} icon={Medal} label="Power slot" tone="warning" value="#4" />
+            <StatTile helper={`Current #10: ${lineup[9]?.player.name.split(" ")[0] ?? "TBD"}`} icon={MoveDown} label="Last spot" tone="success" value="Turn" />
+          </div>
 
-        <div className="mt-4 grid gap-4 lg:grid-cols-[1.18fr_0.82fr]">
-          <article className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]">
+          <article className="order-1 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035] lg:order-3">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
@@ -218,8 +217,7 @@ export function BattingOrderSection() {
                 Start Game
               </button>
             </div>
-            {[...playerPoolValidation.warnings, ...lineupValidation.warnings]
-              .filter((warning, index, warnings) => warnings.indexOf(warning) === index)
+            {lineupWarnings
               .map((warning) => (
                 <p
                   className="mt-3 rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-sm font-bold text-[var(--danger)]"
@@ -229,52 +227,66 @@ export function BattingOrderSection() {
                 </p>
               ))}
             <div className="mt-4 space-y-2">
-              {lineup.map((row, index) => (
-                <div
-                  className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg bg-[var(--surface)] px-3 py-2.5"
-                  key={row.player.id}
-                >
-                  <span className="flex size-9 items-center justify-center rounded-full bg-[var(--accent)] text-sm font-bold text-white">
-                    {index + 1}
-                  </span>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-semibold text-foreground">
-                      {row.player.name}
-                    </p>
-                    <p className="truncate text-xs text-[var(--muted-foreground)]">
-                      {row.role} - {row.player.gender}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1">
-                    <span className="hidden rounded-full bg-[var(--card)] px-2.5 py-1 text-xs font-bold text-[var(--accent)] sm:inline-flex">
-                      {row.signal}
+              {lineup.length ? (
+                lineup.map((row, index) => (
+                  <div
+                    className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg bg-[var(--surface)] px-3 py-2.5"
+                    key={row.player.id}
+                  >
+                    <span className="flex size-9 items-center justify-center rounded-full bg-[var(--accent)] text-sm font-bold text-white">
+                      {index + 1}
                     </span>
-                    <button
-                      aria-label={`Move ${row.player.name} up`}
-                      className="flex size-9 items-center justify-center rounded-lg bg-[var(--card)] text-[var(--accent)] disabled:opacity-30"
-                      disabled={index === 0}
-                      onClick={() => movePlayer(index, -1)}
-                      type="button"
-                    >
-                      <ArrowUp className="size-4" aria-hidden="true" />
-                    </button>
-                    <button
-                      aria-label={`Move ${row.player.name} down`}
-                      className="flex size-9 items-center justify-center rounded-lg bg-[var(--card)] text-[var(--accent)] disabled:opacity-30"
-                      disabled={index === lineup.length - 1}
-                      onClick={() => movePlayer(index, 1)}
-                      type="button"
-                    >
-                      <ArrowDown className="size-4" aria-hidden="true" />
-                    </button>
-                    <GripVertical className="size-4 text-[var(--muted-foreground)]" />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold text-foreground">
+                        {row.player.name}
+                      </p>
+                      <p className="truncate text-xs text-[var(--muted-foreground)]">
+                        {row.role} - {row.player.gender}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span className="hidden rounded-full bg-[var(--card)] px-2.5 py-1 text-xs font-bold text-[var(--accent)] sm:inline-flex">
+                        {row.signal}
+                      </span>
+                      <button
+                        aria-label={`Move ${row.player.name} up`}
+                        className="flex size-9 items-center justify-center rounded-lg bg-[var(--card)] text-[var(--accent)] disabled:opacity-30"
+                        disabled={index === 0}
+                        onClick={() => movePlayer(index, -1)}
+                        type="button"
+                      >
+                        <ArrowUp className="size-4" aria-hidden="true" />
+                      </button>
+                      <button
+                        aria-label={`Move ${row.player.name} down`}
+                        className="flex size-9 items-center justify-center rounded-lg bg-[var(--card)] text-[var(--accent)] disabled:opacity-30"
+                        disabled={index === lineup.length - 1}
+                        onClick={() => movePlayer(index, 1)}
+                        type="button"
+                      >
+                        <ArrowDown className="size-4" aria-hidden="true" />
+                      </button>
+                      <GripVertical className="size-4 text-[var(--muted-foreground)]" />
+                    </div>
                   </div>
+                ))
+              ) : (
+                <div className="rounded-lg bg-[var(--surface)] p-4">
+                  <p className="text-sm font-bold text-foreground">
+                    {suggestedLineup.emptyReason ?? "No suggested lineup is available yet."}
+                  </p>
+                  <Link
+                    className="mt-3 inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white"
+                    href="/game-setup"
+                  >
+                    Open Game Setup
+                  </Link>
                 </div>
-              ))}
+              )}
             </div>
           </article>
 
-          <article className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]">
+          <article className="order-4 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]">
             <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
               Ranking priorities
             </p>

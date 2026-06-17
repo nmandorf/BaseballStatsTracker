@@ -2,6 +2,7 @@ const QUICK_SCORES_URL =
   "https://www.quickscores.com/Orgs/ResultsDisplay.php?OrgDir=sanmateo&LeagueID=1717026&TeamID=15063981";
 
 const TEAM_NAME = "Kobe's Peeps";
+const DISPLAY_TEAM_LABEL = "Your team";
 const SAN_MATEO_TIME_ZONE = "America/Los_Angeles";
 const SAN_MATEO_TZ_OFFSET = "-07:00";
 
@@ -100,7 +101,7 @@ function getNextPlayableGame(events: ScheduleEvent[], now: Date, fetchedAt: stri
       game: null,
       status: nextBye ? "bye" : "unavailable",
       note: nextBye
-        ? `${TEAM_NAME} has a bye on ${nextBye.dateLabel}.`
+        ? `${DISPLAY_TEAM_LABEL} has a bye on ${nextBye.dateLabel}.`
         : "No upcoming QuickScores game could be found.",
     } satisfies QuickScoresSchedule;
   }
@@ -122,7 +123,7 @@ function getNextPlayableGame(events: ScheduleEvent[], now: Date, fetchedAt: stri
     },
     note:
       upcoming[0]?.isBye && upcoming[0].teams.includes(TEAM_NAME)
-        ? `${TEAM_NAME} has a bye on ${upcoming[0].dateLabel}; showing the next playable game.`
+        ? `${DISPLAY_TEAM_LABEL} has a bye on ${upcoming[0].dateLabel}; showing the next playable game.`
         : "Loaded from QuickScores.",
     status: "ready",
   } satisfies QuickScoresSchedule;
