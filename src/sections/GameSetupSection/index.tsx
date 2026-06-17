@@ -1,8 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import Link from "next/link";
-import { ArrowRight, CalendarDays, Check, Home, Sparkles, UsersRound } from "lucide-react";
+import { ArrowRight, CalendarDays, Check, Home, Settings2, Sparkles, UsersRound } from "lucide-react";
 import { StatTile } from "@/components/StatTile";
 import { StatusPill } from "@/components/StatusPill";
 import { TeamSetupGate } from "@/components/TeamSetupGate";
@@ -10,41 +10,22 @@ import {
   buildPregamePlayerPool,
   generateLineupIds,
   getLineupTargetCount,
+  resolveSuggestedLineupIds,
   savePregameSetup,
   usePregameSetup,
   type LineupSizeOption,
 } from "@/lib/pregameSetupStorage";
 import { validateLineupPlayerPool } from "@/lib/lineupRules";
-import { defaultGameRules } from "@/lib/seedTeam";
 import { useActiveTeam } from "@/lib/teamStorage";
 import { useFirstGameState } from "@/lib/useFirstGameState";
 import { cn } from "@/lib/utils";
-
-type Rule = {
-  label: string;
-  value: string;
-  enabled: boolean;
-};
-
-const initialRules: Rule[] = [
-  { label: "Home run limit", value: String(defaultGameRules.homeRunLimit), enabled: defaultGameRules.homeRunLimitEnabled },
-  { label: "After limit", value: defaultGameRules.afterHomeRunLimit, enabled: defaultGameRules.homeRunLimitEnabled },
-  { label: "Run limit per inning", value: String(defaultGameRules.runLimitPerInning), enabled: Boolean(defaultGameRules.runLimitPerInning) },
-  { label: "Mercy rule", value: defaultGameRules.mercyRule, enabled: true },
-  { label: "Courtesy runners", value: "Allowed", enabled: defaultGameRules.courtesyRunnersAllowed },
-  { label: "Walks allowed", value: "Allowed", enabled: defaultGameRules.walksAllowed },
-  { label: "Sac flies tracked", value: "Tracked", enabled: defaultGameRules.sacFliesTracked },
-  { label: "Errors tracked", value: "Tracked", enabled: defaultGameRules.errorsTracked },
-  { label: "Fielder's choices", value: "Tracked", enabled: defaultGameRules.fieldersChoicesTracked },
-];
+import type { GameRules } from "@/types/game";
 
 export function GameSetupSection() {
   const activeTeam = useActiveTeam();
   const setup = usePregameSetup();
   const gameState = useFirstGameState();
-  const [rules, setRules] = useState(initialRules);
   const lineupTarget = getLineupTargetCount(setup.lineupSize, setup.selectedPlayerIds.length);
-  const generatedCount = setup.generatedLineupIds.length;
   const players = activeTeam?.players.filter((player) => player.isActive) ?? [];
   const selectedPlayerPool = useMemo(
     () => buildPregamePlayerPool(setup, gameState, activeTeam),
@@ -52,6 +33,7 @@ export function GameSetupSection() {
   );
   const lineupValidation = validateLineupPlayerPool(selectedPlayerPool);
   const canGenerateLineup = setup.selectedPlayerIds.length > 0 && lineupValidation.isLeagueCompliant;
+  const suggestedLineup = resolveSuggestedLineupIds(setup, gameState, activeTeam);
 
   if (!activeTeam) {
     return <TeamSetupGate title="Create your team before setting up a game." />;
@@ -69,14 +51,6 @@ export function GameSetupSection() {
       acceptedLineupIds: [],
       status: "SETUP",
     });
-  }
-
-  function toggleRule(label: string) {
-    setRules((current) =>
-      current.map((rule) =>
-        rule.label === label ? { ...rule, enabled: !rule.enabled } : rule,
-      ),
-    );
   }
 
   function updateOpponent(opponent: string) {
@@ -198,7 +172,7 @@ export function GameSetupSection() {
                 <Link
                   className={cn(
                     "inline-flex min-h-12 items-center justify-center gap-2 rounded-lg px-4 text-sm font-bold",
-                    generatedCount
+                    suggestedLineup.lineupIds.length || suggestedLineup.canGenerate
                       ? "bg-[var(--success-soft)] text-[var(--success)]"
                       : "pointer-events-none bg-[var(--surface)] text-[var(--muted-foreground)]",
                   )}
@@ -261,25 +235,34 @@ export function GameSetupSection() {
               })}
             </div>
             <div className="mt-4 rounded-lg bg-[var(--accent-soft)] p-3 text-sm font-semibold text-[var(--accent-strong)]">
-              {generatedCount
-                ? `${generatedCount} hitters generated for coach review.`
-                : "Generate the order after today's player list is set."}
+              {suggestedLineup.lineupIds.length
+                ? `${suggestedLineup.lineupIds.length} hitters ready for coach review.`
+                : suggestedLineup.emptyReason ?? "Generate the order after today's player list is set."}
             </div>
           </article>
         </div>
 
         <article className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]">
-          <div>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
             <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
               League rules
             </p>
             <h2 className="mt-1 text-lg font-semibold text-foreground">
-              Tap rules on or off for this local setup
+              Current game settings
             </h2>
+            </div>
+            <Link
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white"
+              href="/game-settings"
+            >
+              <Settings2 className="size-4" aria-hidden="true" />
+              Edit Rules
+            </Link>
           </div>
           <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {rules.map((rule) => (
-              <button
+            {formatRuleSummary(setup.gameRules).map((rule) => (
+              <div
                 className={cn(
                   "flex min-h-12 items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left text-sm",
                   rule.enabled
@@ -287,18 +270,30 @@ export function GameSetupSection() {
                     : "bg-[var(--surface)] text-[var(--muted-foreground)]",
                 )}
                 key={rule.label}
-                onClick={() => toggleRule(rule.label)}
-                type="button"
               >
                 <span className="font-semibold">{rule.label}</span>
                 <span className="rounded-full bg-[var(--card)] px-2.5 py-1 text-xs font-bold">
                   {rule.enabled ? rule.value : "Off"}
                 </span>
-              </button>
+              </div>
             ))}
           </div>
         </article>
       </div>
     </section>
   );
+}
+
+function formatRuleSummary(rules: GameRules) {
+  return [
+    { label: "Home run limit", value: String(rules.homeRunLimit), enabled: rules.homeRunLimitEnabled },
+    { label: "After limit", value: rules.afterHomeRunLimit, enabled: rules.homeRunLimitEnabled },
+    { label: "Run limit per inning", value: String(rules.runLimitPerInning), enabled: Boolean(rules.runLimitPerInning) },
+    { label: "Mercy rule", value: rules.mercyRule, enabled: true },
+    { label: "Courtesy runners", value: "Allowed", enabled: rules.courtesyRunnersAllowed },
+    { label: "Walks allowed", value: "Allowed", enabled: rules.walksAllowed },
+    { label: "Sac flies tracked", value: "Tracked", enabled: rules.sacFliesTracked },
+    { label: "Errors tracked", value: "Tracked", enabled: rules.errorsTracked },
+    { label: "Fielder's choices", value: "Tracked", enabled: rules.fieldersChoicesTracked },
+  ];
 }

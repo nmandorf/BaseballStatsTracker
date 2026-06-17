@@ -1,6 +1,7 @@
-import type { GameState } from "@/lib/gameEngine";
-import { createInitialGameState, upsertCompletedGame } from "@/lib/gameEngine";
-import { getTeamAccountHeaders, loadActiveTeam } from "@/lib/teamStorage";
+import type { GameState } from "./gameEngine.ts";
+import { createInitialGameState, upsertCompletedGame } from "./gameEngine.ts";
+import { normalizeGameRules } from "./gameRules.ts";
+import { getTeamAccountHeaders, loadActiveTeam } from "./teamStorage.ts";
 
 const storageKey = "baseball-tracker:first-game-state:v1";
 const completedGameHistoryStorageKey = "baseball-tracker:completed-game-history:v1";
@@ -203,9 +204,18 @@ export function hydrateFirstGameStateFromPrisma(options: { force?: boolean } = {
     })
     .then((payload) => {
       const latestActiveTeam = loadActiveTeam();
+      const localState = loadFirstGameState();
 
       if (!payload?.state) {
+        if (shouldKeepLocalGameState(localState, null)) {
+          return;
+        }
+
         writeFirstGameState(createInitialGameState(latestActiveTeam?.players ?? []));
+        return;
+      }
+
+      if (shouldKeepLocalGameState(localState, payload.state)) {
         return;
       }
 
@@ -218,6 +228,22 @@ export function hydrateFirstGameStateFromPrisma(options: { force?: boolean } = {
     .catch(() => {
       // Local scoring stays available when Prisma is not configured.
     });
+}
+
+function shouldKeepLocalGameState(localState: GameState, remoteState: GameState | null) {
+  if (localState.status !== "IN_PROGRESS" || !localState.lineup.length) {
+    return false;
+  }
+
+  if (!remoteState || remoteState.status === "PREGAME") {
+    return true;
+  }
+
+  if (remoteState.status === "FINAL") {
+    return false;
+  }
+
+  return remoteState.plays.length < localState.plays.length;
 }
 
 function writeFirstGameState(state: GameState) {
@@ -295,5 +321,6 @@ function normalizeGameState(state: GameState, activePlayers: GameState["lineup"]
     endedAt: state.endedAt ?? null,
     opponent: state.opponent ?? "Opponent",
     isHome: state.isHome ?? false,
+    gameRules: normalizeGameRules(state.gameRules),
   };
 }

@@ -190,7 +190,7 @@ export function FirebaseLogin({
             <div>
               <p className="text-sm font-bold">Baseball Stat Tracker</p>
               <p className="text-xs font-semibold text-white/75">
-                Kobe&apos;s Peeps team access
+                Team access
               </p>
             </div>
           </div>

@@ -1,4 +1,4 @@
-import type { BatterResult, LocalGameStatus, OutType, ScoredPlay } from "@/types/game";
+import type { BatterResult, GameRules, LocalGameStatus, OutType, ScoredPlay } from "@/types/game";
 import type { Player } from "@/types/player";
 import type {
   BaseLabel,
@@ -9,6 +9,7 @@ import type {
   UiRunnerDestination,
 } from "@/types/runner";
 import type { PlayerStats } from "@/types/stats";
+import { defaultGameRules } from "./seedTeam.ts";
 import { addBatterResult, addRun, addRunnerOut, addStats, createZeroStats, divide } from "./statCalculations.ts";
 
 export const batterResults: BatterResult[] = ["1B", "2B", "3B", "HR", "BB", "ROE", "FC", "SF", "Out", "DP"];
@@ -35,6 +36,7 @@ export type GameState = {
   endedAt: string | null;
   opponent: string;
   isHome: boolean;
+  gameRules: GameRules;
   lineup: Player[];
   currentBatterIndex: number;
   inning: number;
@@ -127,6 +129,7 @@ type CreateInitialGameStateOptions = {
   opponent?: string;
   isHome?: boolean;
   status?: LocalGameStatus;
+  gameRules?: GameRules;
 };
 
 export function createInitialGameState(lineup: Player[], options: CreateInitialGameStateOptions = {}): GameState {
@@ -135,6 +138,7 @@ export function createInitialGameState(lineup: Player[], options: CreateInitialG
     endedAt: null,
     opponent: options.opponent ?? "Opponent",
     isHome: options.isHome ?? false,
+    gameRules: options.gameRules ?? defaultGameRules,
     lineup,
     currentBatterIndex: 0,
     inning: 1,
@@ -885,6 +889,7 @@ function snapshotState(state: GameState): GameStateSnapshot {
     endedAt: state.endedAt,
     opponent: state.opponent,
     isHome: state.isHome,
+    gameRules: state.gameRules,
     lineup: state.lineup,
     currentBatterIndex: state.currentBatterIndex,
     inning: state.inning,

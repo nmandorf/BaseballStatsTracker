@@ -5,7 +5,6 @@ import {
   ClipboardList,
   Home,
   ListOrdered,
-  Menu,
   Settings2,
 } from "lucide-react";
 import { AuthStatus } from "@/components/AuthStatus";
@@ -15,15 +14,15 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { key: "home", label: "Home", href: "/", icon: Home },
   { key: "roster", label: "Roster", href: "/roster", icon: ClipboardList },
-  { key: "game", label: "Game", href: "/game-setup", icon: Settings2 },
-  { key: "order", label: "Order", href: "/batting-order", icon: ListOrdered },
+  { key: "settings", label: "Game Settings", href: "/game-settings", icon: Settings2 },
+  { key: "order", label: "Batting Order", href: "/batting-order", icon: ListOrdered },
   { key: "stats", label: "Stats", href: "/stats", icon: BarChart3 },
 ] as const;
 
 export type AppNavKey = (typeof navItems)[number]["key"];
 
 type HeaderSectionProps = {
-  activeNav?: AppNavKey;
+  activeNav?: AppNavKey | null;
 };
 
 export function HeaderSection({ activeNav = "home" }: HeaderSectionProps) {
@@ -43,7 +42,7 @@ export function HeaderSection({ activeNav = "home" }: HeaderSectionProps) {
               Baseball Stat Tracker
             </p>
             <p className="text-xs text-[var(--muted-foreground)]">
-              Kobe&apos;s Peeps game day
+              Game day workspace
             </p>
           </div>
         </div>
@@ -76,12 +75,6 @@ export function HeaderSection({ activeNav = "home" }: HeaderSectionProps) {
             Game day
           </StatusPill>
           <AuthStatus />
-          <span
-            className="hidden size-12 items-center justify-center rounded-lg border border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)] shadow-sm shadow-foreground/[0.025] sm:flex"
-            aria-hidden="true"
-          >
-            <Menu className="size-5" aria-hidden="true" />
-          </span>
         </div>
       </div>
       <nav

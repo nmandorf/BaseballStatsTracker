@@ -4,7 +4,7 @@ import { FooterSection } from "@/sections/FooterSection";
 import { HeaderSection, type AppNavKey } from "@/sections/HeaderSection";
 
 type AppShellProps = {
-  activeNav: AppNavKey;
+  activeNav: AppNavKey | null;
   children: ReactNode;
   requireAuth?: boolean;
 };

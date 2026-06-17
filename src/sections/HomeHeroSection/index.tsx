@@ -38,7 +38,7 @@ export function HomeHeroSection({ schedule }: HomeHeroSectionProps) {
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-sm font-bold text-[var(--accent)]">
-                Kobe&apos;s Peeps
+                Baseball Stat Tracker
               </p>
               <h1 className="mt-1 text-2xl font-semibold leading-tight text-foreground sm:text-3xl">
                 Game day

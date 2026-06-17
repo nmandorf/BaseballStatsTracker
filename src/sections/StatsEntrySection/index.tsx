@@ -612,8 +612,8 @@ export function FinalGameStatsView({
           <StatTile helper={`OPS ${formatRate(teamTotals.ops)}`} label="OBP" value={formatRate(teamTotals.onBasePercentage)} />
         </div>
 
-        <div className="mt-4 grid items-stretch gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-          <article className="order-1 flex h-full flex-col rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035] lg:order-2">
+        <div className="mt-4 grid min-w-0 items-stretch gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <article className="order-1 flex h-full min-w-0 flex-col rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035] lg:order-2">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
@@ -664,7 +664,7 @@ export function FinalGameStatsView({
             ) : null}
           </article>
 
-          <StatsPlayerTable className="order-2 lg:order-1" label="Player Game Stats" rows={playerRows} />
+          <StatsPlayerTable className="order-2 min-w-0 lg:order-1" label="Player Game Stats" rows={playerRows} />
         </div>
       </div>
     </section>
@@ -687,11 +687,11 @@ export function StatsPlayerTable({
   className?: string;
 }) {
   return (
-    <article className={cn("flex h-full flex-col rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]", className)}>
+    <article className={cn("flex h-full min-w-0 flex-col rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]", className)}>
       <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
         {label}
       </p>
-      <div className="mt-3 overflow-x-auto">
+      <div className="mt-3 w-full min-w-0 overflow-x-auto">
         <table className="w-full min-w-[680px] border-separate border-spacing-y-2 text-left text-sm">
           <thead className="text-xs font-bold uppercase tracking-[0.1em] text-[var(--muted-foreground)]">
             <tr>
@@ -737,7 +737,7 @@ export function GameHistoryCard({
   className?: string;
 }) {
   return (
-    <article className={cn("flex h-full flex-col rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]", className)}>
+    <article className={cn("flex h-full min-w-0 flex-col rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]", className)}>
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
@@ -758,7 +758,7 @@ export function GameHistoryCard({
             return (
               <Link
                 className={cn(
-                  "block rounded-lg border p-3 text-sm transition",
+                  "block min-w-0 rounded-lg border p-3 text-sm transition",
                   isCurrent
                     ? "border-[var(--accent)] bg-[var(--accent-soft)]"
                     : "border-transparent bg-[var(--surface)] hover:border-[var(--accent)]/30",
@@ -766,7 +766,7 @@ export function GameHistoryCard({
                 href={game.href}
                 key={game.id}
               >
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate font-bold text-foreground">
                       {game.opponent}
@@ -775,9 +775,9 @@ export function GameHistoryCard({
                       {formatGameDate(game.endedAt)}
                     </p>
                   </div>
-                  <StatusPill tone={game.result === "Win" ? "ready" : "planned"}>{game.result}</StatusPill>
+                  <StatusPill className="shrink-0" tone={game.result === "Win" ? "ready" : "planned"}>{game.result}</StatusPill>
                 </div>
-                <p className="mt-3 text-lg font-semibold text-foreground">
+                <p className="mt-3 break-words text-lg font-semibold text-foreground">
                   Us {game.teamScore} - Them {game.opponentScore}
                 </p>
                 <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">
