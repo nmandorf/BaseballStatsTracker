@@ -394,7 +394,9 @@ export function DefenseSection() {
             <div className="mt-4">
               <DefensiveAlignmentEditor
                 alignment={alignment}
+                lockedPitcherPlayerId={gameState.lockedPitcherPlayerId}
                 players={gameState.lineup}
+                priorAlignments={gameState.defensiveAlignments}
                 onChange={persistAlignment}
               />
             </div>

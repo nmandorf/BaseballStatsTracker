@@ -20,7 +20,7 @@ import { StatTile } from "@/components/StatTile";
 import { StatusPill } from "@/components/StatusPill";
 import { TeamSetupGate } from "@/components/TeamSetupGate";
 import { createInitialGameState, getLiveGameHref, initializeStartingDefense } from "@/lib/gameEngine";
-import { createDefaultDefensiveAlignment, getFirstDefensiveHalf } from "@/lib/defenseEngine";
+import { createDefaultDefensiveAlignment, getDefensiveAlignmentIssues, getFirstDefensiveHalf } from "@/lib/defenseEngine";
 import { saveFirstGameState } from "@/lib/firstGameStorage";
 import { recommendBattingOrder, validateLineupGenderRules, validateLineupPlayerPool, type RecommendedLineupRow } from "@/lib/lineupRules";
 import {
@@ -62,12 +62,18 @@ export function BattingOrderSection() {
   const lineupPlayers = lineup.map((row) => row.player);
   const firstDefensiveHalf = getFirstDefensiveHalf(setup.isHome);
   const defenseAlignment = resolveStartingDefenseAlignment(lineupPlayers, startingDefense, firstDefensiveHalf);
+  const defenseIssues = defenseAlignment
+    ? getDefensiveAlignmentIssues(defenseAlignment, lineupPlayers)
+    : [];
   const [selectedPriority, setSelectedPriority] = useState("OBP");
   const lineupValidation = validateLineupGenderRules(lineup.map((row) => row.player));
   const acceptedMatchesLineup =
     lineup.length > 0 &&
     setup.acceptedLineupIds.length === lineup.length &&
     setup.acceptedLineupIds.every((playerId, index) => playerId === lineup[index]?.player.id);
+  const canStartGame = acceptedMatchesLineup
+    && lineupValidation.isLeagueCompliant
+    && defenseIssues.length === 0;
   const lineupWarnings = [
     ...suggestedLineup.warnings,
     ...playerPoolValidation.warnings,
@@ -122,7 +128,7 @@ export function BattingOrderSection() {
   }
 
   function startGame() {
-    if (!acceptedMatchesLineup || !lineupValidation.isLeagueCompliant) {
+    if (!canStartGame) {
       return;
     }
 
@@ -209,7 +215,7 @@ export function BattingOrderSection() {
               </button>
               <button
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={!acceptedMatchesLineup || !lineupValidation.isLeagueCompliant}
+                disabled={!canStartGame}
                 onClick={startGame}
                 type="button"
               >
@@ -296,11 +302,20 @@ export function BattingOrderSection() {
                   {firstDefensiveHalf.half} {firstDefensiveHalf.inning}
                 </h2>
               </div>
-              <StatusPill tone={acceptedMatchesLineup ? "ready" : "review"}>
-                {acceptedMatchesLineup ? "Ready" : "Accept order first"}
+              <StatusPill tone={canStartGame ? "ready" : "review"}>
+                {canStartGame ? "Ready" : defenseIssues.length ? "Fix defense" : "Accept order first"}
               </StatusPill>
             </div>
             <div className="mt-4">
+              {defenseIssues.map((issue) => (
+                <p
+                  className="mb-3 rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-sm font-bold text-[var(--danger)]"
+                  key={issue.code}
+                  role="alert"
+                >
+                  {issue.message}
+                </p>
+              ))}
               {defenseAlignment ? (
                 <DefensiveAlignmentEditor
                   alignment={defenseAlignment}

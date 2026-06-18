@@ -11,10 +11,12 @@ import type {
 import type { PlayerStats } from "@/types/stats";
 import type { DefensiveAlignment, DefensiveEvent } from "@/types/defense";
 import {
-  copyAlignmentForHalf,
   createDefensiveEvent,
   createDefaultDefensiveAlignment,
+  generateDefensiveAlignment,
   getAlignmentForCurrentHalf,
+  getAssignedPlayerIdForPosition,
+  getDefensiveAlignmentIssues,
   getLatestDefensiveAlignment,
   getNextHalfInning,
   getTeamPhase,
@@ -59,6 +61,7 @@ export type GameState = {
   bases: BasesState;
   defensiveAlignments: DefensiveAlignment[];
   defensiveEvents: DefensiveEvent[];
+  lockedPitcherPlayerId: string | null;
   statsByPlayerId: Record<string, PlayerStats>;
   plays: ScoredPlay[];
   history: GameStateSnapshot[];
@@ -172,6 +175,7 @@ export function createInitialGameState(lineup: Player[], options: CreateInitialG
     bases: createEmptyBases(),
     defensiveAlignments: [],
     defensiveEvents: [],
+    lockedPitcherPlayerId: null,
     statsByPlayerId: createGameStatsByPlayerId(lineup),
     plays: [],
     history: [],
@@ -230,25 +234,46 @@ export function getOrCreateDefensiveAlignmentForHalf(
     return currentAlignment;
   }
 
-  return copyAlignmentForHalf(
-    getLatestDefensiveAlignment(state.defensiveAlignments),
-    state.lineup,
+  const latestAlignment = getLatestDefensiveAlignment(state.defensiveAlignments);
+
+  return generateDefensiveAlignment({
+    players: state.lineup,
+    priorAlignments: state.defensiveAlignments,
     inning,
     half,
-  );
+    roverEnabled: latestAlignment?.roverEnabled ?? state.lineup.length > 10,
+    lockedPitcherPlayerId: state.lockedPitcherPlayerId,
+  });
 }
 
 export function initializeStartingDefense(state: GameState, alignment?: DefensiveAlignment): GameState {
   const startingAlignment = alignment ?? createDefaultDefensiveAlignment(state.lineup, state.inning, state.half);
+  const lockedPitcherPlayerId = getAssignedPlayerIdForPosition(startingAlignment, "P");
+  const issues = getDefensiveAlignmentIssues(startingAlignment, state.lineup, lockedPitcherPlayerId);
+
+  if (issues.length > 0) {
+    return {
+      ...state,
+      status: "PREGAME",
+      lockedPitcherPlayerId: null,
+    };
+  }
 
   return {
     ...state,
+    lockedPitcherPlayerId,
     defensiveAlignments: upsertDefensiveAlignment(state.defensiveAlignments, startingAlignment),
   };
 }
 
 export function saveDefensiveAlignment(state: GameState, alignment: DefensiveAlignment): GameState {
   if (state.status === "FINAL") {
+    return state;
+  }
+
+  const issues = getDefensiveAlignmentIssues(alignment, state.lineup, state.lockedPitcherPlayerId);
+
+  if (issues.length > 0) {
     return state;
   }
 
@@ -570,10 +595,32 @@ export function savePlay(
   const nextStats = applyPlayStats(state.statsByPlayerId, preview, result, outType);
   const nextBatterIndex = (state.currentBatterIndex + 1) % state.lineup.length;
   const nextHalfInning = preview.inningEnded ? getNextHalfInning(state.inning, state.half) : state;
-  const nextDefenseAlignment =
-    preview.inningEnded && getTeamPhase(state.isHome, nextHalfInning.half) === "FIELDING"
-      ? copyAlignmentForHalf(getLatestDefensiveAlignment(state.defensiveAlignments), state.lineup, nextHalfInning.inning, nextHalfInning.half)
-      : null;
+  const existingNextDefense = getAlignmentForCurrentHalf(
+    state.defensiveAlignments,
+    nextHalfInning.inning,
+    nextHalfInning.half,
+  );
+  const latestDefense = getLatestDefensiveAlignment(state.defensiveAlignments);
+  const shouldGenerateDefense = preview.inningEnded
+    && getTeamPhase(state.isHome, nextHalfInning.half) === "FIELDING"
+    && !existingNextDefense;
+  const nextDefenseAlignment = shouldGenerateDefense
+    ? generateDefensiveAlignment({
+        players: state.lineup,
+        priorAlignments: state.defensiveAlignments,
+        inning: nextHalfInning.inning,
+        half: nextHalfInning.half,
+        roverEnabled: latestDefense?.roverEnabled ?? state.lineup.length > 10,
+        lockedPitcherPlayerId: state.lockedPitcherPlayerId,
+      })
+    : null;
+  const canSaveNextDefense = nextDefenseAlignment
+    ? getDefensiveAlignmentIssues(
+        nextDefenseAlignment,
+        state.lineup,
+        state.lockedPitcherPlayerId,
+      ).length === 0
+    : false;
 
   return {
     ...state,
@@ -582,7 +629,7 @@ export function savePlay(
     outs: preview.inningEnded ? 0 : preview.projectedOuts,
     teamScore: state.teamScore + preview.runs,
     bases: cloneBases(preview.nextBases),
-    defensiveAlignments: nextDefenseAlignment
+    defensiveAlignments: nextDefenseAlignment && canSaveNextDefense
       ? upsertDefensiveAlignment(state.defensiveAlignments, nextDefenseAlignment)
       : state.defensiveAlignments,
     statsByPlayerId: nextStats,
@@ -629,6 +676,7 @@ export function getStateBeforeLatestPlayCorrection(state: GameState, playId: str
     ...prePlaySnapshot,
     defensiveAlignments: state.defensiveAlignments,
     defensiveEvents: state.defensiveEvents,
+    lockedPitcherPlayerId: state.lockedPitcherPlayerId,
     opponentScore: state.opponentScore,
     history: state.history.slice(0, snapshotIndex),
   };
@@ -1176,6 +1224,7 @@ function snapshotState(state: GameState): GameStateSnapshot {
     bases: cloneBases(state.bases),
     defensiveAlignments: state.defensiveAlignments,
     defensiveEvents: state.defensiveEvents,
+    lockedPitcherPlayerId: state.lockedPitcherPlayerId,
     statsByPlayerId: cloneStats(state.statsByPlayerId),
     plays: state.plays,
     lastSummary: state.lastSummary,

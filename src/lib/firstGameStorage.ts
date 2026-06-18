@@ -326,6 +326,14 @@ function normalizeGameState(state: GameState, activePlayers: GameState["lineup"]
     return createInitialGameState(activePlayers);
   }
 
+  const defensiveAlignments = Array.isArray(state.defensiveAlignments) ? state.defensiveAlignments : [];
+  const firstPitcherSlot = defensiveAlignments
+    .find((alignment) => alignment.slots.P?.status === "ASSIGNED")
+    ?.slots.P;
+  const inferredPitcherPlayerId = firstPitcherSlot?.status === "ASSIGNED"
+    ? firstPitcherSlot.playerId
+    : null;
+
   return {
     ...state,
     lineup: state.lineup.map((player) => {
@@ -342,8 +350,9 @@ function normalizeGameState(state: GameState, activePlayers: GameState["lineup"]
     endedAt: state.endedAt ?? null,
     opponent: state.opponent ?? "Opponent",
     isHome: state.isHome ?? false,
-    defensiveAlignments: Array.isArray(state.defensiveAlignments) ? state.defensiveAlignments : [],
+    defensiveAlignments,
     defensiveEvents: Array.isArray(state.defensiveEvents) ? state.defensiveEvents : [],
+    lockedPitcherPlayerId: state.lockedPitcherPlayerId ?? inferredPitcherPlayerId,
     gameRules: normalizeGameRules(state.gameRules),
   };
 }

@@ -4,6 +4,7 @@ import {
   createEmptyPlayerInput,
   createZeroPlayerStats,
 } from "@/lib/teamStorage";
+import { allDefensivePositions, defensivePositionLabels, normalizeDefensivePosition } from "@/lib/defenseEngine";
 import { cn } from "@/lib/utils";
 import type { BattingSide, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
 import type { DefensiveRatingValue } from "@/types/defense";
@@ -62,6 +63,10 @@ export function PlayerForm({
   const [input, setInput] = useState<PlayerProfileInput>(initialInput);
   const [showStats, setShowStats] = useState(false);
   const canSubmit = Boolean(input.name.trim() && input.gender !== "Unknown");
+  const primaryPosition = normalizeDefensivePosition(input.primaryPosition);
+  const strongestPosition = normalizeDefensivePosition(input.defensiveProfile.notes.bestPosition);
+  const avoidPosition = normalizeDefensivePosition(input.defensiveProfile.notes.avoidPosition);
+  const backupPosition = normalizeDefensivePosition(input.defensiveProfile.notes.backupPosition);
 
   function updateField<Key extends keyof PlayerProfileInput>(key: Key, value: PlayerProfileInput[Key]) {
     setInput((current) => ({
@@ -212,13 +217,20 @@ export function PlayerForm({
             </select>
           </label>
           <label className={fieldLabelClass}>
-            Position
-            <input
+            Preferred position
+            <select
               className={fieldControlClass}
               onChange={(event) => updateField("primaryPosition", event.target.value)}
-              placeholder="IF"
-              value={input.primaryPosition}
-            />
+              value={primaryPosition ?? input.primaryPosition}
+            >
+              <option value="">No preference</option>
+              {input.primaryPosition && !primaryPosition ? (
+                <option value={input.primaryPosition}>Current: {input.primaryPosition}</option>
+              ) : null}
+              {allDefensivePositions.map((position) => (
+                <option key={position} value={position}>{defensivePositionLabels[position]}</option>
+              ))}
+            </select>
           </label>
         </div>
 
@@ -282,31 +294,58 @@ export function PlayerForm({
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <label className={fieldLabelClass}>
-              Best position
-              <input
+              Strongest position
+              <select
                 className={fieldControlClass}
                 onChange={(event) => updateDefensiveNote("bestPosition", event.target.value)}
-                placeholder="LC"
-                value={input.defensiveProfile.notes.bestPosition}
-              />
+                value={strongestPosition ?? input.defensiveProfile.notes.bestPosition}
+              >
+                <option value="">Not set</option>
+                {input.defensiveProfile.notes.bestPosition && !strongestPosition ? (
+                  <option value={input.defensiveProfile.notes.bestPosition}>
+                    Current: {input.defensiveProfile.notes.bestPosition}
+                  </option>
+                ) : null}
+                {allDefensivePositions.map((position) => (
+                  <option key={position} value={position}>{defensivePositionLabels[position]}</option>
+                ))}
+              </select>
             </label>
             <label className={fieldLabelClass}>
               Avoid
-              <input
+              <select
                 className={fieldControlClass}
                 onChange={(event) => updateDefensiveNote("avoidPosition", event.target.value)}
-                placeholder="SS"
-                value={input.defensiveProfile.notes.avoidPosition}
-              />
+                value={avoidPosition ?? input.defensiveProfile.notes.avoidPosition}
+              >
+                <option value="">None</option>
+                {input.defensiveProfile.notes.avoidPosition && !avoidPosition ? (
+                  <option value={input.defensiveProfile.notes.avoidPosition}>
+                    Current: {input.defensiveProfile.notes.avoidPosition}
+                  </option>
+                ) : null}
+                {allDefensivePositions.map((position) => (
+                  <option key={position} value={position}>{defensivePositionLabels[position]}</option>
+                ))}
+              </select>
             </label>
             <label className={fieldLabelClass}>
               Backup
-              <input
+              <select
                 className={fieldControlClass}
                 onChange={(event) => updateDefensiveNote("backupPosition", event.target.value)}
-                placeholder="RF"
-                value={input.defensiveProfile.notes.backupPosition}
-              />
+                value={backupPosition ?? input.defensiveProfile.notes.backupPosition}
+              >
+                <option value="">Not set</option>
+                {input.defensiveProfile.notes.backupPosition && !backupPosition ? (
+                  <option value={input.defensiveProfile.notes.backupPosition}>
+                    Current: {input.defensiveProfile.notes.backupPosition}
+                  </option>
+                ) : null}
+                {allDefensivePositions.map((position) => (
+                  <option key={position} value={position}>{defensivePositionLabels[position]}</option>
+                ))}
+              </select>
             </label>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
