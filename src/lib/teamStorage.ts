@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { createZeroStats } from "./statCalculations.ts";
+import { createDefaultDefensiveProfile, normalizeDefensiveProfile } from "./defenseEngine.ts";
 import { getFirebaseAuth, isFirebaseConfigured } from "./firebase.ts";
 import { normalizeTeamAccount, teamAccountHeaders, type TeamAccount } from "./teamAccount.ts";
 import type { ActiveTeam, BattingSide, Player, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
@@ -27,6 +28,7 @@ export function createEmptyPlayerInput(seedOrder = 1): PlayerProfileInput {
     speedRating: "Average",
     notes: "",
     contactNotes: "",
+    defensiveProfile: createDefaultDefensiveProfile(),
     roleHint: defaultRoleHint(seedOrder),
     isActive: true,
     startingStats: createZeroPlayerStats(),
@@ -48,6 +50,7 @@ export function createPlayerFromInput(input: PlayerProfileInput, seedOrder: numb
     speedRating: normalizeSpeedRating(input.speedRating),
     notes: notes || "Player profile ready for game-day tracking.",
     contactNotes: splitContactNotes(input.contactNotes),
+    defensiveProfile: normalizeDefensiveProfile(input.defensiveProfile),
     roleHint,
     isActive: input.isActive,
     seedOrder,
@@ -426,6 +429,7 @@ function normalizePlayer(player: Partial<Player>, seedOrder: number): Player | n
     speedRating: normalizeSpeedRating(player.speedRating),
     notes: typeof player.notes === "string" && player.notes.trim() ? player.notes.trim() : "Player profile ready for game-day tracking.",
     contactNotes: Array.isArray(player.contactNotes) ? player.contactNotes.filter(Boolean) : [],
+    defensiveProfile: normalizeDefensiveProfile(player.defensiveProfile),
     roleHint: typeof player.roleHint === "string" && player.roleHint.trim() ? player.roleHint.trim() : defaultRoleHint(seedOrder),
     isActive: typeof player.isActive === "boolean" ? player.isActive : true,
     seedOrder,

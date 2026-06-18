@@ -9,6 +9,10 @@ type PlayerCardProps = {
   bats: string;
   speed: string;
   stats: Array<{ label: string; value: string }>;
+  defenseStats?: Array<{ label: string; value: string }>;
+  defenseLabel?: string;
+  defenseEvidence?: string;
+  defenseNote?: string;
   note: string;
   status?: string;
   icon?: LucideIcon;
@@ -21,6 +25,10 @@ export function PlayerCard({
   bats,
   speed,
   stats,
+  defenseStats = [],
+  defenseLabel,
+  defenseEvidence,
+  defenseNote,
   note,
   status = "Active",
   icon: Icon = UserRound,
@@ -58,6 +66,38 @@ export function PlayerCard({
           </div>
         ))}
       </div>
+
+      {defenseStats.length ? (
+        <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--card)] p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="truncate text-sm font-bold text-foreground">
+              {defenseLabel ?? "Defense"}
+            </p>
+            {defenseEvidence ? (
+              <span className="shrink-0 rounded-full bg-[var(--accent-soft)] px-2 py-1 text-[0.65rem] font-bold text-[var(--accent)]">
+                {defenseEvidence}
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {defenseStats.map((stat) => (
+              <div className="rounded-lg bg-[var(--surface)] px-2 py-2" key={stat.label}>
+                <p className="truncate text-[0.64rem] font-bold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">
+                  {stat.label}
+                </p>
+                <p className="mt-1 truncate text-sm font-semibold text-foreground">
+                  {stat.value}
+                </p>
+              </div>
+            ))}
+          </div>
+          {defenseNote ? (
+            <p className="mt-2 text-xs font-semibold text-[var(--muted-foreground)]">
+              {defenseNote}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
 
       <div className="mt-4 flex gap-2 rounded-lg bg-[var(--surface)] p-3 text-sm text-[var(--muted-foreground)]">
         <CircleDot className="mt-0.5 size-4 shrink-0 text-[var(--accent)]" aria-hidden="true" />

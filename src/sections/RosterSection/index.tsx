@@ -1,13 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ClipboardList, Filter, RotateCcw, Search, UserPlus, UserRound, X } from "lucide-react";
+import { ClipboardList, Filter, PencilLine, RotateCcw, Search, UserPlus, UserRound, X } from "lucide-react";
 import { PlayerCard } from "@/components/PlayerCard";
 import { PlayerForm } from "@/components/PlayerForm";
+import { PriorStatsEditor } from "@/components/PriorStatsEditor";
 import { StatTile } from "@/components/StatTile";
 import { TeamSetupGate } from "@/components/TeamSetupGate";
-import { resetFirstGameState } from "@/lib/firstGameStorage";
-import { getPlayerSeasonStats } from "@/lib/gameEngine";
+import { resetFirstGameState, saveFirstGameState } from "@/lib/firstGameStorage";
+import { getDefensiveSummary } from "@/lib/defenseEngine";
+import { getPlayerGameStats, getPlayerSeasonStats, updatePlayerSeasonStatsBaseline } from "@/lib/gameEngine";
 import { calculateStats, formatPercent, formatRate } from "@/lib/statCalculations";
 import {
   addPlayerToActiveTeamBackend,
@@ -18,6 +20,7 @@ import {
 import { useFirstGameState } from "@/lib/useFirstGameState";
 import { cn } from "@/lib/utils";
 import type { Player, PlayerGender } from "@/types/player";
+import type { PlayerStats } from "@/types/stats";
 
 export function RosterSection() {
   const activeTeam = useActiveTeam();
@@ -26,6 +29,7 @@ export function RosterSection() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"all" | "active" | "inactive">("all");
   const [isSavingPlayer, setIsSavingPlayer] = useState(false);
+  const [editingStatsPlayerId, setEditingStatsPlayerId] = useState<string | null>(null);
 
   const playersWithStats = useMemo(() => {
     if (!activeTeam) {
@@ -58,6 +62,10 @@ export function RosterSection() {
   );
 
   const activeCount = players.filter((player) => player.isActive).length;
+  const editingStatsPlayer = activeTeam?.players.find((player) => player.id === editingStatsPlayerId) ?? null;
+  const editingStatsBaseline = editingStatsPlayer
+    ? firstGameState.lineup.find((player) => player.id === editingStatsPlayer.id)?.seasonStats ?? editingStatsPlayer.seasonStats
+    : null;
 
   if (!activeTeam) {
     return <TeamSetupGate title="Create your team before building the roster." />;
@@ -96,6 +104,30 @@ export function RosterSection() {
 
   function resetTeam() {
     resetFirstGameState();
+  }
+
+  function savePriorStats(playerId: string, seasonStats: PlayerStats) {
+    if (!activeTeam) {
+      return;
+    }
+
+    const nextGameState = updatePlayerSeasonStatsBaseline(firstGameState, playerId, seasonStats);
+    const player = activeTeam.players.find((item) => item.id === playerId);
+    const persistedSeasonStats = player && nextGameState !== firstGameState
+      ? getPlayerSeasonStats({ ...player, seasonStats }, nextGameState)
+      : seasonStats;
+
+    updateActiveTeamPlayers(
+      activeTeam.players.map((item) => (
+        item.id === playerId ? { ...item, seasonStats: persistedSeasonStats } : item
+      )),
+    );
+
+    if (nextGameState !== firstGameState) {
+      saveFirstGameState(nextGameState);
+    }
+
+    setEditingStatsPlayerId(null);
   }
 
   return (
@@ -162,49 +194,65 @@ export function RosterSection() {
         </div>
 
         <div className="mt-4 grid items-stretch gap-3 lg:grid-cols-3">
-          {filteredPlayers.map((player) => (
-            <div className="grid h-full grid-rows-[1fr_auto_auto] gap-2" key={player.id}>
-              <PlayerCard
-                bats={player.bats}
-                gender={player.gender}
-                name={player.name}
-                note={player.notes}
-                role={player.roleHint}
-                speed={player.speedRating}
-                stats={buildPlayerStats(player)}
-                status={player.isActive ? "Active" : "Inactive"}
-              />
-              <button
-                className={cn(
-                  "min-h-11 rounded-lg text-sm font-bold",
-                  player.isActive
-                    ? "bg-[var(--danger-soft)] text-[var(--danger)]"
-                    : "bg-[var(--success-soft)] text-[var(--success)]",
-                )}
-                onClick={() => togglePlayer(player.id)}
-                type="button"
-              >
-                {player.isActive ? "Mark Inactive" : "Mark Active"}
-              </button>
-              <div className="grid grid-cols-2 gap-2">
-                {(["Female", "Male"] as const).map((gender) => (
-                  <button
-                    className={cn(
-                      "min-h-10 rounded-lg border px-3 text-xs font-bold",
-                      player.gender === gender
-                        ? "border-[var(--accent)] bg-[var(--accent)] text-white"
-                        : "border-[var(--border)] bg-[var(--surface)] text-foreground",
-                    )}
-                    key={gender}
-                    onClick={() => setPlayerGender(player.id, gender)}
-                    type="button"
-                  >
-                    {gender}
-                  </button>
-                ))}
+          {filteredPlayers.map((player) => {
+            const playerDefense = buildPlayerDefense(player, firstGameState);
+
+            return (
+              <div className="grid h-full grid-rows-[1fr_auto_auto_auto] gap-2" key={player.id}>
+                <PlayerCard
+                  bats={player.bats}
+                  defenseEvidence={playerDefense.defenseEvidence}
+                  defenseLabel={playerDefense.defenseLabel}
+                  defenseNote={playerDefense.defenseNote}
+                  defenseStats={playerDefense.defenseStats}
+                  gender={player.gender}
+                  name={player.name}
+                  note={player.notes}
+                  role={player.roleHint}
+                  speed={player.speedRating}
+                  stats={buildPlayerStats(player)}
+                  status={player.isActive ? "Active" : "Inactive"}
+                />
+                <button
+                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-bold text-foreground"
+                  onClick={() => setEditingStatsPlayerId(player.id)}
+                  type="button"
+                >
+                  <PencilLine className="size-4" aria-hidden="true" />
+                  Edit Prior Stats
+                </button>
+                <button
+                  className={cn(
+                    "min-h-11 rounded-lg text-sm font-bold",
+                    player.isActive
+                      ? "bg-[var(--danger-soft)] text-[var(--danger)]"
+                      : "bg-[var(--success-soft)] text-[var(--success)]",
+                  )}
+                  onClick={() => togglePlayer(player.id)}
+                  type="button"
+                >
+                  {player.isActive ? "Mark Inactive" : "Mark Active"}
+                </button>
+                <div className="grid grid-cols-2 gap-2">
+                  {(["Female", "Male"] as const).map((gender) => (
+                    <button
+                      className={cn(
+                        "min-h-10 rounded-lg border px-3 text-xs font-bold",
+                        player.gender === gender
+                          ? "border-[var(--accent)] bg-[var(--accent)] text-white"
+                          : "border-[var(--border)] bg-[var(--surface)] text-foreground",
+                      )}
+                      key={gender}
+                      onClick={() => setPlayerGender(player.id, gender)}
+                      type="button"
+                    >
+                      {gender}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -252,6 +300,43 @@ export function RosterSection() {
           </div>
         </div>
       ) : null}
+
+      {editingStatsPlayer && editingStatsBaseline ? (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/35 p-4">
+          <div
+            aria-labelledby="edit-prior-stats-dialog-title"
+            aria-modal="true"
+            className="max-h-[calc(100dvh-2rem)] w-full max-w-[38rem] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-2xl sm:p-5"
+            role="dialog"
+          >
+            <div className="sticky -top-4 z-10 mb-4 flex items-start justify-between gap-3 border-b border-[var(--border)] bg-[var(--card)] py-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                  Roster
+                </p>
+                <h2 className="mt-1 text-xl font-semibold text-foreground" id="edit-prior-stats-dialog-title">
+                  Edit Prior Stats
+                </h2>
+              </div>
+              <button
+                aria-label="Close prior stats editor"
+                className="flex size-11 shrink-0 items-center justify-center rounded-lg bg-[var(--surface)] text-foreground"
+                onClick={() => setEditingStatsPlayerId(null)}
+                type="button"
+              >
+                <X className="size-5" aria-hidden="true" />
+              </button>
+            </div>
+            <PriorStatsEditor
+              playerName={editingStatsPlayer.name}
+              stats={editingStatsBaseline}
+              currentGameStats={getPlayerGameStats(firstGameState, editingStatsPlayer.id)}
+              onCancel={() => setEditingStatsPlayerId(null)}
+              onSave={(seasonStats) => savePriorStats(editingStatsPlayer.id, seasonStats)}
+            />
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -264,4 +349,32 @@ function buildPlayerStats(player: Player) {
     { label: "OBP", value: formatRate(calculated.onBasePercentage) },
     { label: "Out%", value: formatPercent(calculated.outRate) },
   ];
+}
+
+function buildPlayerDefense(player: Player, gameState: ReturnType<typeof useFirstGameState>) {
+  const summary = getDefensiveSummary(player, gameState.defensiveAlignments, gameState.defensiveEvents);
+
+  return {
+    defenseLabel: summary.bestFitLabel,
+    defenseEvidence: summary.evidenceLabel,
+    defenseNote: [player.defensiveProfile.notes.strengths, player.defensiveProfile.notes.weaknesses]
+      .filter(Boolean)
+      .join(" | "),
+    defenseStats: [
+      { label: "Inn", value: String(summary.defensiveInnings) },
+      { label: "Pos", value: formatDefensivePositions(summary.inningsByPosition) },
+      { label: "Routine", value: String(summary.routinePlaysMade) },
+      { label: "Great", value: String(summary.greatPlays) },
+      { label: "Mis", value: String(summary.misplays) },
+      { label: "XB", value: String(summary.extraBasesAllowed) },
+    ],
+  };
+}
+
+function formatDefensivePositions(inningsByPosition: ReturnType<typeof getDefensiveSummary>["inningsByPosition"]) {
+  const positions = Object.entries(inningsByPosition)
+    .filter(([, innings]) => Boolean(innings))
+    .map(([position]) => position);
+
+  return positions.length ? positions.join("/") : "-";
 }

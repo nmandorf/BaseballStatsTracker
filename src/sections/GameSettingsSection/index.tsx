@@ -1,7 +1,5 @@
 "use client";
 
-import { Settings2 } from "lucide-react";
-import { ScreenHeader } from "@/components/ScreenHeader";
 import { StatusPill } from "@/components/StatusPill";
 import { TeamSetupGate } from "@/components/TeamSetupGate";
 import { savePregameSetup, usePregameSetup } from "@/lib/pregameSetupStorage";
@@ -95,15 +93,8 @@ export function GameSettingsSection() {
   return (
     <section className="bg-background py-6 sm:py-8">
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8">
-        <ScreenHeader
-          description="Set the league rules for the next live game before approving the lineup."
-          eyebrow="Game settings"
-          icon={Settings2}
-          status="Rules"
-          title={`${activeTeam.name} game rules`}
-        />
-
-        <div className="mt-4 grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
+        <h1 className="sr-only">Game settings for {activeTeam.name}</h1>
+        <div className="grid gap-4 lg:grid-cols-[0.95fr_1.05fr]">
           <article className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]">
             <div className="flex items-start justify-between gap-3">
               <div>

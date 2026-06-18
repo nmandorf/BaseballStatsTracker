@@ -9,18 +9,18 @@ import {
   BarChart3,
   CheckCircle2,
   GripVertical,
-  ListOrdered,
   Medal,
   MoveDown,
   Play,
   RotateCcw,
   Sparkles,
 } from "lucide-react";
-import { ScreenHeader } from "@/components/ScreenHeader";
+import { DefensiveAlignmentEditor } from "@/components/DefensiveAlignmentEditor";
 import { StatTile } from "@/components/StatTile";
 import { StatusPill } from "@/components/StatusPill";
 import { TeamSetupGate } from "@/components/TeamSetupGate";
-import { createInitialGameState } from "@/lib/gameEngine";
+import { createInitialGameState, getLiveGameHref, initializeStartingDefense } from "@/lib/gameEngine";
+import { createDefaultDefensiveAlignment, getFirstDefensiveHalf } from "@/lib/defenseEngine";
 import { saveFirstGameState } from "@/lib/firstGameStorage";
 import { recommendBattingOrder, validateLineupGenderRules, validateLineupPlayerPool, type RecommendedLineupRow } from "@/lib/lineupRules";
 import {
@@ -32,6 +32,7 @@ import {
 } from "@/lib/pregameSetupStorage";
 import { useActiveTeam } from "@/lib/teamStorage";
 import { useFirstGameState } from "@/lib/useFirstGameState";
+import type { DefensiveAlignment } from "@/types/defense";
 
 const priorities = ["OBP", "Out rate", "SLG", "OPS", "XBH%", "Speed bonus"];
 
@@ -41,6 +42,7 @@ export function BattingOrderSection() {
   const setup = usePregameSetup();
   const firstGameState = useFirstGameState();
   const [manualOrderIds, setManualOrderIds] = useState<string[] | null>(null);
+  const [startingDefense, setStartingDefense] = useState<DefensiveAlignment | null>(null);
 
   const suggestedLineup = resolveSuggestedLineupIds(setup, firstGameState, activeTeam);
   const generatedLineupIds = suggestedLineup.lineupIds;
@@ -57,6 +59,9 @@ export function BattingOrderSection() {
         .map((playerId) => rowsByPlayerId.get(playerId))
         .filter((row): row is RecommendedLineupRow => Boolean(row))
     : recommendedLineup;
+  const lineupPlayers = lineup.map((row) => row.player);
+  const firstDefensiveHalf = getFirstDefensiveHalf(setup.isHome);
+  const defenseAlignment = resolveStartingDefenseAlignment(lineupPlayers, startingDefense, firstDefensiveHalf);
   const [selectedPriority, setSelectedPriority] = useState("OBP");
   const lineupValidation = validateLineupGenderRules(lineup.map((row) => row.player));
   const acceptedMatchesLineup =
@@ -129,44 +134,39 @@ export function BattingOrderSection() {
       return;
     }
 
-    saveFirstGameState(
-      createInitialGameState(players, {
-        opponent: setup.opponent || "Opponent",
-        isHome: setup.isHome,
-        gameRules: setup.gameRules,
-        status: "IN_PROGRESS",
-      }),
+    const initialState = createInitialGameState(players, {
+      opponent: setup.opponent || "Opponent",
+      isHome: setup.isHome,
+      gameRules: setup.gameRules,
+      status: "IN_PROGRESS",
+    });
+    const gameStateWithDefense = initializeStartingDefense(
+      initialState,
+      defenseAlignment ?? createDefaultDefensiveAlignment(players, firstDefensiveHalf.inning, firstDefensiveHalf.half),
     );
+
+    saveFirstGameState(gameStateWithDefense);
     savePregameSetup({
       ...setup,
       generatedLineupIds: players.map((player) => player.id),
       acceptedLineupIds: players.map((player) => player.id),
       status: "STARTED",
     });
-    router.push("/stats-entry");
+    router.push(getLiveGameHref(gameStateWithDefense));
   }
 
   return (
     <section className="bg-background py-6 sm:py-8">
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8">
+        <h1 className="sr-only">Batting order and starting defense</h1>
         <div className="grid gap-4 lg:grid-cols-[1.18fr_0.82fr]">
-          <div className="order-2 lg:order-1 lg:col-span-2">
-            <ScreenHeader
-              description="Review the lineup generated from today's selected players and season stats. The coach can move hitters, accept the order, then start live scoring."
-              eyebrow="Batting order"
-              icon={ListOrdered}
-              status="Coach approval"
-              title={`Approve ${activeTeam.name} vs. ${setup.opponent || "TBD"}.`}
-            />
-          </div>
-
           <div className="order-3 grid gap-3 sm:grid-cols-3 lg:order-2 lg:col-span-2">
             <StatTile helper="Tap priority below" icon={BarChart3} label="Top metric" tone="accent" value={selectedPriority} />
             <StatTile helper={`Current #4: ${lineup[3]?.player.name.split(" ")[0] ?? "TBD"}`} icon={Medal} label="Power slot" tone="warning" value="#4" />
             <StatTile helper={`Current #10: ${lineup[9]?.player.name.split(" ")[0] ?? "TBD"}`} icon={MoveDown} label="Last spot" tone="success" value="Turn" />
           </div>
 
-          <article className="order-1 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035] lg:order-3">
+          <article className="order-1 min-w-0 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035] lg:order-3 lg:col-span-2">
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
@@ -286,7 +286,36 @@ export function BattingOrderSection() {
             </div>
           </article>
 
-          <article className="order-4 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]">
+          <article className="order-4 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035] lg:col-span-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                  Starting defense
+                </p>
+                <h2 className="mt-1 text-lg font-semibold text-foreground">
+                  {firstDefensiveHalf.half} {firstDefensiveHalf.inning}
+                </h2>
+              </div>
+              <StatusPill tone={acceptedMatchesLineup ? "ready" : "review"}>
+                {acceptedMatchesLineup ? "Ready" : "Accept order first"}
+              </StatusPill>
+            </div>
+            <div className="mt-4">
+              {defenseAlignment ? (
+                <DefensiveAlignmentEditor
+                  alignment={defenseAlignment}
+                  players={lineupPlayers}
+                  onChange={setStartingDefense}
+                />
+              ) : (
+                <p className="rounded-lg bg-[var(--surface)] p-3 text-sm font-bold text-[var(--muted-foreground)]">
+                  Generate a batting order to set the defense.
+                </p>
+              )}
+            </div>
+          </article>
+
+          <article className="order-5 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]">
             <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
               Ranking priorities
             </p>
@@ -325,4 +354,29 @@ export function BattingOrderSection() {
       </div>
     </section>
   );
+}
+
+function resolveStartingDefenseAlignment(
+  lineupPlayers: RecommendedLineupRow["player"][],
+  startingDefense: DefensiveAlignment | null,
+  firstDefensiveHalf: ReturnType<typeof getFirstDefensiveHalf>,
+) {
+  if (!lineupPlayers.length) {
+    return null;
+  }
+
+  if (!startingDefense) {
+    return createDefaultDefensiveAlignment(lineupPlayers, firstDefensiveHalf.inning, firstDefensiveHalf.half);
+  }
+
+  const activeLineupIds = new Set(lineupPlayers.map((player) => player.id));
+  const defenseUsesCurrentLineup = Object.values(startingDefense.slots).every((slot) => (
+    !slot ||
+    slot.status === "VACANT" ||
+    activeLineupIds.has(slot.playerId)
+  ));
+
+  return defenseUsesCurrentLineup
+    ? startingDefense
+    : createDefaultDefensiveAlignment(lineupPlayers, firstDefensiveHalf.inning, firstDefensiveHalf.half);
 }

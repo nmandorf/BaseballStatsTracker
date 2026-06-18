@@ -3,7 +3,8 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowRight, BarChart3, CalendarDays, Flag, RotateCcw, Save, Trophy, UserPlus, X } from "lucide-react";
+import { ArrowRight, BarChart3, CalendarDays, RotateCcw, Save, Trophy, UserPlus, X } from "lucide-react";
+import { LiveGameHeader } from "@/components/LiveGameHeader";
 import { OutTypeModal } from "@/components/OutTypeModal";
 import { ResultButton } from "@/components/ResultButton";
 import { ScreenHeader } from "@/components/ScreenHeader";
@@ -19,6 +20,9 @@ import {
   destinationOptions,
   endGame,
   getCurrentBatter,
+  getCurrentTeamPhase,
+  getLiveGameHref,
+  getLatestCorrectablePlay,
   getPlayerGameStats,
   getPlayerSeasonStats,
   getPlayValidationError,
@@ -26,8 +30,10 @@ import {
   getTeamGameTotals,
   occupiedBaseEntries,
   previewPlay,
+  replaceLatestSavedPlay,
   runnerSlotFromPlayer,
   savePlay,
+  getStateBeforeLatestPlayCorrection,
   undoLastPlay,
   type GameState,
   type CompletedGameSummary,
@@ -39,6 +45,7 @@ import { useActiveTeam } from "@/lib/teamStorage";
 import { useFirstGameState } from "@/lib/useFirstGameState";
 import { cn } from "@/lib/utils";
 import type { BatterResult, OutType } from "@/types/game";
+import type { ScoredPlay } from "@/types/game";
 import type { Player } from "@/types/player";
 import type { BaseLabel, UiRunnerDestination } from "@/types/runner";
 import type { CalculatedStats, PlayerStats } from "@/types/stats";
@@ -59,10 +66,50 @@ export function StatsEntrySection() {
     return <EndGameSummary gameState={gameState} teamName={activeTeam.name} onReset={resetFirstGameState} />;
   }
 
+  if (getCurrentTeamPhase(gameState) === "FIELDING") {
+    return <DefensiveHalfPrompt gameState={gameState} teamName={activeTeam.name} />;
+  }
+
   return <LiveStatsEntry gameState={gameState} teamName={activeTeam.name} />;
 }
 
+function DefensiveHalfPrompt({ gameState, teamName }: { gameState: GameState; teamName: string }) {
+  function endCurrentGame() {
+    saveFirstGameState(endGame(gameState, undefined, teamName));
+  }
+
+  return (
+    <section className="bg-background pb-8 pt-3 sm:pb-10">
+      <LiveGameHeader
+        activeMode="OFFENSE"
+        currentPhase="FIELDING"
+        gameState={gameState}
+        onEndGame={endCurrentGame}
+        teamName={teamName}
+      />
+      <div className="mx-auto mt-3 w-full max-w-md px-3">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
+          <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+            Stats Entry
+          </p>
+          <p className="mt-2 text-sm font-semibold text-foreground">
+            Your team is fielding. Open Defense to record the next play.
+          </p>
+          <Link
+            className="mt-4 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white"
+            href="/defense"
+          >
+            Open Defense
+            <ArrowRight className="size-4" aria-hidden="true" />
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamName: string }) {
+  const router = useRouter();
   const [selectedResult, setSelectedResult] = useState<BatterResult | null>(null);
   const [selectedOutType, setSelectedOutType] = useState<OutType | undefined>();
   const [isOutTypeModalOpen, setIsOutTypeModalOpen] = useState(false);
@@ -70,12 +117,20 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
   const [rbiCredit, setRbiCredit] = useState(false);
   const [pinchRunners, setPinchRunners] = useState<PinchRunnerSelections>({});
   const [pinchBase, setPinchBase] = useState<BaseLabel | null>(null);
+  const [editingPlayId, setEditingPlayId] = useState<string | null>(null);
 
-  const batter = getCurrentBatter(gameState);
-  const occupiedBases = occupiedBaseEntries(gameState.bases);
+  const correctablePlay = getLatestCorrectablePlay(gameState);
+  const correctionState = useMemo(
+    () => (editingPlayId ? getStateBeforeLatestPlayCorrection(gameState, editingPlayId) : null),
+    [editingPlayId, gameState],
+  );
+  const scoringState = correctionState ?? gameState;
+
+  const batter = getCurrentBatter(scoringState);
+  const occupiedBases = occupiedBaseEntries(scoringState.bases);
   const defaultMovements = useMemo(
-    () => (selectedResult ? createDefaultMovements(selectedResult, gameState.bases) : {}),
-    [gameState.bases, selectedResult],
+    () => (selectedResult ? createDefaultMovements(selectedResult, scoringState.bases) : {}),
+    [scoringState.bases, selectedResult],
   );
   const effectiveMovements = useMemo(
     () => ({
@@ -87,13 +142,13 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
   const preview = useMemo(
     () =>
       selectedResult
-        ? previewPlay(gameState, selectedResult, effectiveMovements, pinchRunners, rbiCredit, selectedOutType)
+        ? previewPlay(scoringState, selectedResult, effectiveMovements, pinchRunners, rbiCredit, selectedOutType)
         : null,
-    [effectiveMovements, gameState, pinchRunners, rbiCredit, selectedOutType, selectedResult],
+    [effectiveMovements, pinchRunners, rbiCredit, scoringState, selectedOutType, selectedResult],
   );
-  const batterGameStats = getPlayerGameStats(gameState, batter.id);
+  const batterGameStats = getPlayerGameStats(scoringState, batter.id);
   const batterStats = calculateStats(batterGameStats);
-  const batterSeasonStats = calculateStats(getPlayerSeasonStats(batter, gameState));
+  const batterSeasonStats = calculateStats(getPlayerSeasonStats(batter, scoringState));
   const lastResultByBatter = useMemo(() => {
     const results = new Map<string, BatterResult>();
 
@@ -105,20 +160,20 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
   }, [gameState.plays]);
   const hasRuns = Boolean(preview && preview.runs > 0);
   const previewRuns = preview?.runs ?? 0;
-  const previewOuts = preview?.projectedOuts ?? gameState.outs;
+  const previewOuts = preview?.projectedOuts ?? scoringState.outs;
   const previewRbis = preview?.rbis ?? 0;
   const previewSummary = preview?.summary ?? "Tap a batter result to preview runner movement, runs, outs, and RBI.";
   const playValidationError = selectedResult
-    ? getPlayValidationError(gameState, selectedResult, effectiveMovements, pinchRunners, selectedOutType)
+    ? getPlayValidationError(scoringState, selectedResult, effectiveMovements, pinchRunners, selectedOutType)
     : null;
-  const pinchRunnerOptions = gameState.lineup.filter((player) => {
+  const pinchRunnerOptions = scoringState.lineup.filter((player) => {
     const occupiedIds = new Set(occupiedBases.map(([, runner]) => runner.playerId));
     const selectedPinchRunnerIds = new Set(Object.values(pinchRunners).map((runner) => runner.playerId));
     return player.id !== batter.id && !occupiedIds.has(player.id) && !selectedPinchRunnerIds.has(player.id);
   });
 
   function selectResult(result: BatterResult) {
-    if (getResultLockReason(result, gameState.bases, gameState.outs)) {
+    if (getResultLockReason(result, scoringState.bases, scoringState.outs)) {
       return;
     }
 
@@ -131,13 +186,13 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
   }
 
   function chooseResult(result: BatterResult, outType?: OutType) {
-    const nextMovements = createDefaultMovements(result, gameState.bases);
-    const nextPreview = previewPlay(gameState, result, nextMovements, pinchRunners, false, outType);
+    const nextMovements = createDefaultMovements(result, scoringState.bases);
+    const nextPreview = previewPlay(scoringState, result, nextMovements, pinchRunners, false, outType);
 
     setSelectedResult(result);
     setSelectedOutType(result === "Out" ? outType : undefined);
     setMovements(nextMovements);
-    setRbiCredit(defaultRbiCredit(result, gameState.bases, nextPreview.runs));
+    setRbiCredit(defaultRbiCredit(result, scoringState.bases, nextPreview.runs));
   }
 
   function selectOutType(outType: OutType) {
@@ -152,8 +207,31 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
     }));
   }
 
-  function persistNextState(nextState: GameState) {
+  function persistNextState(nextState: GameState, followPhase = false) {
     saveFirstGameState(nextState);
+
+    if (followPhase) {
+      router.replace(getLiveGameHref(nextState));
+    }
+  }
+
+  function resetPlayForm() {
+    setSelectedResult(null);
+    setSelectedOutType(undefined);
+    setIsOutTypeModalOpen(false);
+    setMovements({});
+    setPinchRunners({});
+    setRbiCredit(false);
+    setEditingPlayId(null);
+  }
+
+  function editLatestPlay(play: ScoredPlay) {
+    setEditingPlayId(play.id);
+    setSelectedResult(play.result);
+    setSelectedOutType(play.outType);
+    setMovements(movementSelectionsFromPlay(play));
+    setPinchRunners(pinchRunnerSelectionsFromPlay(play));
+    setRbiCredit(play.rbis > 0);
   }
 
   function saveCurrentPlay() {
@@ -170,78 +248,45 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
       return;
     }
 
-    const nextState = savePlay(gameState, selectedResult, effectiveMovements, pinchRunners, rbiCredit, selectedOutType);
+    const nextState = editingPlayId
+      ? replaceLatestSavedPlay(
+          gameState,
+          editingPlayId,
+          selectedResult,
+          effectiveMovements,
+          pinchRunners,
+          rbiCredit,
+          selectedOutType,
+        )
+      : savePlay(gameState, selectedResult, effectiveMovements, pinchRunners, rbiCredit, selectedOutType);
 
-    persistNextState(nextState);
-    setSelectedResult(null);
-    setSelectedOutType(undefined);
-    setIsOutTypeModalOpen(false);
-    setMovements({});
-    setPinchRunners({});
-    setRbiCredit(false);
+    persistNextState(nextState, true);
+    resetPlayForm();
   }
 
   function undo() {
     const previous = undoLastPlay(gameState);
 
-    persistNextState(previous);
-    setSelectedResult(null);
-    setSelectedOutType(undefined);
-    setIsOutTypeModalOpen(false);
-    setMovements({});
-    setPinchRunners({});
-    setRbiCredit(false);
+    persistNextState(previous, true);
+    resetPlayForm();
   }
 
   function endCurrentGame() {
     persistNextState(endGame(gameState, undefined, teamName));
-    setSelectedResult(null);
-    setSelectedOutType(undefined);
-    setIsOutTypeModalOpen(false);
-    setMovements({});
-    setPinchRunners({});
-    setRbiCredit(false);
+    resetPlayForm();
     setPinchBase(null);
   }
 
   return (
     <section className="min-h-screen bg-background pb-28 pt-3 sm:pb-32">
-      <div className="mx-auto flex w-full max-w-md flex-col gap-3 px-3">
-        <header className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
-                Stats Entry
-              </p>
-              <h1 className="mt-1 text-xl font-semibold text-foreground sm:text-2xl">
-                {gameState.half} {ordinalInning(gameState.inning)} | {formatOuts(gameState.outs)} | Us{" "}
-                {gameState.teamScore} - Them {gameState.opponentScore}
-              </h1>
-            </div>
-            <button
-              className="inline-flex min-h-9 shrink-0 items-center gap-2 rounded-lg border border-[var(--danger)]/25 bg-[var(--danger-soft)] px-3 text-xs font-bold text-[var(--danger)]"
-              onClick={endCurrentGame}
-              type="button"
-            >
-              <Flag className="size-4" aria-hidden="true" />
-              End
-            </button>
-          </div>
-          <div className="mt-3 grid grid-cols-3 gap-2 text-sm">
-            <div className="rounded-md bg-[var(--surface)] px-3 py-2">
-              <p className="text-xs font-bold text-[var(--muted-foreground)]">Batter</p>
-              <p className="mt-1 truncate font-semibold text-foreground">{batter.name.split(" ")[0]}</p>
-            </div>
-            <div className="rounded-md bg-[var(--surface)] px-3 py-2">
-              <p className="text-xs font-bold text-[var(--muted-foreground)]">Bases</p>
-              <p className="mt-1 truncate font-semibold text-foreground">{formatBaseState(occupiedBases.map(([base]) => base))}</p>
-            </div>
-            <div className="rounded-md bg-[var(--surface)] px-3 py-2">
-              <p className="text-xs font-bold text-[var(--muted-foreground)]">Runs</p>
-              <p className="mt-1 font-semibold text-foreground">+{previewRuns}</p>
-            </div>
-          </div>
-        </header>
+      <LiveGameHeader
+        activeMode="OFFENSE"
+        currentPhase="BATTING"
+        gameState={gameState}
+        onEndGame={endCurrentGame}
+        teamName={teamName}
+      />
+      <div className="mx-auto mt-3 flex w-full max-w-md flex-col gap-3 px-3">
 
         <nav
           aria-label="Batting order"
@@ -249,8 +294,9 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
         >
           <div className="flex min-w-max gap-2">
             {gameState.lineup.map((player, index) => {
-              const isCurrent = index === gameState.currentBatterIndex;
+              const isCurrent = index === scoringState.currentBatterIndex;
               const lastResult = lastResultByBatter.get(player.id);
+              const canEdit = correctablePlay?.batterId === player.id && !editingPlayId;
 
               return (
                 <button
@@ -259,20 +305,51 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
                     isCurrent
                       ? "bg-[var(--amber)] text-[var(--foreground)]"
                       : "bg-[var(--surface)] text-foreground",
+                    canEdit && "ring-2 ring-inset ring-[var(--accent)]/35",
                   )}
+                  disabled={!canEdit}
                   key={player.id}
-                  onClick={() => saveFirstGameState({ ...gameState, currentBatterIndex: index })}
+                  onClick={() => correctablePlay && editLatestPlay(correctablePlay)}
                   type="button"
                 >
                   <span>{index + 1}. {player.name.split(" ")[0]}</span>
                   <span className={cn("mt-0.5 text-[0.68rem]", isCurrent ? "text-[var(--foreground)] opacity-75" : "text-[var(--muted-foreground)]")}>
-                    {isCurrent ? "At bat" : lastResult ?? "Ready"}
+                    {isCurrent ? (editingPlayId ? "Editing" : "At bat") : canEdit ? "Edit last play" : lastResult ?? "Ready"}
                   </span>
                 </button>
               );
             })}
           </div>
         </nav>
+
+        {editingPlayId ? (
+          <div className="rounded-lg border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3 sm:flex sm:items-center sm:justify-between sm:gap-3">
+            <div>
+              <p className="text-sm font-bold text-[var(--accent-strong)]">Editing {batter.name}&apos;s latest saved play</p>
+              <p className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">
+                Saving replaces the play and recalculates the score, outs, bases, and stats.
+              </p>
+            </div>
+            <div className="mt-3 grid shrink-0 grid-cols-2 gap-2 sm:mt-0">
+              <button
+                className="min-h-11 rounded-lg bg-[var(--card)] px-3 text-sm font-bold text-foreground"
+                onClick={resetPlayForm}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-3 text-sm font-bold text-white disabled:opacity-45"
+                disabled={!selectedResult || Boolean(playValidationError)}
+                onClick={saveCurrentPlay}
+                type="button"
+              >
+                <Save className="size-4" aria-hidden="true" />
+                Save Changes
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <article className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
           <div className="flex items-start justify-between gap-3">
@@ -285,7 +362,7 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
                 {batter.roleHint}
               </p>
             </div>
-            <StatusPill tone="ready">#{gameState.currentBatterIndex + 1}</StatusPill>
+            <StatusPill tone="ready">#{scoringState.currentBatterIndex + 1}</StatusPill>
           </div>
           <div className="mt-4 grid grid-cols-3 gap-2">
             <SummaryTile label="Game H-AB" value={`${batterGameStats.hits}-${batterGameStats.atBats}`} />
@@ -304,7 +381,7 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
           </p>
           <div className="mt-3 grid grid-cols-5 gap-2">
             {batterResults.map((result) => {
-              const lockReason = getResultLockReason(result, gameState.bases, gameState.outs);
+              const lockReason = getResultLockReason(result, scoringState.bases, scoringState.outs);
 
               return (
                 <ResultButton
@@ -479,7 +556,7 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
             type="button"
           >
             <Save className="size-4" aria-hidden="true" />
-            Save Play + Next Batter
+            {editingPlayId ? "Save Changes + Continue" : "Save Play + Next Batter"}
           </button>
         </div>
       </div>
@@ -512,7 +589,7 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
             </div>
             <div className="mt-4 grid gap-2">
               {pinchRunnerOptions.map((player) => {
-                const originalRunner = gameState.bases[baseToKey(pinchBase)];
+                const originalRunner = scoringState.bases[baseToKey(pinchBase)];
 
                 return (
                   <button
@@ -837,24 +914,6 @@ function SummaryTile({ label, value }: { label: string; value: number | string }
   );
 }
 
-function ordinalInning(inning: number) {
-  const modTen = inning % 10;
-  const modHundred = inning % 100;
-
-  if (modTen === 1 && modHundred !== 11) return `${inning}st`;
-  if (modTen === 2 && modHundred !== 12) return `${inning}nd`;
-  if (modTen === 3 && modHundred !== 13) return `${inning}rd`;
-  return `${inning}th`;
-}
-
-function formatOuts(outs: number) {
-  return `${outs} Out${outs === 1 ? "" : "s"}`;
-}
-
-function formatBaseState(bases: BaseLabel[]) {
-  return bases.length ? bases.join(" ") : "Empty";
-}
-
 function formatGameDate(value: string | null) {
   if (!value) {
     return "Final";
@@ -871,4 +930,41 @@ function baseToKey(base: BaseLabel) {
   if (base === "1B") return "first";
   if (base === "2B") return "second";
   return "third";
+}
+
+function movementSelectionsFromPlay(play: ScoredPlay): MovementSelections {
+  const selections: MovementSelections = {};
+
+  for (const movement of play.runnerAdvancements) {
+    if (movement.fromBase === "BATTER") {
+      continue;
+    }
+
+    selections[movement.fromBase] = movement.toBase === "HOME"
+      ? "Scores"
+      : movement.toBase === "OUT"
+        ? "Out"
+        : movement.toBase;
+  }
+
+  return selections;
+}
+
+function pinchRunnerSelectionsFromPlay(play: ScoredPlay): PinchRunnerSelections {
+  const selections: PinchRunnerSelections = {};
+
+  for (const movement of play.runnerAdvancements) {
+    if (movement.fromBase === "BATTER" || !movement.originalPlayerId) {
+      continue;
+    }
+
+    selections[movement.fromBase] = {
+      playerId: movement.playerId,
+      name: movement.playerName,
+      originalPlayerId: movement.originalPlayerId,
+      originalName: movement.originalPlayerName,
+    };
+  }
+
+  return selections;
 }

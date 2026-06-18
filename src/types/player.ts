@@ -1,4 +1,5 @@
 import type { PlayerStats } from "@/types/stats";
+import type { DefensiveProfile } from "@/types/defense";
 
 export type BattingSide = "Right" | "Left" | "Switch" | "Unknown";
 export type ThrowingSide = "Right" | "Left" | "Unknown";
@@ -15,6 +16,7 @@ export type Player = {
   speedRating: SpeedRating;
   notes: string;
   contactNotes: string[];
+  defensiveProfile: DefensiveProfile;
   roleHint: string;
   isActive: boolean;
   seedOrder: number;
@@ -40,6 +42,7 @@ export type PlayerProfileInput = {
   speedRating: SpeedRating;
   notes: string;
   contactNotes: string;
+  defensiveProfile: DefensiveProfile;
   roleHint: string;
   isActive: boolean;
   startingStats: PlayerStats;

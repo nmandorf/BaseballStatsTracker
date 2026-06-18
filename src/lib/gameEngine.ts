@@ -1,4 +1,4 @@
-import type { BatterResult, GameRules, LocalGameStatus, OutType, ScoredPlay } from "@/types/game";
+import type { BatterResult, DefensiveEventInput, GameRules, LocalGameStatus, OutType, ScoredPlay } from "@/types/game";
 import type { Player } from "@/types/player";
 import type {
   BaseLabel,
@@ -9,6 +9,18 @@ import type {
   UiRunnerDestination,
 } from "@/types/runner";
 import type { PlayerStats } from "@/types/stats";
+import type { DefensiveAlignment, DefensiveEvent } from "@/types/defense";
+import {
+  copyAlignmentForHalf,
+  createDefensiveEvent,
+  createDefaultDefensiveAlignment,
+  getAlignmentForCurrentHalf,
+  getLatestDefensiveAlignment,
+  getNextHalfInning,
+  getTeamPhase,
+  upsertDefensiveAlignment,
+  type TeamPhase,
+} from "./defenseEngine.ts";
 import { defaultGameRules } from "./seedTeam.ts";
 import { addBatterResult, addRun, addRunnerOut, addStats, createZeroStats, divide } from "./statCalculations.ts";
 
@@ -45,6 +57,8 @@ export type GameState = {
   teamScore: number;
   opponentScore: number;
   bases: BasesState;
+  defensiveAlignments: DefensiveAlignment[];
+  defensiveEvents: DefensiveEvent[];
   statsByPlayerId: Record<string, PlayerStats>;
   plays: ScoredPlay[];
   history: GameStateSnapshot[];
@@ -67,6 +81,15 @@ export type PlayPreview = {
   inningEnded: boolean;
   productiveOut: boolean;
   rbis: number;
+  summary: string;
+};
+
+export type DefensiveEventPreview = {
+  event: DefensiveEvent;
+  projectedOuts: number;
+  inningEnded: boolean;
+  nextInning: number;
+  nextHalf: GameState["half"];
   summary: string;
 };
 
@@ -147,6 +170,8 @@ export function createInitialGameState(lineup: Player[], options: CreateInitialG
     teamScore: 0,
     opponentScore: 0,
     bases: createEmptyBases(),
+    defensiveAlignments: [],
+    defensiveEvents: [],
     statsByPlayerId: createGameStatsByPlayerId(lineup),
     plays: [],
     history: [],
@@ -164,6 +189,73 @@ export function createEmptyBases(): BasesState {
 
 export function getCurrentBatter(state: GameState) {
   return state.lineup[state.currentBatterIndex];
+}
+
+export function getCurrentTeamPhase(state: GameState): TeamPhase {
+  return getTeamPhase(state.isHome, state.half);
+}
+
+export function getLiveGameHref(state: Pick<GameState, "isHome" | "half">) {
+  return getTeamPhase(state.isHome, state.half) === "BATTING" ? "/stats-entry" : "/defense";
+}
+
+export function isTeamBatting(state: GameState) {
+  return getCurrentTeamPhase(state) === "BATTING";
+}
+
+export function getCurrentDefensiveAlignment(state: GameState) {
+  return getDefensiveAlignmentForHalf(state, state.inning, state.half);
+}
+
+export function getOrCreateCurrentDefensiveAlignment(state: GameState): DefensiveAlignment {
+  return getOrCreateDefensiveAlignmentForHalf(state, state.inning, state.half);
+}
+
+export function getDefensiveAlignmentForHalf(
+  state: GameState,
+  inning: number,
+  half: GameState["half"],
+) {
+  return getAlignmentForCurrentHalf(state.defensiveAlignments, inning, half);
+}
+
+export function getOrCreateDefensiveAlignmentForHalf(
+  state: GameState,
+  inning: number,
+  half: GameState["half"],
+): DefensiveAlignment {
+  const currentAlignment = getDefensiveAlignmentForHalf(state, inning, half);
+
+  if (currentAlignment) {
+    return currentAlignment;
+  }
+
+  return copyAlignmentForHalf(
+    getLatestDefensiveAlignment(state.defensiveAlignments),
+    state.lineup,
+    inning,
+    half,
+  );
+}
+
+export function initializeStartingDefense(state: GameState, alignment?: DefensiveAlignment): GameState {
+  const startingAlignment = alignment ?? createDefaultDefensiveAlignment(state.lineup, state.inning, state.half);
+
+  return {
+    ...state,
+    defensiveAlignments: upsertDefensiveAlignment(state.defensiveAlignments, startingAlignment),
+  };
+}
+
+export function saveDefensiveAlignment(state: GameState, alignment: DefensiveAlignment): GameState {
+  if (state.status === "FINAL") {
+    return state;
+  }
+
+  return {
+    ...state,
+    defensiveAlignments: upsertDefensiveAlignment(state.defensiveAlignments, alignment),
+  };
 }
 
 export function getGameStats(state: GameState) {
@@ -203,6 +295,25 @@ export function getPlayerSeasonStats(player: Player, state?: GameState) {
 
 export function getPlayerStats(state: GameState, playerId: string) {
   return getPlayerGameStats(state, playerId);
+}
+
+export function updatePlayerSeasonStatsBaseline(
+  state: GameState,
+  playerId: string,
+  seasonStats: PlayerStats,
+): GameState {
+  if (!state.lineup.some((player) => player.id === playerId)) {
+    return state;
+  }
+
+  return {
+    ...state,
+    lineup: updateLineupPlayerSeasonStats(state.lineup, playerId, seasonStats),
+    history: state.history.map((snapshot) => ({
+      ...snapshot,
+      lineup: updateLineupPlayerSeasonStats(snapshot.lineup, playerId, seasonStats),
+    })),
+  };
 }
 
 export function getCompletedGameHistory(source: GameState | GameState[]): CompletedGameSummary[] {
@@ -442,6 +553,7 @@ export function savePlay(
   const play: ScoredPlay = {
     id: `play-${state.plays.length + 1}`,
     inning: state.inning,
+    half: state.half,
     batterId: preview.batter.id,
     batterName: preview.batter.name,
     outsBefore: state.outs,
@@ -457,17 +569,149 @@ export function savePlay(
   };
   const nextStats = applyPlayStats(state.statsByPlayerId, preview, result, outType);
   const nextBatterIndex = (state.currentBatterIndex + 1) % state.lineup.length;
-  const nextInning = preview.inningEnded ? state.inning + 1 : state.inning;
+  const nextHalfInning = preview.inningEnded ? getNextHalfInning(state.inning, state.half) : state;
+  const nextDefenseAlignment =
+    preview.inningEnded && getTeamPhase(state.isHome, nextHalfInning.half) === "FIELDING"
+      ? copyAlignmentForHalf(getLatestDefensiveAlignment(state.defensiveAlignments), state.lineup, nextHalfInning.inning, nextHalfInning.half)
+      : null;
 
   return {
     ...state,
-    inning: nextInning,
+    inning: nextHalfInning.inning,
+    half: nextHalfInning.half,
     outs: preview.inningEnded ? 0 : preview.projectedOuts,
     teamScore: state.teamScore + preview.runs,
     bases: cloneBases(preview.nextBases),
+    defensiveAlignments: nextDefenseAlignment
+      ? upsertDefensiveAlignment(state.defensiveAlignments, nextDefenseAlignment)
+      : state.defensiveAlignments,
     statsByPlayerId: nextStats,
     plays: [...state.plays, play],
     currentBatterIndex: nextBatterIndex,
+    history: [...state.history, snapshotState(state)],
+    lastSummary: preview.summary,
+  };
+}
+
+export function getLatestCorrectablePlay(state: GameState): ScoredPlay | null {
+  if (state.status !== "IN_PROGRESS" || getCurrentTeamPhase(state) !== "BATTING") {
+    return null;
+  }
+
+  const latestPlay = state.plays.at(-1);
+
+  if (!latestPlay || latestPlay.inning !== state.inning) {
+    return null;
+  }
+
+  if (latestPlay.half && latestPlay.half !== state.half) {
+    return null;
+  }
+
+  return findPrePlaySnapshotIndex(state, latestPlay) >= 0 ? latestPlay : null;
+}
+
+export function getStateBeforeLatestPlayCorrection(state: GameState, playId: string): GameState | null {
+  const latestPlay = getLatestCorrectablePlay(state);
+
+  if (!latestPlay || latestPlay.id !== playId) {
+    return null;
+  }
+
+  const snapshotIndex = findPrePlaySnapshotIndex(state, latestPlay);
+  const prePlaySnapshot = state.history[snapshotIndex];
+
+  if (!prePlaySnapshot) {
+    return null;
+  }
+
+  return {
+    ...prePlaySnapshot,
+    defensiveAlignments: state.defensiveAlignments,
+    defensiveEvents: state.defensiveEvents,
+    opponentScore: state.opponentScore,
+    history: state.history.slice(0, snapshotIndex),
+  };
+}
+
+export function replaceLatestSavedPlay(
+  state: GameState,
+  playId: string,
+  result: BatterResult,
+  selections: MovementSelections,
+  pinchRunners: PinchRunnerSelections,
+  rbiCredit: boolean,
+  outType?: OutType,
+): GameState {
+  const correctionState = getStateBeforeLatestPlayCorrection(state, playId);
+
+  if (!correctionState) {
+    throw new InvalidPlayError("Only the latest play in the active offensive half can be corrected.");
+  }
+
+  const correctedState = savePlay(
+    correctionState,
+    result,
+    selections,
+    pinchRunners,
+    rbiCredit,
+    outType,
+  );
+
+  return {
+    ...correctedState,
+    history: [...state.history, snapshotState(state)],
+  };
+}
+
+export function previewDefensiveEvent(state: GameState, input: DefensiveEventInput): DefensiveEventPreview {
+  const fielder = input.fielderId ? state.lineup.find((player) => player.id === input.fielderId) : null;
+  const event = createDefensiveEvent({
+    id: `defense-event-${state.defensiveEvents.length + 1}`,
+    inning: state.inning,
+    half: state.half,
+    type: input.type,
+    fielder,
+    position: input.position,
+    outsRecorded: input.outsRecorded,
+    runsAllowed: input.runsAllowed,
+    basesAllowed: input.basesAllowed,
+    ballType: input.ballType,
+    misplayType: input.misplayType,
+    misplayResult: input.misplayResult,
+    greatPlayImpact: input.greatPlayImpact,
+    involvedPlayerIds: input.involvedPlayerIds,
+    notes: input.notes,
+  });
+  const projectedOuts = Math.min(3, state.outs + event.outsRecorded);
+  const inningEnded = state.outs + event.outsRecorded >= 3;
+  const nextHalfInning = inningEnded ? getNextHalfInning(state.inning, state.half) : state;
+
+  return {
+    event,
+    projectedOuts,
+    inningEnded,
+    nextInning: nextHalfInning.inning,
+    nextHalf: nextHalfInning.half,
+    summary: buildDefensiveSummary(event, state.outs, projectedOuts),
+  };
+}
+
+export function saveDefensiveEvent(state: GameState, input: DefensiveEventInput): GameState {
+  if (state.status === "FINAL") {
+    return state;
+  }
+
+  const preview = previewDefensiveEvent(state, input);
+
+  return {
+    ...state,
+    inning: preview.nextInning,
+    half: preview.nextHalf,
+    outs: preview.inningEnded ? 0 : preview.projectedOuts,
+    opponentScore: state.opponentScore + preview.event.runsAllowed,
+    bases: preview.inningEnded ? createEmptyBases() : state.bases,
+    defensiveEvents: [...state.defensiveEvents, preview.event],
     history: [...state.history, snapshotState(state)],
     lastSummary: preview.summary,
   };
@@ -733,6 +977,19 @@ function buildSummary(
   ].join(". ");
 }
 
+function buildDefensiveSummary(event: DefensiveEvent, outsBefore: number, outsAfter: number) {
+  const fielder = event.fielderName ? `${event.fielderName}: ` : "";
+  const runsLine = event.runsAllowed > 0 ? `Runs allowed +${event.runsAllowed}` : "No runs allowed";
+  const basesLine = event.basesAllowed > 0 ? `Extra bases +${event.basesAllowed}` : "No extra bases";
+
+  return [
+    `${fielder}${event.type.replaceAll("_", " ")}`,
+    `Outs ${outsBefore} to ${outsAfter}`,
+    runsLine,
+    basesLine,
+  ].join(". ");
+}
+
 function assertValidOutType(result: BatterResult, outType: OutType | undefined) {
   if (result === "Out" && !outType) {
     throw new Error("Out type is required for normal outs.");
@@ -883,6 +1140,25 @@ function cloneStats(stats: Record<string, PlayerStats>) {
   return Object.fromEntries(Object.entries(stats).map(([playerId, playerStats]) => [playerId, { ...playerStats }]));
 }
 
+function updateLineupPlayerSeasonStats(
+  lineup: Player[],
+  playerId: string,
+  seasonStats: PlayerStats,
+) {
+  return lineup.map((player) => (
+    player.id === playerId ? { ...player, seasonStats } : player
+  ));
+}
+
+function findPrePlaySnapshotIndex(state: GameState, play: ScoredPlay) {
+  return state.history.findLastIndex((snapshot) => (
+    snapshot.plays.length === state.plays.length - 1 &&
+    snapshot.inning === play.inning &&
+    snapshot.half === (play.half ?? state.half) &&
+    snapshot.lineup[snapshot.currentBatterIndex]?.id === play.batterId
+  ));
+}
+
 function snapshotState(state: GameState): GameStateSnapshot {
   return {
     status: state.status,
@@ -898,6 +1174,8 @@ function snapshotState(state: GameState): GameStateSnapshot {
     teamScore: state.teamScore,
     opponentScore: state.opponentScore,
     bases: cloneBases(state.bases),
+    defensiveAlignments: state.defensiveAlignments,
+    defensiveEvents: state.defensiveEvents,
     statsByPlayerId: cloneStats(state.statsByPlayerId),
     plays: state.plays,
     lastSummary: state.lastSummary,
