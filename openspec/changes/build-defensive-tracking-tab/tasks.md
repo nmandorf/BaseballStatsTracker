@@ -7,7 +7,7 @@
 ## 2. Defensive Domain And Calculations
 
 - [x] 2.1 Add defensive domain types for positions, alignment slots, defensive events, ball types, misplay types, great-play impacts, ratings, and summaries.
-- [x] 2.2 Add pure alignment helpers for assigning players, swapping players, moving players, benching players, and resolving optional Rover state.
+- [x] 2.2 Add pure alignment helpers for assigning players, swapping players, moving players, and benching players.
 - [x] 2.3 Add pure half-inning helpers that derive batting/fielding phase from `isHome` and `half`.
 - [x] 2.4 Add pure defensive stat helpers for chances, routine success rate, misplay rate, great-play rate, extra bases allowed per inning, and defensive innings by position.
 - [x] 2.5 Add basic best-fit label helpers using defensive ratings, position innings, defensive event rates, and sample-size context.
@@ -25,7 +25,7 @@
 
 - [x] 4.1 Add a protected Defense route/page and primary navigation item using the existing app shell and auth/team gate patterns.
 - [x] 4.2 Add starting defensive setup after batting-order acceptance and before game start.
-- [x] 4.3 Build a mobile-first field alignment editor with P, C, 1B, 2B, SS, 3B, LF, LC, RC, RF, optional Rover, and Bench.
+- [x] 4.3 Build a mobile-first field alignment editor with P, C, 1B, 2B, SS, 3B, LF, LC, RC, RF, and Bench.
 - [x] 4.4 Build defensive inning controls for keeping the same defense, swapping players, moving players, marking players sitting, and adding substitutes.
 - [x] 4.5 Build quick defensive event controls for routine out, hit/no play, misplay, great play, extra bases allowed, and double play.
 - [x] 4.6 Show clear phase messaging when the user opens Defense while the team is batting.
@@ -40,7 +40,7 @@
 
 - [x] 6.1 Add unit tests for home/away half-inning phase and transition behavior.
 - [x] 6.2 Add unit tests for defensive event saves, opponent runs, defensive outs, inning advancement, and undo.
-- [x] 6.3 Add unit tests for alignment helpers, including swaps, moves, bench/sit, and optional Rover behavior.
+- [x] 6.3 Add unit tests for alignment helpers, including swaps, moves, and bench/sit behavior.
 - [x] 6.4 Add unit tests for defensive stat calculations and best-fit labels.
 - [ ] 6.5 Verify the mobile UI flow: set starting defense, start game, enter a defensive event, save it, advance to offense, and return to defense next inning.
 - [ ] 6.6 Run `yarn test`, `yarn lint`, `yarn typecheck`, and `yarn build`.

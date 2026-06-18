@@ -41,7 +41,7 @@ This change adds defensive tracking across UI, game state, local persistence, ex
 
 3. Store defensive alignment snapshots per defensive inning.
 
-   Each defensive inning stores assigned players by position plus bench players. Required fielding slots should be filled by active players unless the coach explicitly marks a slot `Vacant` for a short-handed game; optional Rover can be disabled without counting as vacant. Position changes create a new alignment snapshot for the inning rather than mutating old innings. Defensive innings by position are derived from saved inning alignments, and vacant slots do not award defensive innings.
+   Each defensive inning stores assigned players by position plus bench players. Required fielding slots should be filled by active players unless the coach explicitly marks a slot `Vacant` for a short-handed game. Position changes create a new alignment snapshot for the inning rather than mutating old innings. Defensive innings by position are derived from saved inning alignments, and vacant slots do not award defensive innings.
 
    Alternative considered: store only current alignment and aggregate counters. That would make game history, undo, and player-card breakdowns less trustworthy.
 

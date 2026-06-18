@@ -2,7 +2,11 @@
 
 import { useSyncExternalStore } from "react";
 import { createZeroStats } from "./statCalculations.ts";
-import { createDefaultDefensiveProfile, normalizeDefensiveProfile } from "./defenseEngine.ts";
+import {
+  createDefaultDefensiveProfile,
+  normalizeDefensivePositionPreference,
+  normalizeDefensiveProfile,
+} from "./defenseEngine.ts";
 import { getFirebaseAuth, isFirebaseConfigured } from "./firebase.ts";
 import { normalizeTeamAccount, teamAccountHeaders, type TeamAccount } from "./teamAccount.ts";
 import type { ActiveTeam, BattingSide, Player, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
@@ -46,7 +50,7 @@ export function createPlayerFromInput(input: PlayerProfileInput, seedOrder: numb
     gender: normalizePlayerGender(input.gender),
     bats: normalizeBattingSide(input.bats),
     throws: normalizeThrowingSide(input.throws),
-    primaryPosition: input.primaryPosition.trim(),
+    primaryPosition: normalizeDefensivePositionPreference(input.primaryPosition),
     speedRating: normalizeSpeedRating(input.speedRating),
     notes: notes || "Player profile ready for game-day tracking.",
     contactNotes: splitContactNotes(input.contactNotes),
@@ -425,7 +429,7 @@ function normalizePlayer(player: Partial<Player>, seedOrder: number): Player | n
     gender: normalizePlayerGender(player.gender),
     bats: normalizeBattingSide(player.bats),
     throws: normalizeThrowingSide(player.throws),
-    primaryPosition: typeof player.primaryPosition === "string" ? player.primaryPosition : "",
+    primaryPosition: normalizeDefensivePositionPreference(player.primaryPosition),
     speedRating: normalizeSpeedRating(player.speedRating),
     notes: typeof player.notes === "string" && player.notes.trim() ? player.notes.trim() : "Player profile ready for game-day tracking.",
     contactNotes: Array.isArray(player.contactNotes) ? player.contactNotes.filter(Boolean) : [],

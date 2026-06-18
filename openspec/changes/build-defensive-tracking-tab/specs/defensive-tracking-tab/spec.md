@@ -55,17 +55,12 @@ The app SHALL require the coach to set or confirm a starting defensive alignment
 - **THEN** the coach can start the game
 - **AND** the first defensive alignment is saved with inning and half-inning context
 
-#### Scenario: Optional Rover is disabled
-- **WHEN** the coach disables the optional Rover slot
-- **THEN** the game can start without a Rover assignment
-- **AND** the disabled Rover slot does not count as a vacant required position
-
 ### Requirement: Defensive Position Support
-The app SHALL support standard slowpitch defensive positions plus an optional Rover and Bench state.
+The app SHALL support ten standard slowpitch defensive positions and Bench state.
 
 #### Scenario: Assign defensive positions
 - **WHEN** the coach edits an alignment
-- **THEN** the available slots include Pitcher, Catcher, First Base, Second Base, Shortstop, Third Base, Left Field, Left Center, Right Center, Right Field, optional Rover, and Bench
+- **THEN** the available slots include Pitcher, Catcher, First Base, Second Base, Shortstop, Third Base, Left Field, Left Center, Right Center, Right Field, and Bench
 - **AND** a player can occupy no more than one fielding position in the same alignment
 
 #### Scenario: Bench players are tracked

@@ -1,4 +1,9 @@
-## ADDED Requirements
+# project-manager-ui-intake Specification
+
+## Purpose
+Define project-manager detection and roadmap handling for approved UI intake artifacts without exposing provider credentials.
+
+## Requirements
 
 ### Requirement: UI Intake Signal Detection
 The project manager SHALL detect when a tracked UI intake artifact exists in the repository.
