@@ -5,11 +5,12 @@ import {
   getCurrentTeamPhase,
   getLiveGameHref,
   initializeStartingDefense,
+  saveDefensiveAlignment,
   saveDefensiveEvent,
   savePlay,
   undoLastPlay,
 } from "../src/lib/gameEngine.ts";
-import { createDefaultDefensiveAlignment, createDefaultDefensiveProfile } from "../src/lib/defenseEngine.ts";
+import { assignPlayerToPosition, createDefaultDefensiveAlignment, createDefaultDefensiveProfile } from "../src/lib/defenseEngine.ts";
 import { shouldKeepLocalGameState } from "../src/lib/firstGameStorage.ts";
 
 function stats() {
@@ -60,8 +61,12 @@ function player(id) {
 }
 
 test("away offensive third out advances to defensive bottom half", () => {
-  const batter = player("maya");
-  const initialState = createInitialGameState([batter], { status: "IN_PROGRESS", isHome: false });
+  const players = Array.from({ length: 10 }, (_, index) => ({
+    ...player(`away-${index + 1}`),
+    gender: index < 3 ? "Female" : "Male",
+    seedOrder: index + 1,
+  }));
+  const initialState = createInitialGameState(players, { status: "IN_PROGRESS", isHome: false });
   const firstOut = savePlay(initialState, "Out", {}, {}, false, "GROUNDOUT");
   const secondOut = savePlay(firstOut, "Out", {}, {}, false, "FLYOUT");
   const thirdOut = savePlay(secondOut, "Out", {}, {}, false, "LINEOUT");
@@ -73,6 +78,86 @@ test("away offensive third out advances to defensive bottom half", () => {
   assert.equal(thirdOut.bases.first, null);
   assert.equal(thirdOut.defensiveAlignments.length, 1);
   assert.equal(getLiveGameHref(thirdOut), "/defense");
+});
+
+test("each new defensive inning receives a fresh fair alignment with the same pitcher", () => {
+  const players = Array.from({ length: 12 }, (_, index) => ({
+    ...player(`inning-${index + 1}`),
+    seedOrder: index + 1,
+    gender: index >= 1 && index <= 3 ? "Female" : "Male",
+  }));
+  players[0].defensiveProfile.notes.bestPosition = "P";
+  let state = createInitialGameState(players, { status: "IN_PROGRESS", isHome: true });
+  state = initializeStartingDefense(state);
+  const firstPitcherId = state.lockedPitcherPlayerId;
+
+  state = saveDefensiveEvent(state, { type: "DOUBLE_PLAY", fielderId: firstPitcherId, position: "P", outsRecorded: 2 });
+  state = saveDefensiveEvent(state, { type: "ROUTINE_OUT", fielderId: firstPitcherId, position: "P", outsRecorded: 1 });
+  state = savePlay(state, "Out", {}, {}, false, "GROUNDOUT");
+  state = savePlay(state, "Out", {}, {}, false, "FLYOUT");
+  state = savePlay(state, "Out", {}, {}, false, "LINEOUT");
+
+  assert.equal(state.inning, 2);
+  assert.equal(state.half, "Top");
+  assert.equal(state.defensiveAlignments.length, 2);
+  assert.equal(state.defensiveAlignments[1].slots.P.playerId, firstPitcherId);
+  assert.notDeepEqual(
+    state.defensiveAlignments[1].benchPlayerIds,
+    state.defensiveAlignments[0].benchPlayerIds,
+  );
+});
+
+test("saving defense rejects moving the locked pitcher or dropping below three female defenders", () => {
+  const players = Array.from({ length: 12 }, (_, index) => ({
+    ...player(`manual-${index + 1}`),
+    seedOrder: index + 1,
+    gender: index >= 1 && index <= 3 ? "Female" : "Male",
+  }));
+  const initialState = initializeStartingDefense(
+    createInitialGameState(players, { status: "IN_PROGRESS", isHome: true }),
+  );
+  const startingAlignment = initialState.defensiveAlignments[0];
+  const movedPitcher = assignPlayerToPosition(startingAlignment, players, "P", players[4].id);
+  const benchPlayerId = startingAlignment.benchPlayerIds[0];
+  const removedFemale = assignPlayerToPosition(startingAlignment, players, "C", benchPlayerId);
+  const vacantCatcher = {
+    ...startingAlignment,
+    slots: { ...startingAlignment.slots, C: { status: "VACANT" } },
+  };
+
+  assert.equal(saveDefensiveAlignment(initialState, movedPitcher), initialState);
+  assert.equal(saveDefensiveAlignment(initialState, removedFemale), initialState);
+  assert.equal(saveDefensiveAlignment(initialState, vacantCatcher), initialState);
+});
+
+test("starting defense keeps the game in pregame when three female defenders are impossible", () => {
+  const players = Array.from({ length: 10 }, (_, index) => ({
+    ...player(`invalid-start-${index + 1}`),
+    gender: index < 2 ? "Female" : "Male",
+    seedOrder: index + 1,
+  }));
+  const state = initializeStartingDefense(
+    createInitialGameState(players, { status: "IN_PROGRESS", isHome: true }),
+  );
+
+  assert.equal(state.status, "PREGAME");
+  assert.equal(state.defensiveAlignments.length, 0);
+});
+
+test("legacy games do not persist a new defense that cannot field three female players", () => {
+  const players = Array.from({ length: 10 }, (_, index) => ({
+    ...player(`legacy-${index + 1}`),
+    gender: index < 2 ? "Female" : "Male",
+    seedOrder: index + 1,
+  }));
+  let state = createInitialGameState(players, { status: "IN_PROGRESS", isHome: false });
+
+  state = savePlay(state, "Out", {}, {}, false, "GROUNDOUT");
+  state = savePlay(state, "Out", {}, {}, false, "FLYOUT");
+  state = savePlay(state, "Out", {}, {}, false, "LINEOUT");
+
+  assert.equal(state.half, "Bottom");
+  assert.equal(state.defensiveAlignments.length, 0);
 });
 
 test("home team starts fielding and defensive third out advances to batting bottom half", () => {
