@@ -2,7 +2,8 @@ import type { GameState } from "./gameEngine.ts";
 import { createInitialGameState, upsertCompletedGame } from "./gameEngine.ts";
 import { defensivePositions, normalizeDefensiveAlignment } from "./defenseEngine.ts";
 import { normalizeGameRules } from "./gameRules.ts";
-import { getTeamAccountHeaders, loadActiveTeam } from "./teamStorage.ts";
+import { getTeamAccountHeaders, isSameTeamWorkspace, loadActiveTeam } from "./teamStorage.ts";
+import type { ActiveTeam } from "@/types/player";
 
 const storageKey = "baseball-tracker:first-game-state:v1";
 const completedGameHistoryStorageKey = "baseball-tracker:completed-game-history:v1";
@@ -96,6 +97,19 @@ export function resetFirstGameState() {
   return cachedState;
 }
 
+export function prepareFirstGameStateForTeam(
+  previousTeam: ActiveTeam | null,
+  nextTeam: ActiveTeam,
+) {
+  if (isSameTeamWorkspace(previousTeam, nextTeam)) {
+    return loadFirstGameState();
+  }
+
+  const nextState = createInitialGameState(nextTeam.players);
+  writeFirstGameState(nextState);
+  return nextState;
+}
+
 export function subscribeFirstGameState(onStoreChange: () => void) {
   if (typeof window === "undefined") {
     return () => {};
@@ -184,57 +198,69 @@ export function getCompletedGameStatesServerSnapshot() {
   return serverCompletedGames;
 }
 
-export function hydrateFirstGameStateFromPrisma(options: { force?: boolean } = {}) {
+export async function hydrateFirstGameStateFromPrisma(options: { force?: boolean } = {}) {
   if (typeof window === "undefined" || (hydrateStarted && !options.force)) {
     return;
   }
 
   hydrateStarted = true;
   const activeTeam = loadActiveTeam();
+  const requestedTeamId = activeTeam?.id ?? null;
+  const requestedOwnerUid = activeTeam?.ownerUid ?? null;
   const query = activeTeam?.id ? `?teamId=${encodeURIComponent(activeTeam.id)}` : "";
 
-  fetch(`/api/first-game${query}`, {
-    cache: "no-store",
-    headers: getTeamAccountHeaders(),
-  })
-    .then(async (response) => {
-      if (!response.ok) {
-        return null;
-      }
+  // Publish a team-normalized local snapshot before navigation can react to an
+  // in-progress game left behind by a different team.
+  writeFirstGameState(loadFirstGameState());
 
-      return (await response.json()) as { state?: GameState | null };
-    })
-    .then((payload) => {
-      const latestActiveTeam = loadActiveTeam();
-      const localState = loadFirstGameState();
-
-      if (!payload?.state) {
-        if (shouldKeepLocalGameState(localState, null)) {
-          return;
-        }
-
-        writeFirstGameState(createInitialGameState(latestActiveTeam?.players ?? []));
-        return;
-      }
-
-      const normalizedRemoteState = normalizeStoredGameState(
-        payload.state,
-        latestActiveTeam?.players ?? payload.state.lineup,
-      );
-
-      if (shouldKeepLocalGameState(localState, normalizedRemoteState)) {
-        return;
-      }
-
-      writeFirstGameState(normalizedRemoteState);
-
-      if (normalizedRemoteState.status === "FINAL") {
-        upsertCompletedGameHistory(normalizedRemoteState);
-      }
-    })
-    .catch(() => {
-      // Local scoring stays available when Prisma is not configured.
+  try {
+    const response = await fetch(`/api/first-game${query}`, {
+      cache: "no-store",
+      headers: getTeamAccountHeaders(),
     });
+
+    if (!response.ok) {
+      return;
+    }
+
+    const payload = (await response.json()) as { state?: GameState | null };
+    const latestActiveTeam = loadActiveTeam();
+
+    if (
+      (latestActiveTeam?.id ?? null) !== requestedTeamId ||
+      (latestActiveTeam?.ownerUid ?? null) !== requestedOwnerUid
+    ) {
+      return;
+    }
+
+    const localState = loadFirstGameState();
+
+    if (!payload.state) {
+      if (shouldKeepLocalGameState(localState, null)) {
+        return;
+      }
+
+      writeFirstGameState(createInitialGameState(latestActiveTeam?.players ?? []));
+      return;
+    }
+
+    const normalizedRemoteState = normalizeStoredGameState(
+      payload.state,
+      latestActiveTeam?.players ?? payload.state.lineup,
+    );
+
+    if (shouldKeepLocalGameState(localState, normalizedRemoteState)) {
+      return;
+    }
+
+    writeFirstGameState(normalizedRemoteState);
+
+    if (normalizedRemoteState.status === "FINAL") {
+      upsertCompletedGameHistory(normalizedRemoteState);
+    }
+  } catch {
+    // Local scoring stays available when Prisma is not configured.
+  }
 }
 
 export function shouldKeepLocalGameState(localState: GameState, remoteState: GameState | null) {

@@ -7,6 +7,7 @@ import { PlayerForm } from "@/components/PlayerForm";
 import { PriorStatsEditor } from "@/components/PriorStatsEditor";
 import { StatTile } from "@/components/StatTile";
 import { TeamSetupGate } from "@/components/TeamSetupGate";
+import { getDefensivePositionOptions } from "@/lib/defensivePositions";
 import { resetFirstGameState, saveFirstGameState } from "@/lib/firstGameStorage";
 import { getDefensiveSummary } from "@/lib/defenseEngine";
 import { getPlayerGameStats, getPlayerSeasonStats, updatePlayerSeasonStatsBaseline } from "@/lib/gameEngine";
@@ -93,6 +94,19 @@ export function RosterSection() {
       activeTeam.players.map((player) => ({
         ...player,
         gender: player.id === playerId ? gender : player.gender,
+      })),
+    );
+  }
+
+  function setPlayerPosition(playerId: string, primaryPosition: string) {
+    if (!activeTeam) {
+      return;
+    }
+
+    updateActiveTeamPlayers(
+      activeTeam.players.map((player) => ({
+        ...player,
+        primaryPosition: player.id === playerId ? primaryPosition : player.primaryPosition,
       })),
     );
   }
@@ -198,7 +212,7 @@ export function RosterSection() {
             const playerDefense = buildPlayerDefense(player, firstGameState);
 
             return (
-              <div className="grid h-full grid-rows-[1fr_auto_auto_auto] gap-2" key={player.id}>
+              <div className="grid h-full grid-rows-[1fr_auto_auto_auto_auto] gap-2" key={player.id}>
                 <PlayerCard
                   bats={player.bats}
                   defenseEvidence={playerDefense.defenseEvidence}
@@ -208,11 +222,28 @@ export function RosterSection() {
                   gender={player.gender}
                   name={player.name}
                   note={player.notes}
+                  position={player.primaryPosition}
                   role={player.roleHint}
                   speed={player.speedRating}
                   stats={buildPlayerStats(player)}
                   status={player.isActive ? "Active" : "Inactive"}
                 />
+                <label className="grid gap-1 text-xs font-bold text-[var(--muted-foreground)]">
+                  Primary defense
+                  <select
+                    aria-label={`${player.name} primary defense`}
+                    className="min-h-11 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-bold text-foreground outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+                    onChange={(event) => setPlayerPosition(player.id, event.target.value)}
+                    value={player.primaryPosition}
+                  >
+                    <option value="">Unassigned</option>
+                    {getDefensivePositionOptions(player.primaryPosition).map((position) => (
+                      <option key={position.value} value={position.value}>
+                        {position.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
                 <button
                   className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 text-sm font-bold text-foreground"
                   onClick={() => setEditingStatsPlayerId(player.id)}

@@ -6,7 +6,7 @@ import { CircleDotDashed } from "lucide-react";
 import { FirebaseLogin } from "@/components/FirebaseLogin";
 import { useAuth } from "@/components/AuthProvider";
 import { HomeHeroSection } from "@/sections/HomeHeroSection";
-import { loadActiveTeam } from "@/lib/teamStorage";
+import { useActiveTeam } from "@/lib/teamStorage";
 import type { QuickScoresSchedule } from "@/lib/quickscoresSchedule";
 
 const loadingSchedule: QuickScoresSchedule = {
@@ -52,9 +52,7 @@ function HomeLoadingState() {
 
 export function HomeAuthEntry() {
   const { isLoading, user } = useAuth();
-  const [activeTeamId, setActiveTeamId] = useState(
-    () => loadActiveTeam()?.id ?? null,
-  );
+  const activeTeam = useActiveTeam();
   const [scheduleState, setScheduleState] = useState<ScheduleState>({
     schedule: loadingSchedule,
     userId: null,
@@ -116,12 +114,13 @@ export function HomeAuthEntry() {
     );
   }
 
-  if (!activeTeamId) {
+  const hasSelectedTeam = activeTeam?.ownerUid === user.uid && Boolean(activeTeam.id);
+
+  if (!hasSelectedTeam) {
     return (
       <Suspense fallback={<HomeLoadingState />}>
         <FirebaseLogin
           defaultRedirect="/"
-          onTeamSelected={(team) => setActiveTeamId(team.id)}
           showHomeLink={false}
         />
       </Suspense>

@@ -8,7 +8,7 @@ import {
   normalizeDefensiveProfile,
 } from "./defenseEngine.ts";
 import { getFirebaseAuth, isFirebaseConfigured } from "./firebase.ts";
-import { normalizeTeamAccount, teamAccountHeaders, type TeamAccount } from "./teamAccount.ts";
+import { canUseStoredTeam, normalizeTeamAccount, teamAccountHeaders, type TeamAccount } from "./teamAccount.ts";
 import type { ActiveTeam, BattingSide, Player, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
 import type { PlayerStats } from "@/types/stats";
 
@@ -16,6 +16,7 @@ const storageKey = "baseball-tracker:active-team:v1";
 const storageEventName = "baseball-tracker:active-team-updated";
 
 let cachedRaw: string | null | undefined;
+let cachedAccountUid: string | null | undefined;
 let cachedTeam: ActiveTeam | null | undefined;
 
 export function createZeroPlayerStats(): PlayerStats {
@@ -83,24 +84,33 @@ export function loadActiveTeam(): ActiveTeam | null {
   }
 
   const raw = window.localStorage.getItem(storageKey);
+  const signedInAccount = getSignedInTeamAccount();
+  const accountUid = signedInAccount?.uid ?? null;
 
-  if (raw === cachedRaw) {
+  if (raw === cachedRaw && accountUid === cachedAccountUid) {
     return cachedTeam ?? null;
   }
 
   if (!raw) {
     cachedRaw = raw;
+    cachedAccountUid = accountUid;
     cachedTeam = null;
     return null;
   }
 
   try {
     const parsed = JSON.parse(raw) as ActiveTeam;
+    const normalizedTeam = normalizeActiveTeam(parsed);
+
     cachedRaw = raw;
-    cachedTeam = normalizeActiveTeam(parsed);
+    cachedAccountUid = accountUid;
+    cachedTeam = normalizedTeam && isTeamOwnedByAccount(normalizedTeam, signedInAccount)
+      ? normalizedTeam
+      : null;
     return cachedTeam;
   } catch {
     cachedRaw = raw;
+    cachedAccountUid = accountUid;
     cachedTeam = null;
     return null;
   }
@@ -165,6 +175,7 @@ export function resetActiveTeam() {
 
   window.localStorage.removeItem(storageKey);
   cachedRaw = null;
+  cachedAccountUid = null;
   cachedTeam = null;
   window.dispatchEvent(new Event(storageEventName));
 }
@@ -229,7 +240,11 @@ export async function createBackendTeam(
 }
 
 export async function loadAvailableTeamsFromBackend() {
-  const activeTeam = loadActiveTeam();
+  const signedInAccount = getSignedInTeamAccount();
+  const storedActiveTeam = loadActiveTeam();
+  const activeTeam = storedActiveTeam?.ownerUid === signedInAccount?.uid
+    ? storedActiveTeam
+    : null;
 
   try {
     const response = await fetch("/api/team?list=1", {
@@ -355,9 +370,29 @@ function writeActiveTeam(team: Partial<ActiveTeam>) {
   const raw = JSON.stringify(nextTeam);
 
   cachedRaw = raw;
+  cachedAccountUid = getSignedInTeamAccount()?.uid ?? null;
   cachedTeam = nextTeam;
   window.localStorage.setItem(storageKey, raw);
   window.dispatchEvent(new Event(storageEventName));
+}
+
+export function isSameTeamWorkspace(
+  firstTeam: Pick<ActiveTeam, "id" | "ownerUid"> | null,
+  secondTeam: Pick<ActiveTeam, "id" | "ownerUid"> | null,
+) {
+  if (!firstTeam?.ownerUid || !secondTeam?.ownerUid) {
+    return false;
+  }
+
+  return firstTeam.id === secondTeam.id && firstTeam.ownerUid === secondTeam.ownerUid;
+}
+
+function isTeamOwnedByAccount(team: ActiveTeam, account: TeamAccount | null) {
+  return canUseStoredTeam(
+    team.ownerUid,
+    account?.uid ?? null,
+    isFirebaseConfigured(),
+  );
 }
 
 function queueActiveTeamBackendSync(team: ActiveTeam) {

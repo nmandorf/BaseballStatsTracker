@@ -6,10 +6,30 @@ import {
   createEmptyPlayerInput,
   createPlayerFromInput,
   createZeroPlayerStats,
+  isSameTeamWorkspace,
   loadActiveTeam,
   resetActiveTeam,
   saveActiveTeam,
 } from "../src/lib/teamStorage.ts";
+import { canUseStoredTeam } from "../src/lib/teamAccount.ts";
+
+test("configured auth rejects stored teams until the owning account is resolved", () => {
+  assert.equal(canUseStoredTeam("account-a", null, true), false);
+  assert.equal(canUseStoredTeam("account-a", "account-b", true), false);
+  assert.equal(canUseStoredTeam("account-a", "account-a", true), true);
+  assert.equal(canUseStoredTeam("account-a", null, false), true);
+});
+
+test("team workspace identity requires both owner and team id", () => {
+  const firstAccountTeam = { id: "shared-slug", ownerUid: "account-a" };
+  const secondAccountTeam = { id: "shared-slug", ownerUid: "account-b" };
+  const overlappingRosterTeam = { id: "another-team", ownerUid: "account-a" };
+
+  assert.equal(isSameTeamWorkspace(firstAccountTeam, firstAccountTeam), true);
+  assert.equal(isSameTeamWorkspace(firstAccountTeam, secondAccountTeam), false);
+  assert.equal(isSameTeamWorkspace(firstAccountTeam, overlappingRosterTeam), false);
+  assert.equal(isSameTeamWorkspace(firstAccountTeam, { id: "shared-slug" }), false);
+});
 
 test("createZeroPlayerStats defaults every tracked stat to zero", () => {
   const stats = createZeroPlayerStats();
