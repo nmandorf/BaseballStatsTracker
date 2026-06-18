@@ -1,13 +1,16 @@
 import {
   BattingSide as PrismaBattingSide,
+  DefensiveRating as PrismaDefensiveRating,
   PlayerGender as PrismaPlayerGender,
   SpeedRating as PrismaSpeedRating,
   ThrowingSide as PrismaThrowingSide,
 } from "@/generated/prisma/enums";
 import { notFoundError, validationError } from "@/lib/appErrors";
+import { normalizeDefensiveProfile } from "@/lib/defenseEngine";
 import { getPrisma } from "@/lib/prisma";
 import { legacyTeamAccount, type TeamAccount } from "@/lib/teamAccount";
 import type { ActiveTeam, BattingSide, Player, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
+import type { DefensiveRatingValue } from "@/types/defense";
 import type { PlayerStats } from "@/types/stats";
 
 const defaultSeasonYear = new Date().getFullYear();
@@ -276,6 +279,7 @@ export function createBackendPlayerFromInput(input: PlayerProfileInput, seedOrde
     speedRating: normalizeSpeedRating(input.speedRating),
     notes: input.notes.trim() || "Player profile ready for game-day tracking.",
     contactNotes: splitContactNotes(input.contactNotes),
+    defensiveProfile: normalizeDefensiveProfile(input.defensiveProfile),
     roleHint: input.roleHint.trim() || defaultRoleHint(seedOrder),
     isActive: input.isActive,
     seedOrder,
@@ -328,6 +332,24 @@ function serializeTeam(team: NonNullable<TeamWithPlayers>): ActiveTeam {
       speedRating: fromPrismaSpeedRating(player.speedRating),
       notes: player.notes ?? "Player profile ready for game-day tracking.",
       contactNotes: player.contactNotes,
+      defensiveProfile: normalizeDefensiveProfile({
+        ratings: {
+          armStrength: fromPrismaDefensiveRating(player.armStrength),
+          throwAccuracy: fromPrismaDefensiveRating(player.throwAccuracy),
+          gloveSkill: fromPrismaDefensiveRating(player.gloveSkill),
+          range: fromPrismaDefensiveRating(player.rangeRating),
+          positionConfidence: fromPrismaDefensiveRating(player.positionConfidence),
+        },
+        notes: {
+          strengths: player.defenseStrengths ?? "",
+          weaknesses: player.defenseWeaknesses ?? "",
+          bestPosition: player.bestDefensePosition ?? "",
+          avoidPosition: player.avoidDefensePosition ?? "",
+          backupPosition: player.backupDefensePosition ?? "",
+          communication: player.defenseCommunicationNotes ?? "",
+          health: player.defenseHealthNotes ?? "",
+        },
+      }),
       roleHint: player.roleHint ?? defaultRoleHint(index + 1),
       isActive: player.isActive,
       seedOrder: player.seedOrder ?? index + 1,
@@ -356,6 +378,18 @@ function toPlayerUpdate(player: Player) {
     speedRating: toPrismaSpeedRating(player.speedRating),
     notes: player.notes || null,
     contactNotes: player.contactNotes,
+    armStrength: toPrismaDefensiveRating(player.defensiveProfile.ratings.armStrength),
+    throwAccuracy: toPrismaDefensiveRating(player.defensiveProfile.ratings.throwAccuracy),
+    gloveSkill: toPrismaDefensiveRating(player.defensiveProfile.ratings.gloveSkill),
+    rangeRating: toPrismaDefensiveRating(player.defensiveProfile.ratings.range),
+    positionConfidence: toPrismaDefensiveRating(player.defensiveProfile.ratings.positionConfidence),
+    defenseStrengths: player.defensiveProfile.notes.strengths || null,
+    defenseWeaknesses: player.defensiveProfile.notes.weaknesses || null,
+    bestDefensePosition: player.defensiveProfile.notes.bestPosition || null,
+    avoidDefensePosition: player.defensiveProfile.notes.avoidPosition || null,
+    backupDefensePosition: player.defensiveProfile.notes.backupPosition || null,
+    defenseCommunicationNotes: player.defensiveProfile.notes.communication || null,
+    defenseHealthNotes: player.defensiveProfile.notes.health || null,
     roleHint: player.roleHint,
     seedOrder: player.seedOrder,
     isActive: player.isActive,
@@ -508,6 +542,20 @@ function fromPrismaSpeedRating(value: PrismaSpeedRating): SpeedRating {
 function fromPrismaPlayerGender(value: PrismaPlayerGender): PlayerGender {
   if (value === PrismaPlayerGender.FEMALE) return "Female";
   if (value === PrismaPlayerGender.MALE) return "Male";
+  return "Unknown";
+}
+
+function toPrismaDefensiveRating(value: DefensiveRatingValue) {
+  if (value === "Low") return PrismaDefensiveRating.LOW;
+  if (value === "Medium") return PrismaDefensiveRating.MEDIUM;
+  if (value === "High") return PrismaDefensiveRating.HIGH;
+  return null;
+}
+
+function fromPrismaDefensiveRating(value: PrismaDefensiveRating | null): DefensiveRatingValue {
+  if (value === PrismaDefensiveRating.LOW) return "Low";
+  if (value === PrismaDefensiveRating.MEDIUM) return "Medium";
+  if (value === PrismaDefensiveRating.HIGH) return "High";
   return "Unknown";
 }
 

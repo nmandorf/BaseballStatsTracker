@@ -1,6 +1,7 @@
 import type { GameRules } from "@/types/game";
 import type { Player } from "@/types/player";
 import type { PlayerStats } from "@/types/stats";
+import { createDefaultDefensiveProfile } from "./defenseEngine.ts";
 
 export function createZeroStats(): PlayerStats {
   return {
@@ -56,6 +57,7 @@ export const seedPlayers: Player[] = [
     speedRating: "Fast",
     notes: "Line-drive contact hitter, rarely pops up, good first-game leadoff profile.",
     contactNotes: ["Hits line drives", "Can place the ball", "Fast runner"],
+    defensiveProfile: createDefaultDefensiveProfile(),
     roleHint: "High OBP table-setter",
     isActive: true,
     seedOrder: 1,
@@ -71,6 +73,7 @@ export const seedPlayers: Player[] = [
     speedRating: "Average",
     notes: "Best all-around bat in the seed profile with gap power.",
     contactNotes: ["Usually hits gaps", "Good with runners on"],
+    defensiveProfile: createDefaultDefensiveProfile(),
     roleHint: "Best overall hitter",
     isActive: true,
     seedOrder: 2,
@@ -86,6 +89,7 @@ export const seedPlayers: Player[] = [
     speedRating: "Average",
     notes: "Strong contact bat who fits an RBI slot.",
     contactNotes: ["Hits hard ground balls", "Good with runners on"],
+    defensiveProfile: createDefaultDefensiveProfile(),
     roleHint: "Strong contact + RBI hitter",
     isActive: true,
     seedOrder: 3,
@@ -101,6 +105,7 @@ export const seedPlayers: Player[] = [
     speedRating: "Slow",
     notes: "Power profile with the best damage upside.",
     contactNotes: ["Usually hits gaps", "Power hitter", "Slow runner"],
+    defensiveProfile: createDefaultDefensiveProfile(),
     roleHint: "Best power hitter",
     isActive: true,
     seedOrder: 4,
@@ -116,6 +121,7 @@ export const seedPlayers: Player[] = [
     speedRating: "Average",
     notes: "Extra-base hit threat behind the cleanup slot.",
     contactNotes: ["Pulls everything", "Usually hits gaps"],
+    defensiveProfile: createDefaultDefensiveProfile(),
     roleHint: "Next-best power hitter",
     isActive: true,
     seedOrder: 5,
@@ -131,6 +137,7 @@ export const seedPlayers: Player[] = [
     speedRating: "Average",
     notes: "Solid remaining hitter with steady contact.",
     contactNotes: ["Can hit opposite field", "Contact hitter"],
+    defensiveProfile: createDefaultDefensiveProfile(),
     roleHint: "Best remaining hitter",
     isActive: true,
     seedOrder: 6,
@@ -146,6 +153,7 @@ export const seedPlayers: Player[] = [
     speedRating: "Slow",
     notes: "Power is useful, but contact can be streaky.",
     contactNotes: ["Inconsistent but has power", "Pops up too much"],
+    defensiveProfile: createDefaultDefensiveProfile(),
     roleHint: "Useful but flawed hitter",
     isActive: true,
     seedOrder: 7,
@@ -161,6 +169,7 @@ export const seedPlayers: Player[] = [
     speedRating: "Slow",
     notes: "Lower-order profile until first-game stats say otherwise.",
     contactNotes: ["Weak grounders", "Bottom-order hitter"],
+    defensiveProfile: createDefaultDefensiveProfile(),
     roleHint: "Weakest hitter hidden",
     isActive: true,
     seedOrder: 8,
@@ -176,6 +185,7 @@ export const seedPlayers: Player[] = [
     speedRating: "Fast",
     notes: "Contact hitter who helps turn the lineup over.",
     contactNotes: ["Can place the ball", "Good runner"],
+    defensiveProfile: createDefaultDefensiveProfile(),
     roleHint: "Contact hitter",
     isActive: true,
     seedOrder: 9,
@@ -191,6 +201,7 @@ export const seedPlayers: Player[] = [
     speedRating: "Fast",
     notes: "Second leadoff type with speed near the lineup turn.",
     contactNotes: ["Fast runner", "Good contact", "Second leadoff type"],
+    defensiveProfile: createDefaultDefensiveProfile(),
     roleHint: "Second leadoff type",
     isActive: true,
     seedOrder: 10,

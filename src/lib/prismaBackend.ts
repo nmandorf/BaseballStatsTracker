@@ -3,6 +3,7 @@ import {
   AdvanceReason as PrismaAdvanceReason,
   BatterResult as PrismaBatterResult,
   BattingSide as PrismaBattingSide,
+  DefensiveRating as PrismaDefensiveRating,
   GameResult as PrismaGameResult,
   GameStatus as PrismaGameStatus,
   HomeRunLimitOutcome as PrismaHomeRunLimitOutcome,
@@ -482,6 +483,18 @@ function toPlayerUpdate(player: Player) {
     speedRating: mapSpeedRating(player.speedRating),
     notes: player.notes || null,
     contactNotes: player.contactNotes,
+    armStrength: mapDefensiveRating(player.defensiveProfile.ratings.armStrength),
+    throwAccuracy: mapDefensiveRating(player.defensiveProfile.ratings.throwAccuracy),
+    gloveSkill: mapDefensiveRating(player.defensiveProfile.ratings.gloveSkill),
+    rangeRating: mapDefensiveRating(player.defensiveProfile.ratings.range),
+    positionConfidence: mapDefensiveRating(player.defensiveProfile.ratings.positionConfidence),
+    defenseStrengths: player.defensiveProfile.notes.strengths || null,
+    defenseWeaknesses: player.defensiveProfile.notes.weaknesses || null,
+    bestDefensePosition: player.defensiveProfile.notes.bestPosition || null,
+    avoidDefensePosition: player.defensiveProfile.notes.avoidPosition || null,
+    backupDefensePosition: player.defensiveProfile.notes.backupPosition || null,
+    defenseCommunicationNotes: player.defensiveProfile.notes.communication || null,
+    defenseHealthNotes: player.defensiveProfile.notes.health || null,
     roleHint: player.roleHint,
     seedOrder: player.seedOrder,
     isActive: player.isActive,
@@ -627,6 +640,13 @@ function mapPlayerGender(value: Player["gender"]) {
   if (value === "Female") return PrismaPlayerGender.FEMALE;
   if (value === "Male") return PrismaPlayerGender.MALE;
   return PrismaPlayerGender.UNKNOWN;
+}
+
+function mapDefensiveRating(value: Player["defensiveProfile"]["ratings"]["armStrength"]) {
+  if (value === "Low") return PrismaDefensiveRating.LOW;
+  if (value === "Medium") return PrismaDefensiveRating.MEDIUM;
+  if (value === "High") return PrismaDefensiveRating.HIGH;
+  return null;
 }
 
 function mapInningHalf(value: GameState["half"]) {

@@ -92,6 +92,49 @@ export function calculateStats(stats: PlayerStats): CalculatedStats {
   };
 }
 
+export function derivePriorStats(stats: PlayerStats): PlayerStats {
+  const hits = stats.singles + stats.doubles + stats.triples + stats.homeRuns;
+  const battingOuts = Math.max(0, stats.outs - stats.sacFlies);
+  const atBats = hits + stats.reachedOnError + stats.fieldersChoice + battingOuts;
+  const plateAppearances = atBats + stats.walks + stats.sacFlies;
+
+  return {
+    ...stats,
+    hits,
+    atBats,
+    plateAppearances,
+  };
+}
+
+export function getPriorStatsValidationError(stats: PlayerStats): string | null {
+  if (stats.sacFlies > stats.outs) {
+    return "Sac flies cannot be greater than total outs.";
+  }
+
+  const classifiedOuts =
+    stats.groundouts +
+    stats.flyouts +
+    stats.lineouts +
+    stats.strikeoutsLooking +
+    stats.strikeoutsSwinging +
+    stats.otherOuts;
+  const availableClassifiedOuts = stats.outs - stats.sacFlies;
+
+  if (classifiedOuts > availableClassifiedOuts) {
+    return `Total outs must be at least ${classifiedOuts + stats.sacFlies} to preserve saved out types and sac flies.`;
+  }
+
+  if (stats.doublePlays > stats.outs) {
+    return "Double plays cannot be greater than total outs.";
+  }
+
+  if (stats.productiveOuts > stats.outs) {
+    return "Productive outs cannot be greater than total outs.";
+  }
+
+  return null;
+}
+
 export function formatRate(value: number, digits = 3) {
   if (!Number.isFinite(value) || value <= 0) {
     return ".000";

@@ -3,7 +3,7 @@ import { BattingOrderSection } from "@/sections/BattingOrderSection";
 
 export function BattingOrderPage() {
   return (
-    <AppShell activeNav="order" requireAuth>
+    <AppShell activeNav={null} requireAuth>
       <BattingOrderSection />
     </AppShell>
   );

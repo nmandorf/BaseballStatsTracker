@@ -1,4 +1,5 @@
 import type { BasesState, RunnerMovement } from "@/types/runner";
+import type { DefensiveAlignment, DefensiveEvent } from "@/types/defense";
 
 export type BatterResult = "1B" | "2B" | "3B" | "HR" | "BB" | "ROE" | "FC" | "SF" | "Out" | "DP";
 export type OutType =
@@ -26,6 +27,7 @@ export type GameRules = {
 export type ScoredPlay = {
   id: string;
   inning: number;
+  half?: "Top" | "Bottom";
   batterId: string;
   batterName: string;
   outsBefore: number;
@@ -38,4 +40,24 @@ export type ScoredPlay = {
   outsOnPlay: number;
   basesAfter: BasesState;
   summary: string;
+};
+
+export type DefensiveEventInput = {
+  type: DefensiveEvent["type"];
+  fielderId?: string;
+  position?: DefensiveEvent["position"];
+  outsRecorded?: number;
+  runsAllowed?: number;
+  basesAllowed?: number;
+  ballType?: DefensiveEvent["ballType"];
+  misplayType?: DefensiveEvent["misplayType"];
+  misplayResult?: DefensiveEvent["misplayResult"];
+  greatPlayImpact?: DefensiveEvent["greatPlayImpact"];
+  involvedPlayerIds?: string[];
+  notes?: string;
+};
+
+export type DefensiveGameState = {
+  defensiveAlignments: DefensiveAlignment[];
+  defensiveEvents: DefensiveEvent[];
 };

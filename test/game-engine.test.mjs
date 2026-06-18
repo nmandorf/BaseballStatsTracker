@@ -9,12 +9,15 @@ import {
   getGameStats,
   getPlayerGameStats,
   getPlayerSeasonStats,
+  getLatestCorrectablePlay,
   getResultLockReason,
   getSeasonStatsByPlayerId,
   getSeasonStats,
   getTeamGameTotals,
   getTeamSeasonTotals,
   savePlay,
+  replaceLatestSavedPlay,
+  undoLastPlay,
   upsertCompletedGame,
 } from "../src/lib/gameEngine.ts";
 import { calculateStats } from "../src/lib/statCalculations.ts";
@@ -97,6 +100,89 @@ test("saved plays update game totals without replacing baseline season stats", (
   assert.equal(teamTotals.plateAppearances, 1);
   assert.equal(teamTotals.hits, 1);
   assert.equal(teamTotals.runs, 1);
+});
+
+test("replacing the latest out with a home run removes the out and recalculates the play", () => {
+  const firstBatter = player("maya-johnson");
+  const nextBatter = player("jordan-lee");
+  const initialState = createInitialGameState([firstBatter, nextBatter], { status: "IN_PROGRESS" });
+  const withOut = savePlay(initialState, "Out", {}, {}, false, "GROUNDOUT");
+  const correctablePlay = getLatestCorrectablePlay(withOut);
+
+  assert.equal(correctablePlay?.batterId, firstBatter.id);
+
+  const corrected = replaceLatestSavedPlay(withOut, correctablePlay.id, "HR", {}, {}, true);
+  const batterStats = getPlayerGameStats(corrected, firstBatter.id);
+
+  assert.equal(corrected.plays.length, 1);
+  assert.equal(corrected.plays[0].id, withOut.plays[0].id);
+  assert.equal(corrected.plays[0].result, "HR");
+  assert.equal(corrected.plays[0].outType, undefined);
+  assert.equal(corrected.outs, 0);
+  assert.equal(corrected.teamScore, 1);
+  assert.equal(corrected.currentBatterIndex, 1);
+  assert.equal(batterStats.outs, 0);
+  assert.equal(batterStats.homeRuns, 1);
+  assert.equal(batterStats.runs, 1);
+  assert.equal(batterStats.rbis, 1);
+
+  const restored = undoLastPlay(corrected);
+  assert.equal(restored.plays[0].result, "Out");
+  assert.equal(restored.outs, 1);
+  assert.equal(restored.teamScore, 0);
+});
+
+test("replacing the latest home run with an out removes the run and home run credit", () => {
+  const firstBatter = player("maya-johnson");
+  const nextBatter = player("jordan-lee");
+  const withHomeRun = savePlay(
+    createInitialGameState([firstBatter, nextBatter], { status: "IN_PROGRESS" }),
+    "HR",
+    {},
+    {},
+    true,
+  );
+  const correctablePlay = getLatestCorrectablePlay(withHomeRun);
+  const corrected = replaceLatestSavedPlay(
+    withHomeRun,
+    correctablePlay.id,
+    "Out",
+    {},
+    {},
+    false,
+    "FLYOUT",
+  );
+  const batterStats = getPlayerGameStats(corrected, firstBatter.id);
+
+  assert.equal(corrected.plays.length, 1);
+  assert.equal(corrected.plays[0].result, "Out");
+  assert.equal(corrected.plays[0].outType, "FLYOUT");
+  assert.equal(corrected.outs, 1);
+  assert.equal(corrected.teamScore, 0);
+  assert.equal(corrected.currentBatterIndex, 1);
+  assert.equal(batterStats.homeRuns, 0);
+  assert.equal(batterStats.runs, 0);
+  assert.equal(batterStats.rbis, 0);
+  assert.equal(batterStats.outs, 1);
+  assert.equal(batterStats.flyouts, 1);
+});
+
+test("only the latest play in the active offensive half can be corrected", () => {
+  const firstBatter = player("maya-johnson");
+  const nextBatter = player("jordan-lee");
+  const firstPlay = savePlay(
+    createInitialGameState([firstBatter, nextBatter], { status: "IN_PROGRESS" }),
+    "1B",
+    {},
+    {},
+    false,
+  );
+  const secondPlay = savePlay(firstPlay, "Out", { "1B": "1B" }, {}, false, "GROUNDOUT");
+
+  assert.throws(
+    () => replaceLatestSavedPlay(secondPlay, firstPlay.plays[0].id, "HR", {}, {}, true),
+    /Only the latest play/,
+  );
 });
 
 test("final game summary totals stay scoped to the completed game", () => {

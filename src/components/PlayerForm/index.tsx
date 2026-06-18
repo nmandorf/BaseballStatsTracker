@@ -6,6 +6,7 @@ import {
 } from "@/lib/teamStorage";
 import { cn } from "@/lib/utils";
 import type { BattingSide, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
+import type { DefensiveRatingValue } from "@/types/defense";
 import type { PlayerStats } from "@/types/stats";
 
 type PlayerFormProps = {
@@ -20,6 +21,7 @@ const battingSides: BattingSide[] = ["Unknown", "Right", "Left", "Switch"];
 const throwingSides: ThrowingSide[] = ["Unknown", "Right", "Left"];
 const speedRatings: SpeedRating[] = ["Average", "Fast", "Slow"];
 const playerGenders: PlayerGender[] = ["Female", "Male"];
+const defensiveRatingValues: DefensiveRatingValue[] = ["Unknown", "Low", "Medium", "High"];
 
 const statFields: Array<{ key: keyof PlayerStats; label: string }> = [
   { key: "gamesPlayed", label: "Games" },
@@ -80,6 +82,32 @@ export function PlayerForm({
 
   function resetStats() {
     updateField("startingStats", createZeroPlayerStats());
+  }
+
+  function updateDefensiveRating(key: keyof PlayerProfileInput["defensiveProfile"]["ratings"], value: DefensiveRatingValue) {
+    setInput((current) => ({
+      ...current,
+      defensiveProfile: {
+        ...current.defensiveProfile,
+        ratings: {
+          ...current.defensiveProfile.ratings,
+          [key]: value,
+        },
+      },
+    }));
+  }
+
+  function updateDefensiveNote(key: keyof PlayerProfileInput["defensiveProfile"]["notes"], value: string) {
+    setInput((current) => ({
+      ...current,
+      defensiveProfile: {
+        ...current.defensiveProfile,
+        notes: {
+          ...current.defensiveProfile.notes,
+          [key]: value,
+        },
+      },
+    }));
   }
 
   function submit() {
@@ -223,6 +251,105 @@ export function PlayerForm({
             value={input.notes}
           />
         </label>
+
+        <div className="grid gap-3 rounded-lg bg-[var(--surface)] p-3">
+          <div>
+            <p className="text-sm font-bold text-foreground">Defensive profile</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-5">
+            {[
+              ["armStrength", "Arm"],
+              ["throwAccuracy", "Accuracy"],
+              ["gloveSkill", "Glove"],
+              ["range", "Range"],
+              ["positionConfidence", "Confidence"],
+            ].map(([key, label]) => (
+              <label className={fieldLabelClass} key={key}>
+                {label}
+                <select
+                  className={fieldControlClass}
+                  onChange={(event) => updateDefensiveRating(key as keyof PlayerProfileInput["defensiveProfile"]["ratings"], event.target.value as DefensiveRatingValue)}
+                  value={input.defensiveProfile.ratings[key as keyof PlayerProfileInput["defensiveProfile"]["ratings"]]}
+                >
+                  {defensiveRatingValues.map((rating) => (
+                    <option key={rating} value={rating}>
+                      {rating}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <label className={fieldLabelClass}>
+              Best position
+              <input
+                className={fieldControlClass}
+                onChange={(event) => updateDefensiveNote("bestPosition", event.target.value)}
+                placeholder="LC"
+                value={input.defensiveProfile.notes.bestPosition}
+              />
+            </label>
+            <label className={fieldLabelClass}>
+              Avoid
+              <input
+                className={fieldControlClass}
+                onChange={(event) => updateDefensiveNote("avoidPosition", event.target.value)}
+                placeholder="SS"
+                value={input.defensiveProfile.notes.avoidPosition}
+              />
+            </label>
+            <label className={fieldLabelClass}>
+              Backup
+              <input
+                className={fieldControlClass}
+                onChange={(event) => updateDefensiveNote("backupPosition", event.target.value)}
+                placeholder="RF"
+                value={input.defensiveProfile.notes.backupPosition}
+              />
+            </label>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className={fieldLabelClass}>
+              Strengths
+              <input
+                className={fieldControlClass}
+                onChange={(event) => updateDefensiveNote("strengths", event.target.value)}
+                placeholder="Range, strong throws"
+                value={input.defensiveProfile.notes.strengths}
+              />
+            </label>
+            <label className={fieldLabelClass}>
+              Watch-outs
+              <input
+                className={fieldControlClass}
+                onChange={(event) => updateDefensiveNote("weaknesses", event.target.value)}
+                placeholder="Ground balls, sore shoulder"
+                value={input.defensiveProfile.notes.weaknesses}
+              />
+            </label>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className={fieldLabelClass}>
+              Communication
+              <input
+                className={fieldControlClass}
+                onChange={(event) => updateDefensiveNote("communication", event.target.value)}
+                placeholder="Calls fly balls clearly"
+                value={input.defensiveProfile.notes.communication}
+              />
+            </label>
+            <label className={fieldLabelClass}>
+              Health and comfort
+              <input
+                className={fieldControlClass}
+                onChange={(event) => updateDefensiveNote("health", event.target.value)}
+                placeholder="Shoulder limits long throws"
+                value={input.defensiveProfile.notes.health}
+              />
+            </label>
+          </div>
+        </div>
 
         <button
           className={secondaryButtonClass}

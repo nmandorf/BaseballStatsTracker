@@ -1,23 +1,29 @@
+"use client";
+
+import { useEffect } from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
   CircleDotDashed,
   ClipboardList,
   Home,
-  ListOrdered,
   Settings2,
 } from "lucide-react";
 import { AuthStatus } from "@/components/AuthStatus";
 import { StatusPill } from "@/components/StatusPill";
+import { getLiveGameHref } from "@/lib/gameEngine";
+import { useFirstGameState } from "@/lib/useFirstGameState";
 import { cn } from "@/lib/utils";
 
 const navItems = [
   { key: "home", label: "Home", href: "/", icon: Home },
   { key: "roster", label: "Roster", href: "/roster", icon: ClipboardList },
   { key: "settings", label: "Game Settings", href: "/game-settings", icon: Settings2 },
-  { key: "order", label: "Batting Order", href: "/batting-order", icon: ListOrdered },
   { key: "stats", label: "Stats", href: "/stats", icon: BarChart3 },
 ] as const;
+
+const liveGamePaths = new Set(["/stats-entry", "/defense"]);
 
 export type AppNavKey = (typeof navItems)[number]["key"];
 
@@ -26,17 +32,26 @@ type HeaderSectionProps = {
 };
 
 export function HeaderSection({ activeNav = "home" }: HeaderSectionProps) {
+  const gameState = useFirstGameState();
+  const pathname = usePathname();
+  const router = useRouter();
+  const isLiveGame = gameState.status === "IN_PROGRESS";
+
+  useEffect(() => {
+    if (!isLiveGame || (pathname && liveGamePaths.has(pathname))) {
+      return;
+    }
+
+    router.replace(getLiveGameHref(gameState));
+  }, [gameState, isLiveGame, pathname, router]);
+
   return (
     <header className="sticky top-0 z-20 border-b border-[var(--border)] bg-background/94 backdrop-blur-xl">
       <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8">
         <div className="flex min-w-0 items-center gap-3">
-          <Link
-            href="/"
-            aria-label="Baseball Stat Tracker home"
-            className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)] text-white shadow-sm shadow-[var(--accent)]/20"
-          >
+          <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)] text-white shadow-sm shadow-[var(--accent)]/20">
             <CircleDotDashed className="size-5" aria-hidden="true" />
-          </Link>
+          </div>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-foreground">
               Baseball Stat Tracker
@@ -46,9 +61,43 @@ export function HeaderSection({ activeNav = "home" }: HeaderSectionProps) {
             </p>
           </div>
         </div>
+        {!isLiveGame ? (
+          <nav
+            aria-label="Primary"
+            className="hidden items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 shadow-sm shadow-foreground/[0.025] md:flex"
+          >
+            {navItems.map(({ key, label, href, icon: Icon }) => {
+              const isActive = activeNav === key;
+
+              return (
+                <Link
+                  className={cn(
+                    "inline-flex min-h-12 items-center gap-2 rounded-md px-3 text-sm font-bold transition",
+                    isActive
+                      ? "bg-[var(--accent)] text-white"
+                      : "text-[var(--muted-foreground)] hover:bg-[var(--surface)] hover:text-foreground",
+                  )}
+                  href={href}
+                  key={key}
+                >
+                  <Icon className="size-4" aria-hidden="true" />
+                  {label}
+                </Link>
+              );
+            })}
+          </nav>
+        ) : null}
+        <div className="flex items-center gap-2">
+          <StatusPill className={cn(!isLiveGame && "hidden sm:inline-flex")} tone="ready">
+            {isLiveGame ? "Game in progress" : "Game day"}
+          </StatusPill>
+          {!isLiveGame ? <AuthStatus /> : null}
+        </div>
+      </div>
+      {!isLiveGame ? (
         <nav
-          aria-label="Primary"
-          className="hidden items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 shadow-sm shadow-foreground/[0.025] md:flex"
+          aria-label="Mobile primary"
+          className="mx-auto flex w-full max-w-6xl gap-1 overflow-x-auto px-4 pb-3 sm:px-6 md:hidden"
         >
           {navItems.map(({ key, label, href, icon: Icon }) => {
             const isActive = activeNav === key;
@@ -56,10 +105,10 @@ export function HeaderSection({ activeNav = "home" }: HeaderSectionProps) {
             return (
               <Link
                 className={cn(
-                  "inline-flex min-h-12 items-center gap-2 rounded-md px-3 text-sm font-bold transition",
+                  "inline-flex min-h-12 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-bold",
                   isActive
-                    ? "bg-[var(--accent)] text-white"
-                    : "text-[var(--muted-foreground)] hover:bg-[var(--surface)] hover:text-foreground",
+                    ? "border-[var(--accent)] bg-[var(--accent)] text-white"
+                    : "border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)]",
                 )}
                 href={href}
                 key={key}
@@ -70,37 +119,7 @@ export function HeaderSection({ activeNav = "home" }: HeaderSectionProps) {
             );
           })}
         </nav>
-        <div className="flex items-center gap-2">
-          <StatusPill className="hidden sm:inline-flex" tone="ready">
-            Game day
-          </StatusPill>
-          <AuthStatus />
-        </div>
-      </div>
-      <nav
-        aria-label="Mobile primary"
-        className="mx-auto flex w-full max-w-6xl gap-1 overflow-x-auto px-4 pb-3 sm:px-6 md:hidden"
-      >
-        {navItems.map(({ key, label, href, icon: Icon }) => {
-          const isActive = activeNav === key;
-
-          return (
-            <Link
-              className={cn(
-                "inline-flex min-h-12 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-bold",
-                isActive
-                  ? "border-[var(--accent)] bg-[var(--accent)] text-white"
-                  : "border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)]",
-              )}
-              href={href}
-              key={key}
-            >
-              <Icon className="size-4" aria-hidden="true" />
-              {label}
-            </Link>
-          );
-        })}
-      </nav>
+      ) : null}
     </header>
   );
 }

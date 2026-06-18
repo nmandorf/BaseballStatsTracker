@@ -15,6 +15,7 @@ let cachedCompletedRaw: string | null | undefined;
 let cachedCompletedTeamId: string | null | undefined;
 let cachedCompletedGames: GameState[] | undefined;
 let hydrateStarted = false;
+let prismaSyncQueue = Promise.resolve();
 
 export function loadFirstGameState(): GameState {
   if (typeof window === "undefined") {
@@ -230,7 +231,7 @@ export function hydrateFirstGameStateFromPrisma(options: { force?: boolean } = {
     });
 }
 
-function shouldKeepLocalGameState(localState: GameState, remoteState: GameState | null) {
+export function shouldKeepLocalGameState(localState: GameState, remoteState: GameState | null) {
   if (localState.status !== "IN_PROGRESS" || !localState.lineup.length) {
     return false;
   }
@@ -240,10 +241,24 @@ function shouldKeepLocalGameState(localState: GameState, remoteState: GameState 
   }
 
   if (remoteState.status === "FINAL") {
-    return false;
+    return isRemoteFinalOlderThanLocalGame(localState, remoteState);
   }
 
-  return remoteState.plays.length < localState.plays.length;
+  return getSavedActionCount(remoteState) <= getSavedActionCount(localState);
+}
+
+function isRemoteFinalOlderThanLocalGame(localState: GameState, remoteState: GameState) {
+  const localStartedAt = localState.defensiveAlignments
+    .map((alignment) => Date.parse(alignment.updatedAt))
+    .filter(Number.isFinite)
+    .sort((first, second) => first - second)[0];
+  const remoteEndedAt = remoteState.endedAt ? Date.parse(remoteState.endedAt) : Number.NaN;
+
+  if (Number.isFinite(localStartedAt) && Number.isFinite(remoteEndedAt)) {
+    return remoteEndedAt <= localStartedAt;
+  }
+
+  return getSavedActionCount(remoteState) < getSavedActionCount(localState);
 }
 
 function writeFirstGameState(state: GameState) {
@@ -269,16 +284,18 @@ function writeCompletedGameStates(games: GameState[]) {
 function queueFirstGamePrismaSync(state: GameState) {
   const activeTeam = loadActiveTeam();
 
-  fetch("/api/first-game", {
-    method: "POST",
-    headers: getTeamAccountHeaders({
-      "Content-Type": "application/json",
-    }),
-    body: JSON.stringify({
-      state,
-      team: activeTeam,
-    }),
-  })
+  prismaSyncQueue = prismaSyncQueue
+    .catch(() => undefined)
+    .then(() => fetch("/api/first-game", {
+      method: "POST",
+      headers: getTeamAccountHeaders({
+        "Content-Type": "application/json",
+      }),
+      body: JSON.stringify({
+        state,
+        team: activeTeam,
+      }),
+    }))
     .then(() => undefined)
     .catch(() => {
       // Keep the local game usable if DATABASE_URL or the network is unavailable.
@@ -289,12 +306,16 @@ function queueFirstGamePrismaReset() {
   const activeTeam = loadActiveTeam();
   const query = activeTeam?.id ? `?teamId=${encodeURIComponent(activeTeam.id)}` : "";
 
-  fetch(`/api/first-game${query}`, {
-    method: "DELETE",
-    headers: getTeamAccountHeaders(),
-  }).catch(() => {
-    // Reset local state even if Prisma is unavailable.
-  });
+  prismaSyncQueue = prismaSyncQueue
+    .catch(() => undefined)
+    .then(() => fetch(`/api/first-game${query}`, {
+      method: "DELETE",
+      headers: getTeamAccountHeaders(),
+    }))
+    .then(() => undefined)
+    .catch(() => {
+      // Reset local state even if Prisma is unavailable.
+    });
 }
 
 function normalizeGameState(state: GameState, activePlayers: GameState["lineup"]): GameState {
@@ -321,6 +342,12 @@ function normalizeGameState(state: GameState, activePlayers: GameState["lineup"]
     endedAt: state.endedAt ?? null,
     opponent: state.opponent ?? "Opponent",
     isHome: state.isHome ?? false,
+    defensiveAlignments: Array.isArray(state.defensiveAlignments) ? state.defensiveAlignments : [],
+    defensiveEvents: Array.isArray(state.defensiveEvents) ? state.defensiveEvents : [],
     gameRules: normalizeGameRules(state.gameRules),
   };
+}
+
+function getSavedActionCount(state: GameState) {
+  return state.plays.length + (Array.isArray(state.defensiveEvents) ? state.defensiveEvents.length : 0);
 }

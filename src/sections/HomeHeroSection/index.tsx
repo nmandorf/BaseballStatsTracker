@@ -4,7 +4,6 @@ import {
   CalendarClock,
   ClipboardList,
   ExternalLink,
-  ListOrdered,
   MapPin,
   RefreshCw,
   ShieldCheck,
@@ -18,7 +17,6 @@ type HomeHeroSectionProps = {
 };
 
 const secondaryActions = [
-  { href: "/batting-order", label: "Review Lineup", icon: ListOrdered },
   { href: "/roster", label: "Edit Roster", icon: ClipboardList },
 ];
 
@@ -94,7 +92,7 @@ export function HomeHeroSection({ schedule }: HomeHeroSectionProps) {
               <ArrowRight className="size-4" aria-hidden="true" />
             </Link>
 
-            <div className="grid gap-2 sm:grid-cols-2">
+            <div className="grid gap-2">
               {secondaryActions.map(({ href, label, icon: Icon }) => (
                 <Link
                   className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--background)] px-4 text-sm font-bold text-[var(--muted-foreground)] transition hover:bg-[var(--surface)] hover:text-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"

@@ -60,6 +60,18 @@ model Player {
   speedRating     SpeedRating  @default(AVERAGE)
   notes           String?
   contactNotes    String[]     @default([])
+  armStrength     DefensiveRating?
+  throwAccuracy   DefensiveRating?
+  gloveSkill      DefensiveRating?
+  rangeRating     DefensiveRating?
+  positionConfidence DefensiveRating?
+  defenseStrengths String?
+  defenseWeaknesses String?
+  bestDefensePosition String?
+  avoidDefensePosition String?
+  backupDefensePosition String?
+  defenseCommunicationNotes String?
+  defenseHealthNotes String?
   roleHint        String?
   seedOrder       Int?
   isActive        Boolean      @default(true)
@@ -70,6 +82,8 @@ model Player {
   lineupEntries   GameLineup[]
   atBats          AtBat[]             @relation("BatterAtBats")
   runnerMovements RunnerAdvancement[]
+  defensiveSlots  DefensiveAlignmentSlot[]
+  defensiveEvents DefensiveEvent[]       @relation("PrimaryDefenderEvents")
   gameStats       PlayerGameStats[]
   seasonStats     PlayerSeasonStats[]
 
@@ -105,6 +119,8 @@ model Game {
   stats     PlayerGameStats[]
   teamStats TeamGameStats?
   rules     GameRuleSettings?
+  defensiveAlignments DefensiveAlignment[]
+  defensiveEvents     DefensiveEvent[]
 
   @@index([teamId])
   @@index([seasonId])
@@ -187,6 +203,62 @@ model RunnerAdvancement {
 
   @@index([atBatId])
   @@index([playerId])
+}
+
+model DefensiveAlignment {
+  id           String     @id @default(cuid())
+  gameId       String
+  inning       Int
+  half         InningHalf
+  roverEnabled Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  game  Game                     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  slots DefensiveAlignmentSlot[]
+
+  @@unique([gameId, inning, half])
+  @@index([gameId])
+}
+
+model DefensiveAlignmentSlot {
+  id          String            @id @default(cuid())
+  alignmentId String
+  playerId    String?
+  position    DefensivePosition
+  status      DefensiveSlotStatus @default(ASSIGNED)
+
+  alignment DefensiveAlignment @relation(fields: [alignmentId], references: [id], onDelete: Cascade)
+  player    Player?            @relation(fields: [playerId], references: [id], onDelete: SetNull)
+
+  @@unique([alignmentId, position])
+  @@index([playerId])
+}
+
+model DefensiveEvent {
+  id               String              @id @default(cuid())
+  gameId           String
+  inning           Int
+  half             InningHalf
+  type             DefensiveEventType
+  fielderId        String?
+  position         DefensivePosition?
+  ballType         DefensiveBallType?
+  misplayType      DefensiveMisplayType?
+  misplayResult    DefensiveMisplayResult?
+  greatPlayImpact  DefensiveGreatPlayImpact?
+  involvedPlayerIds String[]            @default([])
+  outsRecorded     Int                 @default(0)
+  runsAllowed      Int                 @default(0)
+  basesAllowed     Int                 @default(0)
+  notes            String?
+  createdAt        DateTime            @default(now())
+
+  game    Game    @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  fielder Player? @relation("PrimaryDefenderEvents", fields: [fielderId], references: [id], onDelete: SetNull)
+
+  @@index([gameId])
+  @@index([fielderId])
 }
 
 model PlayerGameStats {
@@ -381,6 +453,12 @@ enum PlayerGender {
   UNKNOWN
 }
 
+enum DefensiveRating {
+  LOW
+  MEDIUM
+  HIGH
+}
+
 enum InningHalf {
   TOP
   BOTTOM
@@ -449,4 +527,68 @@ enum HomeRunLimitOutcome {
   OUT
   SINGLE
   OTHER
+}
+
+enum DefensivePosition {
+  P
+  C
+  FIRST_BASE
+  SECOND_BASE
+  SHORTSTOP
+  THIRD_BASE
+  LEFT_FIELD
+  LEFT_CENTER
+  RIGHT_CENTER
+  RIGHT_FIELD
+  ROVER
+}
+
+enum DefensiveSlotStatus {
+  ASSIGNED
+  VACANT
+}
+
+enum DefensiveEventType {
+  ROUTINE_OUT
+  HIT_NO_PLAY
+  MISPLAY
+  GREAT_PLAY
+  EXTRA_BASES_ALLOWED
+  DOUBLE_PLAY
+}
+
+enum DefensiveBallType {
+  GROUND_BALL
+  FLY_BALL
+  LINE_DRIVE
+  POP_UP
+  SHORT_FLY
+  HARD_HIT_BALL
+  WEAK_HIT_BALL
+}
+
+enum DefensiveMisplayType {
+  FIELDING_MISTAKE
+  THROWING_MISTAKE
+  CATCHING_MISTAKE
+  MISSED_FLY_BALL
+  BAD_DECISION
+  DID_NOT_COVER_BASE
+  DID_NOT_BACK_UP_PLAY
+}
+
+enum DefensiveMisplayResult {
+  BATTER_REACHED_BASE
+  RUNNER_ADVANCED
+  RUN_SCORED
+  EXTRA_BASE_ALLOWED
+  OUT_MISSED
+}
+
+enum DefensiveGreatPlayImpact {
+  SAVED_OUT
+  SAVED_RUN
+  PREVENTED_EXTRA_BASE
+  ENDED_INNING
+  DOUBLE_PLAY_STARTED
 }

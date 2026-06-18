@@ -1,7 +1,5 @@
 "use client";
 
-import { BarChart3 } from "lucide-react";
-import { ScreenHeader } from "@/components/ScreenHeader";
 import { StatTile } from "@/components/StatTile";
 import { TeamSetupGate } from "@/components/TeamSetupGate";
 import {
@@ -39,15 +37,8 @@ export function SeasonStatsSection() {
   return (
     <section className="bg-background py-6 sm:py-8">
       <div className="mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8">
-        <ScreenHeader
-          description="Season totals across your roster, with completed games available for final box score review."
-          eyebrow="Stats"
-          icon={BarChart3}
-          status="Season Stats"
-          title={`${activeTeam.name} season stats`}
-        />
-
-        <div className="mt-4 grid gap-3 sm:grid-cols-4">
+        <h1 className="sr-only">Season stats for {activeTeam.name}</h1>
+        <div className="grid gap-3 sm:grid-cols-4">
           <StatTile helper="Season total" label="Runs" tone="accent" value={String(seasonTotals.runs)} />
           <StatTile helper={`${seasonTotals.hits} hits`} label="AVG" tone="success" value={formatRate(seasonTotals.battingAverage)} />
           <StatTile helper={`OPS ${formatRate(seasonTotals.ops)}`} label="OBP" value={formatRate(seasonTotals.onBasePercentage)} />
