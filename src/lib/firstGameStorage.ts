@@ -1,5 +1,6 @@
 import type { GameState } from "./gameEngine.ts";
 import { createInitialGameState, upsertCompletedGame } from "./gameEngine.ts";
+import { defensivePositions, normalizeDefensiveAlignment } from "./defenseEngine.ts";
 import { normalizeGameRules } from "./gameRules.ts";
 import { getTeamAccountHeaders, loadActiveTeam } from "./teamStorage.ts";
 
@@ -56,7 +57,7 @@ export function loadFirstGameState(): GameState {
 
     cachedRaw = raw;
     cachedTeamId = activeTeamId;
-    cachedState = normalizeGameState(parsed, activeTeam.players);
+    cachedState = normalizeStoredGameState(parsed, activeTeam.players);
     return cachedState;
   } catch {
     cachedRaw = raw;
@@ -156,7 +157,7 @@ export function loadCompletedGameStates(): GameState[] {
     cachedCompletedRaw = raw;
     cachedCompletedTeamId = activeTeamId;
     cachedCompletedGames = parsed
-      .map((game) => normalizeGameState(game, activeTeam.players))
+      .map((game) => normalizeStoredGameState(game, activeTeam.players))
       .filter((game) => game.status === "FINAL");
     return cachedCompletedGames;
   } catch {
@@ -216,14 +217,19 @@ export function hydrateFirstGameStateFromPrisma(options: { force?: boolean } = {
         return;
       }
 
-      if (shouldKeepLocalGameState(localState, payload.state)) {
+      const normalizedRemoteState = normalizeStoredGameState(
+        payload.state,
+        latestActiveTeam?.players ?? payload.state.lineup,
+      );
+
+      if (shouldKeepLocalGameState(localState, normalizedRemoteState)) {
         return;
       }
 
-      writeFirstGameState(payload.state);
+      writeFirstGameState(normalizedRemoteState);
 
-      if (payload.state.status === "FINAL") {
-        upsertCompletedGameHistory(payload.state);
+      if (normalizedRemoteState.status === "FINAL") {
+        upsertCompletedGameHistory(normalizedRemoteState);
       }
     })
     .catch(() => {
@@ -318,7 +324,10 @@ function queueFirstGamePrismaReset() {
     });
 }
 
-function normalizeGameState(state: GameState, activePlayers: GameState["lineup"]): GameState {
+export function normalizeStoredGameState(
+  state: GameState,
+  activePlayers: GameState["lineup"],
+): GameState {
   const activePlayerIds = new Set(activePlayers.map((player) => player.id));
   const stateUsesActiveTeam = state.lineup.some((player) => activePlayerIds.has(player.id));
 
@@ -326,7 +335,9 @@ function normalizeGameState(state: GameState, activePlayers: GameState["lineup"]
     return createInitialGameState(activePlayers);
   }
 
-  const defensiveAlignments = Array.isArray(state.defensiveAlignments) ? state.defensiveAlignments : [];
+  const defensiveAlignments = Array.isArray(state.defensiveAlignments)
+    ? state.defensiveAlignments.map((alignment) => normalizeDefensiveAlignment(alignment, state.lineup))
+    : [];
   const firstPitcherSlot = defensiveAlignments
     .find((alignment) => alignment.slots.P?.status === "ASSIGNED")
     ?.slots.P;
@@ -351,7 +362,11 @@ function normalizeGameState(state: GameState, activePlayers: GameState["lineup"]
     opponent: state.opponent ?? "Opponent",
     isHome: state.isHome ?? false,
     defensiveAlignments,
-    defensiveEvents: Array.isArray(state.defensiveEvents) ? state.defensiveEvents : [],
+    defensiveEvents: Array.isArray(state.defensiveEvents)
+      ? state.defensiveEvents.filter((event) => (
+        !event.position || defensivePositions.includes(event.position)
+      ))
+      : [],
     lockedPitcherPlayerId: state.lockedPitcherPlayerId ?? inferredPitcherPlayerId,
     gameRules: normalizeGameRules(state.gameRules),
   };

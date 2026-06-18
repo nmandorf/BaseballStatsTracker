@@ -11,7 +11,7 @@ import {
   undoLastPlay,
 } from "../src/lib/gameEngine.ts";
 import { assignPlayerToPosition, createDefaultDefensiveAlignment, createDefaultDefensiveProfile } from "../src/lib/defenseEngine.ts";
-import { shouldKeepLocalGameState } from "../src/lib/firstGameStorage.ts";
+import { normalizeStoredGameState, shouldKeepLocalGameState } from "../src/lib/firstGameStorage.ts";
 
 function stats() {
   return {
@@ -240,4 +240,43 @@ test("a newer remote final can close the same local in-progress game", () => {
   };
 
   assert.equal(shouldKeepLocalGameState(localGame, newerRemoteFinal), false);
+});
+
+test("legacy remote snapshots normalize removed defensive slots before hydration", () => {
+  const fielder = player("legacy-rover");
+  const remoteGame = {
+    ...createInitialGameState([fielder]),
+    defensiveAlignments: [{
+      id: "legacy-defense",
+      inning: 1,
+      half: "Top",
+      slots: {
+        ROVER: { status: "ASSIGNED", playerId: fielder.id, playerName: fielder.name },
+      },
+      benchPlayerIds: [],
+      updatedAt: "2026-06-18T00:00:00.000Z",
+    }],
+    defensiveEvents: [{
+      id: "legacy-event",
+      inning: 1,
+      half: "Top",
+      type: "ROUTINE_OUT",
+      fielderId: fielder.id,
+      fielderName: fielder.name,
+      position: "ROVER",
+      involvedPlayerIds: [fielder.id],
+      outsRecorded: 1,
+      runsAllowed: 0,
+      basesAllowed: 0,
+      notes: "",
+      createdAt: "2026-06-18T00:00:00.000Z",
+    }],
+  };
+
+  const normalizedGame = normalizeStoredGameState(remoteGame, [fielder]);
+  const [alignment] = normalizedGame.defensiveAlignments;
+
+  assert.equal(Object.hasOwn(alignment.slots, "ROVER"), false);
+  assert.deepEqual(alignment.benchPlayerIds, [fielder.id]);
+  assert.deepEqual(normalizedGame.defensiveEvents, []);
 });

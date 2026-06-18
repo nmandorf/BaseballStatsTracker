@@ -5,6 +5,7 @@ import {
   createDefaultDefensiveAlignment,
   createDefaultDefensiveProfile,
   createDefensiveEvent,
+  defensivePositions,
   generateDefensiveAlignment,
   getAssignedFemaleDefenderCount,
   getDefensiveAlignmentIssues,
@@ -15,6 +16,8 @@ import {
   getFirstDefensiveHalf,
   getSuggestedPositionForBallType,
   getTeamPhase,
+  normalizeDefensiveProfile,
+  normalizeDefensiveAlignment,
   normalizeDefensivePosition,
   swapDefensivePlayers,
 } from "../src/lib/defenseEngine.ts";
@@ -58,7 +61,7 @@ test("alignment helpers move, bench, and swap players without duplicate assignme
     jordan,
     ...Array.from({ length: 8 }, (_, index) => player(`bench-${index}`)),
   ];
-  const alignment = createDefaultDefensiveAlignment(players, 1, "Top", { roverEnabled: false });
+  const alignment = createDefaultDefensiveAlignment(players, 1, "Top");
   const withMayaAtShort = assignPlayerToPosition(alignment, players, "SS", maya.id);
 
   assert.equal(withMayaAtShort.slots.SS.playerId, maya.id);
@@ -74,7 +77,7 @@ test("alignment helpers move, bench, and swap players without duplicate assignme
 test("defensive event suggestions link fielders, positions, and ball types", () => {
   const players = Array.from({ length: 10 }, (_, index) => player(`player-${index + 1}`));
   const noa = players[7];
-  const alignment = createDefaultDefensiveAlignment(players, 1, "Top", { roverEnabled: false });
+  const alignment = createDefaultDefensiveAlignment(players, 1, "Top");
 
   assert.equal(getAssignedPositionForPlayer(alignment, noa.id), "LC");
   assert.equal(getAssignedPlayerIdForPosition(alignment, "LC"), noa.id);
@@ -92,7 +95,7 @@ test("defensive summary calculates chances, rates, innings, and best fit", () =>
       },
     },
   });
-  const alignment = createDefaultDefensiveAlignment([maya], 1, "Top", { roverEnabled: false });
+  const alignment = createDefaultDefensiveAlignment([maya], 1, "Top");
   const events = [
     createDefensiveEvent({ id: "one", inning: 1, half: "Top", type: "ROUTINE_OUT", fielder: maya, position: "LC" }),
     createDefensiveEvent({ id: "two", inning: 1, half: "Top", type: "GREAT_PLAY", fielder: maya, position: "LC", basesAllowed: 0 }),
@@ -125,7 +128,6 @@ test("defense generation uses strongest, preferred, backup, and avoid positions"
     priorAlignments: [],
     inning: 1,
     half: "Top",
-    roverEnabled: false,
   });
 
   assert.equal(alignment.slots.P.playerId, profiles[3].id);
@@ -146,7 +148,6 @@ test("defense generation locks the pitcher and avoids repeat bench innings when 
     priorAlignments: [],
     inning: 1,
     half: "Top",
-    roverEnabled: false,
   });
   const lockedPitcherPlayerId = first.slots.P.playerId;
   const second = generateDefensiveAlignment({
@@ -154,7 +155,6 @@ test("defense generation locks the pitcher and avoids repeat bench innings when 
     priorAlignments: [first],
     inning: 2,
     half: "Top",
-    roverEnabled: false,
     lockedPitcherPlayerId,
   });
   const third = generateDefensiveAlignment({
@@ -162,7 +162,6 @@ test("defense generation locks the pitcher and avoids repeat bench innings when 
     priorAlignments: [first, second],
     inning: 3,
     half: "Top",
-    roverEnabled: false,
     lockedPitcherPlayerId,
   });
   const benchCounts = getDefensiveBenchCounts(players, [first, second, third]);
@@ -184,7 +183,6 @@ test("defensive validation blocks a lineup with fewer than three female players"
     priorAlignments: [],
     inning: 1,
     half: "Top",
-    roverEnabled: false,
   });
 
   assert.equal(
@@ -194,9 +192,37 @@ test("defensive validation blocks a lineup with fewer than three female players"
 });
 
 test("legacy defensive position labels normalize to supported positions", () => {
+  assert.equal(defensivePositions.length, 10);
   assert.equal(normalizeDefensivePosition("Left Center Field"), "LC");
   assert.equal(normalizeDefensivePosition("first base"), "1B");
+  assert.equal(normalizeDefensivePosition("rover"), null);
   assert.equal(normalizeDefensivePosition("not a position"), null);
+  assert.equal(normalizeDefensiveProfile({
+    notes: {
+      bestPosition: "Rover",
+      avoidPosition: "rover",
+      backupPosition: " ROVER ",
+    },
+  }).notes.bestPosition, "");
+});
+
+test("legacy alignments return an unsupported position assignment to the bench", () => {
+  const fielder = player("fielder");
+  const legacyAlignment = {
+    id: "legacy",
+    inning: 1,
+    half: "Top",
+    slots: {
+      ROVER: { status: "ASSIGNED", playerId: fielder.id, playerName: fielder.name },
+    },
+    benchPlayerIds: [],
+    updatedAt: "2026-06-18T00:00:00.000Z",
+  };
+
+  const alignment = normalizeDefensiveAlignment(legacyAlignment, [fielder]);
+
+  assert.deepEqual(alignment.benchPlayerIds, [fielder.id]);
+  assert.equal(Object.hasOwn(alignment.slots, "ROVER"), false);
 });
 
 test("global assignment avoids an avoid-position when a legal swap exists", () => {
@@ -218,7 +244,6 @@ test("global assignment avoids an avoid-position when a legal swap exists", () =
     priorAlignments: [],
     inning: 1,
     half: "Top",
-    roverEnabled: false,
   });
 
   assert.equal(alignment.slots.P.playerId, flexiblePitcher.id);
@@ -242,7 +267,6 @@ test("avoid positions outrank bench fairness when a legal alternative exists", (
     id: `prior-${index}`,
     inning: index + 1,
     half: "Top",
-    roverEnabled: false,
     slots: {},
     benchPlayerIds: [avoidRightField.id],
     updatedAt: new Date(2026, 0, index + 1).toISOString(),
@@ -253,7 +277,6 @@ test("avoid positions outrank bench fairness when a legal alternative exists", (
     priorAlignments,
     inning: 21,
     half: "Top",
-    roverEnabled: false,
   });
 
   assert.notEqual(getAssignedPositionForPlayer(alignment, avoidRightField.id), "RF");

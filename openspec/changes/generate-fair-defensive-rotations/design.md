@@ -6,7 +6,7 @@ Player profiles already store gender, a primary position, global defensive ratin
 
 1. Keep generation as pure domain logic.
 
-   A deterministic generator receives players, inning context, prior alignments, rover state, and the locked pitcher. UI and persistence call this helper but do not contain placement rules.
+   A deterministic generator receives players, inning context, prior alignments, and the locked pitcher. UI and persistence call this helper but do not contain placement rules.
 
 2. Treat pitcher continuity and three female defenders as hard constraints.
 

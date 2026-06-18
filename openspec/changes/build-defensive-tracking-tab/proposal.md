@@ -7,7 +7,7 @@ The app can track offense during a live game, but it cannot show who is reliable
 - Add a separate mobile-first `Defense` tab used when the team is in the field, while keeping `Stats Entry` focused on the team batting.
 - Extend the game flow so the coach approves the batting order, sets a starting defensive alignment, then starts the game.
 - Track home/away half-inning responsibility so home teams defend the Top half and hit the Bottom half, while away teams hit the Top half and defend the Bottom half.
-- Support defensive positions for Pitcher, Catcher, First Base, Second Base, Shortstop, Third Base, Left Field, Left Center, Right Center, Right Field, optional Rover, and Bench.
+- Support defensive positions for Pitcher, Catcher, First Base, Second Base, Shortstop, Third Base, Left Field, Left Center, Right Center, Right Field, and Bench.
 - Store inning-by-inning defensive alignments, position changes, bench/sitting state, defensive innings by position, and undoable defensive events.
 - Capture MVP defensive events: routine out made, misplay, great play, extra bases allowed, hit/no play, and double play.
 - Add simple analyst defensive ratings for arm strength, throw accuracy, glove skill, range, and position confidence.

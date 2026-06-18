@@ -17,7 +17,6 @@ import {
   getAlignmentForCurrentHalf,
   getAssignedPlayerIdForPosition,
   getDefensiveAlignmentIssues,
-  getLatestDefensiveAlignment,
   getNextHalfInning,
   getTeamPhase,
   upsertDefensiveAlignment,
@@ -234,14 +233,11 @@ export function getOrCreateDefensiveAlignmentForHalf(
     return currentAlignment;
   }
 
-  const latestAlignment = getLatestDefensiveAlignment(state.defensiveAlignments);
-
   return generateDefensiveAlignment({
     players: state.lineup,
     priorAlignments: state.defensiveAlignments,
     inning,
     half,
-    roverEnabled: latestAlignment?.roverEnabled ?? state.lineup.length > 10,
     lockedPitcherPlayerId: state.lockedPitcherPlayerId,
   });
 }
@@ -600,7 +596,6 @@ export function savePlay(
     nextHalfInning.inning,
     nextHalfInning.half,
   );
-  const latestDefense = getLatestDefensiveAlignment(state.defensiveAlignments);
   const shouldGenerateDefense = preview.inningEnded
     && getTeamPhase(state.isHome, nextHalfInning.half) === "FIELDING"
     && !existingNextDefense;
@@ -610,7 +605,6 @@ export function savePlay(
         priorAlignments: state.defensiveAlignments,
         inning: nextHalfInning.inning,
         half: nextHalfInning.half,
-        roverEnabled: latestDefense?.roverEnabled ?? state.lineup.length > 10,
         lockedPitcherPlayerId: state.lockedPitcherPlayerId,
       })
     : null;

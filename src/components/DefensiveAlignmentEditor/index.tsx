@@ -3,14 +3,13 @@
 import { useState } from "react";
 import { LockKeyhole, ShieldCheck } from "lucide-react";
 import {
-  allDefensivePositions,
+  defensivePositions,
   assignPlayerToPosition,
   defensivePositionLabels,
   getAssignedFemaleDefenderCount,
   getDefensiveAlignmentIssues,
   getDefensiveBenchCounts,
   minimumFemaleDefenders,
-  requiredDefensivePositions,
 } from "@/lib/defenseEngine";
 import { cn } from "@/lib/utils";
 import type { DefensiveAlignment, DefensivePosition } from "@/types/defense";
@@ -34,7 +33,6 @@ export function DefensiveAlignmentEditor({
   onChange,
 }: DefensiveAlignmentEditorProps) {
   const [validationMessage, setValidationMessage] = useState("");
-  const visiblePositions = alignment.roverEnabled ? allDefensivePositions : requiredDefensivePositions;
   const alignmentsForBenchStatus = priorAlignments.some((candidate) => candidate.id === alignment.id)
     ? priorAlignments
     : [...priorAlignments, alignment];
@@ -55,21 +53,6 @@ export function DefensiveAlignmentEditor({
 
     setValidationMessage("");
     onChange(nextAlignment);
-  }
-
-  function enableRover() {
-    onChange({
-      ...alignment,
-      roverEnabled: true,
-      slots: {
-        ...alignment.slots,
-        ROVER: alignment.slots.ROVER ?? { status: "VACANT" },
-      },
-    });
-  }
-
-  function disableRover() {
-    updatePosition("ROVER", "DISABLED_ROVER");
   }
 
   return (
@@ -110,7 +93,7 @@ export function DefensiveAlignmentEditor({
       ) : null}
 
       <div className="grid min-w-0 grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-        {visiblePositions.map((position) => {
+        {defensivePositions.map((position) => {
           const slot = alignment.slots[position];
           const selectedValue = slot?.status === "ASSIGNED" ? slot.playerId : "VACANT";
 
@@ -144,7 +127,7 @@ export function DefensiveAlignmentEditor({
         })}
       </div>
 
-      <div className="grid gap-2 rounded-lg bg-[var(--surface)] p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+      <div className="grid gap-2 rounded-lg bg-[var(--surface)] p-3">
         <div className="min-w-0">
           <p className="text-sm font-bold text-foreground">Bench</p>
           <p className="mt-1 text-sm font-semibold text-[var(--muted-foreground)]">
@@ -153,18 +136,6 @@ export function DefensiveAlignmentEditor({
             ) : "No bench players"}
           </p>
         </div>
-        <button
-          className={cn(
-            "min-h-10 rounded-lg px-3 text-sm font-bold",
-            alignment.roverEnabled
-              ? "bg-[var(--danger-soft)] text-[var(--danger)]"
-              : "bg-[var(--success-soft)] text-[var(--success)]",
-          )}
-          onClick={alignment.roverEnabled ? disableRover : enableRover}
-          type="button"
-        >
-          {alignment.roverEnabled ? "Disable Rover" : "Enable Rover"}
-        </button>
       </div>
     </div>
   );

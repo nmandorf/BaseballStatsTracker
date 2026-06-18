@@ -6,7 +6,7 @@ import {
   ThrowingSide as PrismaThrowingSide,
 } from "@/generated/prisma/enums";
 import { notFoundError, validationError } from "@/lib/appErrors";
-import { normalizeDefensiveProfile } from "@/lib/defenseEngine";
+import { normalizeDefensivePositionPreference, normalizeDefensiveProfile } from "@/lib/defenseEngine";
 import { getPrisma } from "@/lib/prisma";
 import { legacyTeamAccount, type TeamAccount } from "@/lib/teamAccount";
 import type { ActiveTeam, BattingSide, Player, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
@@ -275,7 +275,7 @@ export function createBackendPlayerFromInput(input: PlayerProfileInput, seedOrde
     gender: normalizePlayerGender(input.gender),
     bats: normalizeBattingSide(input.bats),
     throws: normalizeThrowingSide(input.throws),
-    primaryPosition: input.primaryPosition.trim(),
+    primaryPosition: normalizeDefensivePositionPreference(input.primaryPosition),
     speedRating: normalizeSpeedRating(input.speedRating),
     notes: input.notes.trim() || "Player profile ready for game-day tracking.",
     contactNotes: splitContactNotes(input.contactNotes),
@@ -328,7 +328,7 @@ function serializeTeam(team: NonNullable<TeamWithPlayers>): ActiveTeam {
       gender: fromPrismaPlayerGender(player.gender),
       bats: fromPrismaBattingSide(player.bats),
       throws: fromPrismaThrowingSide(player.throws),
-      primaryPosition: player.primaryPosition ?? "",
+      primaryPosition: normalizeDefensivePositionPreference(player.primaryPosition),
       speedRating: fromPrismaSpeedRating(player.speedRating),
       notes: player.notes ?? "Player profile ready for game-day tracking.",
       contactNotes: player.contactNotes,

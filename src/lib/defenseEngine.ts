@@ -26,7 +26,7 @@ export type DefensiveAlignmentIssue = {
   message: string;
 };
 
-export const requiredDefensivePositions: DefensivePosition[] = [
+export const defensivePositions: DefensivePosition[] = [
   "P",
   "C",
   "1B",
@@ -39,10 +39,8 @@ export const requiredDefensivePositions: DefensivePosition[] = [
   "RF",
 ];
 
-export const allDefensivePositions: DefensivePosition[] = [...requiredDefensivePositions, "ROVER"];
-
 const suggestedInfieldPositions = ["SS", "2B", "3B", "1B", "P", "C"] as const satisfies readonly DefensivePosition[];
-const suggestedOutfieldPositions = ["LC", "RC", "LF", "RF", "ROVER"] as const satisfies readonly DefensivePosition[];
+const suggestedOutfieldPositions = ["LC", "RC", "LF", "RF"] as const satisfies readonly DefensivePosition[];
 
 export const defensivePositionLabels: Record<DefensivePosition, string> = {
   P: "Pitcher",
@@ -55,7 +53,6 @@ export const defensivePositionLabels: Record<DefensivePosition, string> = {
   LC: "Left Center",
   RC: "Right Center",
   RF: "Right Field",
-  ROVER: "Rover",
 };
 
 export const defensiveEventLabels: Record<DefensiveEventType, string> = {
@@ -115,14 +112,13 @@ export function createDefaultDefensiveAlignment(
   players: Player[],
   inning: number,
   half: InningHalf,
-  options: { roverEnabled?: boolean; id?: string; updatedAt?: string } = {},
+  options: { id?: string; updatedAt?: string } = {},
 ): DefensiveAlignment {
   return generateDefensiveAlignment({
     players,
     priorAlignments: [],
     inning,
     half,
-    roverEnabled: options.roverEnabled ?? players.length > requiredDefensivePositions.length,
     id: options.id,
     updatedAt: options.updatedAt,
   });
@@ -133,16 +129,14 @@ export function generateDefensiveAlignment(input: {
   priorAlignments: DefensiveAlignment[];
   inning: number;
   half: InningHalf;
-  roverEnabled: boolean;
   lockedPitcherPlayerId?: string | null;
   id?: string;
   updatedAt?: string;
 }): DefensiveAlignment {
-  const positions = input.roverEnabled ? allDefensivePositions : requiredDefensivePositions;
   const benchCounts = getDefensiveBenchCounts(input.players, input.priorAlignments);
   const slots = optimizeDefensiveAssignments(
     input.players,
-    positions,
+    defensivePositions,
     benchCounts,
     input.lockedPitcherPlayerId,
   );
@@ -151,7 +145,6 @@ export function generateDefensiveAlignment(input: {
     id: input.id ?? createAlignmentId(input.inning, input.half),
     inning: input.inning,
     half: input.half,
-    roverEnabled: input.roverEnabled,
     slots,
     players: input.players,
     updatedAt: input.updatedAt,
@@ -165,7 +158,7 @@ export function getDefensiveAlignmentIssues(
 ): DefensiveAlignmentIssue[] {
   const femalePlayerCount = players.filter((player) => player.gender === "Female").length;
   const assignedFemaleCount = getAssignedFemaleDefenderCount(alignment, players);
-  const vacantRequiredPositions = requiredDefensivePositions.filter(
+  const vacantRequiredPositions = defensivePositions.filter(
     (position) => alignment.slots[position]?.status !== "ASSIGNED",
   );
   const issues: DefensiveAlignmentIssue[] = [];
@@ -183,7 +176,7 @@ export function getDefensiveAlignmentIssues(
   }
 
   if (!lockedPitcherPlayerId) {
-    if (players.length >= requiredDefensivePositions.length && vacantRequiredPositions.length > 0) {
+    if (players.length >= defensivePositions.length && vacantRequiredPositions.length > 0) {
       issues.push({
         code: "REQUIRED_POSITION_VACANT",
         message: `Assign a player at ${vacantRequiredPositions.map((position) => defensivePositionLabels[position]).join(", ")}.`,
@@ -208,7 +201,7 @@ export function getDefensiveAlignmentIssues(
     });
   }
 
-  if (players.length >= requiredDefensivePositions.length && vacantRequiredPositions.length > 0) {
+  if (players.length >= defensivePositions.length && vacantRequiredPositions.length > 0) {
     issues.push({
       code: "REQUIRED_POSITION_VACANT",
       message: `Assign a player at ${vacantRequiredPositions.map((position) => defensivePositionLabels[position]).join(", ")}.`,
@@ -223,7 +216,7 @@ export function getAssignedFemaleDefenderCount(alignment: DefensiveAlignment, pl
     players.filter((player) => player.gender === "Female").map((player) => player.id),
   );
 
-  return allDefensivePositions.filter((position) => {
+  return defensivePositions.filter((position) => {
     const slot = alignment.slots[position];
     return slot?.status === "ASSIGNED" && femalePlayerIds.has(slot.playerId);
   }).length;
@@ -274,7 +267,6 @@ export function normalizeDefensivePosition(value: string | null | undefined): De
     RIGHTCENTERFIELD: "RC",
     RF: "RF",
     RIGHTFIELD: "RF",
-    ROVER: "ROVER",
   };
 
   return aliases[normalizedValue] ?? null;
@@ -294,9 +286,22 @@ export function copyAlignmentForHalf(
     id: createAlignmentId(inning, half),
     inning,
     half,
-    roverEnabled: source.roverEnabled,
     slots: { ...source.slots },
     players,
+  });
+}
+
+export function normalizeDefensiveAlignment(
+  alignment: DefensiveAlignment,
+  players: Player[],
+): DefensiveAlignment {
+  return buildAlignment({
+    id: alignment.id,
+    inning: alignment.inning,
+    half: alignment.half,
+    slots: alignment.slots,
+    players,
+    updatedAt: alignment.updatedAt,
   });
 }
 
@@ -304,9 +309,9 @@ export function assignPlayerToPosition(
   alignment: DefensiveAlignment,
   players: Player[],
   position: DefensivePosition,
-  playerId: string | "VACANT" | "DISABLED_ROVER",
+  playerId: string | "VACANT",
 ): DefensiveAlignment {
-  const sourcePosition = playerId === "VACANT" || playerId === "DISABLED_ROVER"
+  const sourcePosition = playerId === "VACANT"
     ? null
     : getAssignedPositionForPlayer(alignment, playerId);
   const destinationSlot = alignment.slots[position];
@@ -316,16 +321,6 @@ export function assignPlayerToPosition(
   }
 
   const nextSlots = removePlayerFromSlots(alignment.slots, playerId);
-
-  if (playerId === "DISABLED_ROVER" && position === "ROVER") {
-    delete nextSlots.ROVER;
-    return buildAlignment({
-      ...alignment,
-      roverEnabled: false,
-      slots: nextSlots,
-      players,
-    });
-  }
 
   if (playerId === "VACANT") {
     nextSlots[position] = { status: "VACANT" };
@@ -345,7 +340,6 @@ export function assignPlayerToPosition(
   nextSlots[position] = assignedSlot(player);
   return buildAlignment({
     ...alignment,
-    roverEnabled: position === "ROVER" ? true : alignment.roverEnabled,
     slots: nextSlots,
     players,
   });
@@ -374,7 +368,7 @@ export function getAssignedPositionForPlayer(
   alignment: DefensiveAlignment,
   playerId: string,
 ): DefensivePosition | null {
-  return allDefensivePositions.find((position) => {
+  return defensivePositions.find((position) => {
     const slot = alignment.slots[position];
     return slot?.status === "ASSIGNED" && slot.playerId === playerId;
   }) ?? null;
@@ -402,10 +396,6 @@ export function getSuggestedPositionForBallType(
 
 export function getAlignmentForCurrentHalf(alignments: DefensiveAlignment[], inning: number, half: InningHalf) {
   return alignments.find((alignment) => alignment.inning === inning && alignment.half === half) ?? null;
-}
-
-export function getLatestDefensiveAlignment(alignments: DefensiveAlignment[]) {
-  return alignments.at(-1) ?? null;
 }
 
 export function upsertDefensiveAlignment(
@@ -516,20 +506,26 @@ export function normalizeDefensiveProfile(profile: Partial<DefensiveProfile> | u
     notes: {
       strengths: normalizeText(profile.notes?.strengths),
       weaknesses: normalizeText(profile.notes?.weaknesses),
-      bestPosition: normalizeText(profile.notes?.bestPosition),
-      avoidPosition: normalizeText(profile.notes?.avoidPosition),
-      backupPosition: normalizeText(profile.notes?.backupPosition),
+      bestPosition: normalizeDefensivePositionPreference(profile.notes?.bestPosition),
+      avoidPosition: normalizeDefensivePositionPreference(profile.notes?.avoidPosition),
+      backupPosition: normalizeDefensivePositionPreference(profile.notes?.backupPosition),
       communication: normalizeText(profile.notes?.communication),
       health: normalizeText(profile.notes?.health),
     },
   };
 }
 
+export function normalizeDefensivePositionPreference(value: unknown) {
+  const positionPreference = normalizeText(value);
+  const normalizedPreference = positionPreference.toUpperCase().replaceAll(/[^A-Z0-9]/g, "");
+
+  return normalizedPreference === "ROVER" ? "" : positionPreference;
+}
+
 function buildAlignment(input: {
   id: string;
   inning: number;
   half: InningHalf;
-  roverEnabled: boolean;
   slots: DefensiveAlignment["slots"];
   players: Player[];
   updatedAt?: string;
@@ -537,9 +533,8 @@ function buildAlignment(input: {
   const activePlayerIds = new Set(input.players.map((player) => player.id));
   const assignedPlayerIds = new Set<string>();
   const normalizedSlots: DefensiveAlignment["slots"] = {};
-  const positions = input.roverEnabled ? allDefensivePositions : requiredDefensivePositions;
 
-  positions.forEach((position) => {
+  defensivePositions.forEach((position) => {
     const slot = input.slots[position];
 
     if (!slot || slot.status === "VACANT" || !activePlayerIds.has(slot.playerId) || assignedPlayerIds.has(slot.playerId)) {
@@ -559,7 +554,6 @@ function buildAlignment(input: {
     id: input.id,
     inning: input.inning,
     half: input.half,
-    roverEnabled: input.roverEnabled,
     slots: normalizedSlots,
     benchPlayerIds,
     updatedAt: input.updatedAt ?? new Date().toISOString(),
@@ -753,15 +747,15 @@ function getRatingScore(rating: DefensiveRatingValue) {
 
 function removePlayerFromSlots(
   slots: DefensiveAlignment["slots"],
-  playerId: string | "VACANT" | "DISABLED_ROVER",
+  playerId: string | "VACANT",
 ) {
   const nextSlots = { ...slots };
 
-  if (playerId === "VACANT" || playerId === "DISABLED_ROVER") {
+  if (playerId === "VACANT") {
     return nextSlots;
   }
 
-  allDefensivePositions.forEach((position) => {
+  defensivePositions.forEach((position) => {
     const slot = nextSlots[position];
 
     if (slot?.status === "ASSIGNED" && slot.playerId === playerId) {
@@ -774,7 +768,7 @@ function removePlayerFromSlots(
 
 function getInningsByPosition(playerId: string, alignments: DefensiveAlignment[]) {
   return alignments.reduce<Partial<Record<DefensivePosition, number>>>((inningsByPosition, alignment) => {
-    allDefensivePositions.forEach((position) => {
+    defensivePositions.forEach((position) => {
       const slot = alignment.slots[position];
 
       if (slot?.status !== "ASSIGNED" || slot.playerId !== playerId) {

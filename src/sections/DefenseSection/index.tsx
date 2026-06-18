@@ -20,7 +20,7 @@ import {
   undoLastPlay,
 } from "@/lib/gameEngine";
 import {
-  allDefensivePositions,
+  defensivePositions,
   defensiveEventLabels,
   defensivePositionLabels,
   getAssignedPlayerIdForPosition,
@@ -281,7 +281,7 @@ export function DefenseSection() {
                   onChange={(event) => changePosition(event.target.value as DefensivePosition)}
                   value={position}
                 >
-                  {allDefensivePositions.map((item) => (
+                  {defensivePositions.map((item) => (
                     <option key={item} value={item}>
                       {defensivePositionLabels[item]}
                     </option>

@@ -10,8 +10,7 @@ export type DefensivePosition =
   | "LF"
   | "LC"
   | "RC"
-  | "RF"
-  | "ROVER";
+  | "RF";
 
 export type DefensiveSlot =
   | {
@@ -27,7 +26,6 @@ export type DefensiveAlignment = {
   id: string;
   inning: number;
   half: InningHalf;
-  roverEnabled: boolean;
   slots: Partial<Record<DefensivePosition, DefensiveSlot>>;
   benchPlayerIds: string[];
   updatedAt: string;

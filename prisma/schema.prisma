@@ -210,7 +210,6 @@ model DefensiveAlignment {
   gameId       String
   inning       Int
   half         InningHalf
-  roverEnabled Boolean    @default(false)
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
@@ -540,7 +539,6 @@ enum DefensivePosition {
   LEFT_CENTER
   RIGHT_CENTER
   RIGHT_FIELD
-  ROVER
 }
 
 enum DefensiveSlotStatus {

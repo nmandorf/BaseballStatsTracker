@@ -4,7 +4,7 @@ import {
   createEmptyPlayerInput,
   createZeroPlayerStats,
 } from "@/lib/teamStorage";
-import { allDefensivePositions, defensivePositionLabels, normalizeDefensivePosition } from "@/lib/defenseEngine";
+import { defensivePositions, defensivePositionLabels, normalizeDefensivePosition } from "@/lib/defenseEngine";
 import { cn } from "@/lib/utils";
 import type { BattingSide, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
 import type { DefensiveRatingValue } from "@/types/defense";
@@ -227,7 +227,7 @@ export function PlayerForm({
               {input.primaryPosition && !primaryPosition ? (
                 <option value={input.primaryPosition}>Current: {input.primaryPosition}</option>
               ) : null}
-              {allDefensivePositions.map((position) => (
+              {defensivePositions.map((position) => (
                 <option key={position} value={position}>{defensivePositionLabels[position]}</option>
               ))}
             </select>
@@ -306,7 +306,7 @@ export function PlayerForm({
                     Current: {input.defensiveProfile.notes.bestPosition}
                   </option>
                 ) : null}
-                {allDefensivePositions.map((position) => (
+                {defensivePositions.map((position) => (
                   <option key={position} value={position}>{defensivePositionLabels[position]}</option>
                 ))}
               </select>
@@ -324,7 +324,7 @@ export function PlayerForm({
                     Current: {input.defensiveProfile.notes.avoidPosition}
                   </option>
                 ) : null}
-                {allDefensivePositions.map((position) => (
+                {defensivePositions.map((position) => (
                   <option key={position} value={position}>{defensivePositionLabels[position]}</option>
                 ))}
               </select>
@@ -342,7 +342,7 @@ export function PlayerForm({
                     Current: {input.defensiveProfile.notes.backupPosition}
                   </option>
                 ) : null}
-                {allDefensivePositions.map((position) => (
+                {defensivePositions.map((position) => (
                   <option key={position} value={position}>{defensivePositionLabels[position]}</option>
                 ))}
               </select>
