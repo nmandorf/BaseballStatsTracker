@@ -7,6 +7,7 @@ type PlayerCardProps = {
   role: string;
   gender: string;
   bats: string;
+  position: string;
   speed: string;
   stats: Array<{ label: string; value: string }>;
   defenseStats?: Array<{ label: string; value: string }>;
@@ -23,6 +24,7 @@ export function PlayerCard({
   role,
   gender,
   bats,
+  position,
   speed,
   stats,
   defenseStats = [],
@@ -51,6 +53,9 @@ export function PlayerCard({
         <StatusPill tone="ready">{status}</StatusPill>
         <StatusPill tone={gender === "Unknown" ? "review" : "done"}>{gender}</StatusPill>
         <StatusPill tone="planned">Bats {bats}</StatusPill>
+        <StatusPill tone={position ? "done" : "review"}>
+          {position || "Defense unassigned"}
+        </StatusPill>
         <StatusPill tone="stitch">{speed}</StatusPill>
       </div>
 

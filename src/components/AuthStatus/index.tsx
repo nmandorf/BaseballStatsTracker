@@ -1,11 +1,18 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { LogIn, LogOut, UserRound } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
 
 export function AuthStatus() {
+  const router = useRouter();
   const { isConfigured, isLoading, signOut, user } = useAuth();
+
+  async function signOutAndReturnHome() {
+    await signOut();
+    router.replace("/");
+  }
 
   if (isLoading) {
     return (
@@ -37,7 +44,7 @@ export function AuthStatus() {
       </span>
       <button
         className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 text-xs font-bold text-[var(--muted-foreground)] shadow-sm shadow-foreground/[0.025] hover:bg-[var(--surface)] hover:text-foreground"
-        onClick={() => void signOut()}
+        onClick={() => void signOutAndReturnHome()}
         type="button"
       >
         <LogOut className="size-4" aria-hidden="true" />

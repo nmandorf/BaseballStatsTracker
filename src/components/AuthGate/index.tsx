@@ -16,7 +16,7 @@ type AuthGateProps = {
 export function AuthGate({ children }: AuthGateProps) {
   const { isConfigured, isLoading, user } = useAuth();
   const pathname = usePathname();
-  const loginHref = `/login?next=${encodeURIComponent(pathname ?? "/roster")}`;
+  const loginHref = `/login?next=${encodeURIComponent(pathname ?? "/")}`;
 
   useEffect(() => {
     if (!user) {

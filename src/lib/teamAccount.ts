@@ -48,3 +48,15 @@ export function teamAccountHeaders(
     "X-Baseball-User-Email": account.email ?? "",
   };
 }
+
+export function canUseStoredTeam(
+  ownerUid: string | undefined,
+  accountUid: string | null,
+  isAuthConfigured: boolean,
+) {
+  if (!isAuthConfigured) {
+    return true;
+  }
+
+  return Boolean(ownerUid && accountUid && ownerUid === accountUid);
+}

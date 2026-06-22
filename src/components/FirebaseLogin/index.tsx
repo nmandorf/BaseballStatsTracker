@@ -13,12 +13,16 @@ import {
   UsersRound,
 } from "lucide-react";
 import { useAuth } from "@/components/AuthProvider";
-import { hydrateFirstGameStateFromPrisma } from "@/lib/firstGameStorage";
+import {
+  hydrateFirstGameStateFromPrisma,
+  prepareFirstGameStateForTeam,
+} from "@/lib/firstGameStorage";
 import {
   firebase,
   getFirebaseAuth,
   getMissingFirebaseConfig,
 } from "@/lib/firebase";
+import { getSafeRedirect } from "@/lib/authNavigation";
 import { createDefaultPregameSetup, savePregameSetup } from "@/lib/pregameSetupStorage";
 import {
   createBackendTeam,
@@ -44,14 +48,6 @@ type FirebaseAuthError = {
 };
 
 type EmailAuthMode = "login" | "create";
-
-function getSafeRedirect(path: string | null, fallback: string) {
-  if (!path || !path.startsWith("/") || path.startsWith("//")) {
-    return fallback;
-  }
-
-  return path;
-}
 
 function isFirebaseAuthError(error: unknown): error is FirebaseAuthError {
   return Boolean(error) && typeof error === "object";
@@ -112,7 +108,7 @@ function getEmailAuthErrorMessage(error: unknown) {
 }
 
 export function FirebaseLogin({
-  defaultRedirect = "/roster",
+  defaultRedirect = "/",
   onTeamSelected,
   showHomeLink = true,
 }: FirebaseLoginProps) {
@@ -456,9 +452,11 @@ function SignedInTeamSelector({
   async function chooseTeam(team: ActiveTeam) {
     setIsSelectingTeamId(team.id);
     setTeamError(null);
+    const previousTeam = loadActiveTeam();
     saveActiveTeam(team);
+    prepareFirstGameStateForTeam(previousTeam, team);
     savePregameSetup(createDefaultPregameSetup(team));
-    hydrateFirstGameStateFromPrisma({ force: true });
+    await hydrateFirstGameStateFromPrisma({ force: true });
     onTeamSelected?.(team);
     router.replace(redirectTo);
   }
@@ -477,9 +475,11 @@ function SignedInTeamSelector({
 
     try {
       const team = await createBackendTeam(nextTeamName);
+      const previousTeam = loadActiveTeam();
       saveActiveTeam(team);
+      prepareFirstGameStateForTeam(previousTeam, team);
       savePregameSetup(createDefaultPregameSetup(team));
-      hydrateFirstGameStateFromPrisma({ force: true });
+      await hydrateFirstGameStateFromPrisma({ force: true });
       onTeamSelected?.(team);
       setTeams((currentTeams) => [
         team,
