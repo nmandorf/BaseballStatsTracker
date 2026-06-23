@@ -8,7 +8,7 @@ import {
   normalizeDefensiveProfile,
 } from "./defenseEngine.ts";
 import { getFirebaseAuth, isFirebaseConfigured } from "./firebase.ts";
-import { canUseStoredTeam, normalizeTeamAccount, teamAccountHeaders, type TeamAccount } from "./teamAccount.ts";
+import { canUseStoredTeam, normalizeTeamAccount, type TeamAccount } from "./teamAccount.ts";
 import type { ActiveTeam, BattingSide, Player, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
 import type { PlayerStats } from "@/types/stats";
 
@@ -72,6 +72,8 @@ export function createActiveTeam(name: string, players: Player[]): ActiveTeam {
     ownerUid: account?.uid,
     ownerEmail: account?.email,
     name: name.trim(),
+    timeZone: null,
+    scheduleSetupCompleted: false,
     players: players.map((player, index) => ({ ...player, seedOrder: index + 1 })),
     createdAt: now,
     updatedAt: now,
@@ -216,7 +218,7 @@ export async function createBackendTeam(
   try {
     const response = await fetch("/api/team", {
       method: "POST",
-      headers: getTeamAccountHeaders({
+      headers: await getVerifiedTeamAccountHeaders({
         "Content-Type": "application/json",
       }),
       body: JSON.stringify({ name }),
@@ -239,7 +241,10 @@ export async function createBackendTeam(
   }
 }
 
-export async function loadAvailableTeamsFromBackend() {
+export async function loadAvailableTeamsFromBackend(
+  options: { fallbackToActiveTeam?: boolean } = {},
+) {
+  const shouldFallbackToActiveTeam = options.fallbackToActiveTeam ?? true;
   const signedInAccount = getSignedInTeamAccount();
   const storedActiveTeam = loadActiveTeam();
   const activeTeam = storedActiveTeam?.ownerUid === signedInAccount?.uid
@@ -249,10 +254,14 @@ export async function loadAvailableTeamsFromBackend() {
   try {
     const response = await fetch("/api/team?list=1", {
       cache: "no-store",
-      headers: getTeamAccountHeaders(),
+      headers: await getVerifiedTeamAccountHeaders(),
     });
 
     if (!response.ok) {
+      if (!shouldFallbackToActiveTeam) {
+        throw new Error("Unable to load account teams.");
+      }
+
       return activeTeam ? [activeTeam] : [];
     }
 
@@ -266,8 +275,16 @@ export async function loadAvailableTeamsFromBackend() {
     if (backendTeams.length > 0) {
       return backendTeams;
     }
-  } catch {
+  } catch (error) {
+    if (!shouldFallbackToActiveTeam) {
+      throw error;
+    }
+
     return activeTeam ? [activeTeam] : [];
+  }
+
+  if (!shouldFallbackToActiveTeam) {
+    return [];
   }
 
   return activeTeam ? [activeTeam] : [];
@@ -288,7 +305,7 @@ export async function addPlayerToBackendTeam(
   try {
     const response = await fetch(`/api/team/${encodeURIComponent(team.id)}/players`, {
       method: "POST",
-      headers: getTeamAccountHeaders({
+      headers: await getVerifiedTeamAccountHeaders({
         "Content-Type": "application/json",
       }),
       body: JSON.stringify({ input, seedOrder }),
@@ -320,6 +337,20 @@ export async function addPlayerToActiveTeamBackend(input: PlayerProfileInput) {
   return nextTeam;
 }
 
+export async function deleteTeamPermanently(teamId: string) {
+  const response = await fetch(`/api/team/${encodeURIComponent(teamId)}`, {
+    method: "DELETE",
+    headers: await getVerifiedTeamAccountHeaders(),
+  });
+
+  if (response.ok) {
+    return;
+  }
+
+  const message = await readTeamDeletionError(response);
+  throw new Error(message);
+}
+
 export async function hydrateActiveTeamFromBackend() {
   if (typeof window === "undefined") {
     return null;
@@ -331,7 +362,7 @@ export async function hydrateActiveTeamFromBackend() {
   try {
     const response = await fetch(`/api/team${query}`, {
       cache: "no-store",
-      headers: getTeamAccountHeaders(),
+      headers: await getVerifiedTeamAccountHeaders(),
     });
 
     if (!response.ok) {
@@ -352,8 +383,25 @@ export async function hydrateActiveTeamFromBackend() {
   return activeTeam;
 }
 
-export function getTeamAccountHeaders(baseHeaders: Record<string, string> = {}) {
-  return teamAccountHeaders(getSignedInTeamAccount(), baseHeaders);
+export async function getVerifiedTeamAccountHeaders(baseHeaders: Record<string, string> = {}) {
+  const user = getFirebaseAuth().currentUser;
+  if (!user) return baseHeaders;
+  const idToken = await user.getIdToken();
+  return { ...baseHeaders, Authorization: `Bearer ${idToken}` };
+}
+
+async function readTeamDeletionError(response: Response) {
+  try {
+    const payload = (await response.json()) as { error?: { message?: unknown } };
+
+    if (typeof payload.error?.message === "string" && payload.error.message.trim()) {
+      return payload.error.message;
+    }
+  } catch {
+    // The fallback below is safe to show when the backend returns a non-JSON error.
+  }
+
+  return "Unable to delete the team. Please try again.";
 }
 
 function writeActiveTeam(team: Partial<ActiveTeam>) {
@@ -396,13 +444,11 @@ function isTeamOwnedByAccount(team: ActiveTeam, account: TeamAccount | null) {
 }
 
 function queueActiveTeamBackendSync(team: ActiveTeam) {
-  fetch("/api/team", {
+  getVerifiedTeamAccountHeaders({ "Content-Type": "application/json" }).then((headers) => fetch("/api/team", {
     method: "POST",
-    headers: getTeamAccountHeaders({
-      "Content-Type": "application/json",
-    }),
+    headers,
     body: JSON.stringify({ team }),
-  })
+  }))
     .then(() => undefined)
     .catch(() => {
       // The local team mirror remains usable when Prisma is unavailable.
@@ -421,6 +467,8 @@ function normalizeActiveTeam(team: Partial<ActiveTeam>): ActiveTeam | null {
     ownerUid: typeof team.ownerUid === "string" && team.ownerUid ? team.ownerUid : getSignedInTeamAccount()?.uid,
     ownerEmail: typeof team.ownerEmail === "string" && team.ownerEmail ? team.ownerEmail : getSignedInTeamAccount()?.email,
     name: team.name.trim(),
+    timeZone: typeof team.timeZone === "string" && team.timeZone ? team.timeZone : null,
+    scheduleSetupCompleted: typeof team.scheduleSetupCompleted === "boolean" ? team.scheduleSetupCompleted : true,
     players: team.players
       .map((player, index) => normalizePlayer(player, index + 1))
       .filter((player): player is Player => Boolean(player)),

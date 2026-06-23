@@ -15,6 +15,8 @@ model Team {
   ownerUid   String   @default("legacy")
   ownerEmail String?
   name       String
+  timeZone   String?
+  scheduleSetupCompleted Boolean @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -24,6 +26,7 @@ model Team {
   gameStats   TeamGameStats[]
   seasonStats TeamSeasonStats[]
   records     TeamRecord[]
+  scheduleWeeks ScheduleWeek[]
 
   @@unique([ownerUid, name])
   @@index([ownerUid])
@@ -44,6 +47,7 @@ model Season {
   playerStats PlayerSeasonStats[]
   teamStats   TeamSeasonStats?
   records     TeamRecord[]
+  scheduleWeeks ScheduleWeek[]
 
   @@unique([teamId, year])
   @@index([teamId])
@@ -107,6 +111,7 @@ model Game {
   bases              Json?
   snapshot           Json?
   status             GameStatus  @default(SCHEDULED)
+  preparationStatus  GamePreparationStatus @default(SETUP)
   result             GameResult?
   notes              String?
   createdAt          DateTime    @default(now())
@@ -121,6 +126,7 @@ model Game {
   rules     GameRuleSettings?
   defensiveAlignments DefensiveAlignment[]
   defensiveEvents     DefensiveEvent[]
+  scheduleWeek        ScheduleWeek?
 
   @@index([teamId])
   @@index([seasonId])
@@ -149,7 +155,7 @@ model GameLineup {
   id                   String   @id @default(cuid())
   gameId               String
   playerId             String
-  battingOrderPosition Int
+  battingOrderPosition Int?
   isActive             Boolean  @default(true)
   createdAt            DateTime @default(now())
 
@@ -159,6 +165,26 @@ model GameLineup {
   @@unique([gameId, battingOrderPosition])
   @@unique([gameId, playerId])
   @@index([playerId])
+}
+
+model ScheduleWeek {
+  id        String           @id @default(cuid())
+  teamId    String
+  seasonId  String
+  position  Int
+  kind      ScheduleWeekKind
+  localDate String
+  gameId    String?          @unique
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  team   Team   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  season Season @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  game   Game?  @relation(fields: [gameId], references: [id], onDelete: Cascade)
+
+  @@unique([seasonId, position])
+  @@index([teamId])
+  @@index([seasonId])
 }
 
 model AtBat {
@@ -467,6 +493,19 @@ enum GameStatus {
   SCHEDULED
   IN_PROGRESS
   FINAL
+  CANCELLED
+}
+
+enum GamePreparationStatus {
+  SETUP
+  GENERATED
+  ACCEPTED
+  STARTED
+}
+
+enum ScheduleWeekKind {
+  GAME
+  BYE
 }
 
 enum GameResult {

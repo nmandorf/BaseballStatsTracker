@@ -19,6 +19,10 @@ const firebaseLoginSource = readFileSync(
   new URL("../src/components/FirebaseLogin/index.tsx", import.meta.url),
   "utf8",
 );
+const accountTeamsCardSource = readFileSync(
+  new URL("../src/components/AccountTeamsCard/index.tsx", import.meta.url),
+  "utf8",
+);
 
 test("protected route sign-in returns to the page the user selected", () => {
   assert.match(authGateSource, /login\?next=/);
@@ -29,6 +33,12 @@ test("protected route sign-in returns to the page the user selected", () => {
 test("signing out returns Home so Game does not become the next login default", () => {
   assert.match(authStatusSource, /await signOut\(\)/);
   assert.match(authStatusSource, /router\.replace\("\/"\)/);
+});
+
+test("the header keeps the full sign-out label on mobile", () => {
+  assert.match(authStatusSource, /<span>Sign out<\/span>/);
+  assert.doesNotMatch(authStatusSource, /hidden sm:inline">Sign out/);
+  assert.equal(authStatusSource.match(/h-10 w-28/g)?.length, 2);
 });
 
 test("Home accepts only the active team owned by the signed-in account", () => {
@@ -54,4 +64,9 @@ test("intentional login redirects remain restricted to local paths", () => {
   assert.equal(getSafeRedirect("/\\evil.example", "/"), "/");
   assert.equal(getSafeRedirect("https://evil.example", "/"), "/");
   assert.equal(getSafeRedirect(null, "/"), "/");
+});
+
+test("home account teams card links to the existing team creation workspace", () => {
+  assert.match(accountTeamsCardSource, /href="\/login"/);
+  assert.match(accountTeamsCardSource, />\s*New team\s*</);
 });

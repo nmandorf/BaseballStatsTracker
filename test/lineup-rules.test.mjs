@@ -88,6 +88,27 @@ test("recommendBattingOrder spreads female players when male separators are avai
   assert.equal(validateLineupGenderRules(lineup).warnings.some((warning) => warning.includes("back-to-back")), false);
 });
 
+test("recommendBattingOrder keeps female hitters separated after contact balancing", () => {
+  const strongContactStats = stats({ hits: 8, singles: 6, doubles: 2, outs: 2, groundouts: 2 });
+  const highStrikeoutStats = stats({ hits: 2, singles: 2, outs: 8, strikeoutsLooking: 4, strikeoutsSwinging: 2, otherOuts: 2 });
+  const contactBufferStats = stats({ hits: 2, singles: 2, outs: 8, groundouts: 8 });
+  const lineup = recommendBattingOrder([
+    player("lead-female", "Female", 1, strongContactStats),
+    player("male-1", "Male", 2, strongContactStats),
+    player("male-2", "Male", 3, strongContactStats),
+    player("male-3", "Male", 4, strongContactStats),
+    player("male-4", "Male", 5, strongContactStats),
+    player("male-5", "Male", 6, strongContactStats),
+    player("strikeout-female", "Female", 7, highStrikeoutStats),
+    player("strikeout-male", "Male", 8, highStrikeoutStats),
+    player("buffer-female", "Female", 9, contactBufferStats),
+    player("buffer-male", "Male", 10, contactBufferStats),
+  ]).map((row) => row.player);
+
+  assert.equal(lineup[0].gender, "Female");
+  assert.equal(validateLineupGenderRules(lineup).warnings.some((warning) => warning.includes("back-to-back")), false);
+});
+
 test("recommendBattingOrder favors similar contact hitters over strikeout hitters", () => {
   const lineup = recommendBattingOrder([
     player("strikeout-hitter", "Male", 1, stats({ groundouts: 0, strikeoutsLooking: 4, strikeoutsSwinging: 1 })),
@@ -143,6 +164,19 @@ test("gender validation warns for missing gender and no active female player", (
 test("gender validation allows unavoidable back-to-back female hitters", () => {
   const lineup = [
     player("female-1", "Female", 1),
+    player("male-1", "Male", 4),
+    player("female-2", "Female", 2),
+    player("female-3", "Female", 3),
+  ];
+  const validation = validateLineupGenderRules(lineup);
+
+  assert.equal(validation.isLeagueCompliant, true);
+  assert.equal(validation.warnings.some((warning) => warning.includes("back-to-back")), false);
+});
+
+test("gender validation warns when female hitters are more clustered than necessary", () => {
+  const lineup = [
+    player("female-1", "Female", 1),
     player("female-2", "Female", 2),
     player("female-3", "Female", 3),
     player("male-1", "Male", 4),
@@ -150,5 +184,5 @@ test("gender validation allows unavoidable back-to-back female hitters", () => {
   const validation = validateLineupGenderRules(lineup);
 
   assert.equal(validation.isLeagueCompliant, true);
-  assert.equal(validation.warnings.some((warning) => warning.includes("back-to-back")), false);
+  assert.equal(validation.warnings.some((warning) => warning.includes("back-to-back")), true);
 });

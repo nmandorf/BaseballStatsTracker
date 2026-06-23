@@ -21,14 +21,15 @@ export function ResultButton({
     <button
       type="button"
       aria-label={lockReason ? `${label} locked: ${lockReason}` : label}
+      aria-pressed={selected}
       disabled={disabled}
       onClick={onClick}
       title={lockReason}
       className={cn(
-        "flex min-h-12 items-center justify-center rounded-lg border px-2 text-base font-black tabular-nums transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] disabled:cursor-not-allowed disabled:border-[var(--border)] disabled:bg-[var(--surface)] disabled:text-[var(--muted-foreground)] disabled:opacity-45",
+        "btn-base min-h-12 px-2 text-base font-black tabular-nums disabled:border-[var(--border)] disabled:bg-[var(--surface)] disabled:text-[var(--muted-foreground)]",
         selected
-          ? "border-[var(--accent)] bg-[var(--accent)] text-white"
-          : "border-[var(--border)] bg-[var(--card)] text-foreground active:bg-[var(--accent-soft)]",
+          ? "btn-choice-selected"
+          : "btn-secondary active:bg-[var(--accent-soft)]",
         muted ? "opacity-70" : "",
       )}
     >

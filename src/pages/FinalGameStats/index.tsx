@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Trophy } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
@@ -10,14 +11,30 @@ import {
   getCompletedGameById,
 } from "@/lib/gameEngine";
 import { useActiveTeam } from "@/lib/teamStorage";
+import { getVerifiedTeamAccountHeaders } from "@/lib/teamStorage";
 import { useCompletedGameStates } from "@/lib/useCompletedGameStates";
 import { useFirstGameState } from "@/lib/useFirstGameState";
 import { FinalGameStatsView } from "@/sections/StatsEntrySection";
+import type { GameState } from "@/lib/gameEngine";
 
 export function FinalGameStatsPage({ gameId }: { gameId: string }) {
   const activeTeam = useActiveTeam();
   const firstGameState = useFirstGameState();
   const completedGameStates = useCompletedGameStates();
+  const localGameState = getCompletedGameById(completedGameStates, gameId) ?? getCompletedGameById(firstGameState, gameId);
+  const [remoteGameState, setRemoteGameState] = useState<GameState | null>(null);
+  const [isLoadingRemote, setIsLoadingRemote] = useState(!localGameState);
+
+  useEffect(() => {
+    if (localGameState) return;
+    let mounted = true;
+    getVerifiedTeamAccountHeaders()
+      .then((headers) => fetch(`/api/games/${encodeURIComponent(gameId)}`, { cache: "no-store", headers }))
+      .then(async (response) => response.ok ? response.json() as Promise<{ state?: GameState | null }> : { state: null })
+      .then((payload) => { if (mounted && payload.state?.status === "FINAL") setRemoteGameState(payload.state); })
+      .finally(() => { if (mounted) setIsLoadingRemote(false); });
+    return () => { mounted = false; };
+  }, [gameId, localGameState]);
 
   if (!activeTeam) {
     return (
@@ -27,8 +44,11 @@ export function FinalGameStatsPage({ gameId }: { gameId: string }) {
     );
   }
 
-  const gameState =
-    getCompletedGameById(completedGameStates, gameId) ?? getCompletedGameById(firstGameState, gameId);
+  const gameState = localGameState ?? remoteGameState;
+
+  if (isLoadingRemote) {
+    return <AppShell activeNav="stats" requireAuth><section className="bg-background py-8"><div className="mx-auto max-w-3xl px-4 text-sm font-semibold text-[var(--muted-foreground)]">Loading final game stats…</div></section></AppShell>;
+  }
 
   if (!gameState) {
     return (
@@ -44,14 +64,14 @@ export function FinalGameStatsPage({ gameId }: { gameId: string }) {
             />
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <Link
-                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[var(--surface)] px-4 text-sm font-bold text-foreground"
+                className="btn-base btn-secondary min-h-12 px-4 text-sm"
                 href="/stats"
               >
                 Season Stats
                 <ArrowRight className="size-4" aria-hidden="true" />
               </Link>
               <Link
-                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white"
+                className="btn-base btn-primary min-h-12 px-4 text-sm"
                 href="/stats-entry"
               >
                 Stats Entry

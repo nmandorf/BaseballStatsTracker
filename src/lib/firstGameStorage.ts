@@ -2,7 +2,7 @@ import type { GameState } from "./gameEngine.ts";
 import { createInitialGameState, upsertCompletedGame } from "./gameEngine.ts";
 import { defensivePositions, normalizeDefensiveAlignment } from "./defenseEngine.ts";
 import { normalizeGameRules } from "./gameRules.ts";
-import { getTeamAccountHeaders, isSameTeamWorkspace, loadActiveTeam } from "./teamStorage.ts";
+import { getVerifiedTeamAccountHeaders, isSameTeamWorkspace, loadActiveTeam } from "./teamStorage.ts";
 import type { ActiveTeam } from "@/types/player";
 
 const storageKey = "baseball-tracker:first-game-state:v1";
@@ -216,7 +216,7 @@ export async function hydrateFirstGameStateFromPrisma(options: { force?: boolean
   try {
     const response = await fetch(`/api/first-game${query}`, {
       cache: "no-store",
-      headers: getTeamAccountHeaders(),
+      headers: await getVerifiedTeamAccountHeaders(),
     });
 
     if (!response.ok) {
@@ -237,6 +237,7 @@ export async function hydrateFirstGameStateFromPrisma(options: { force?: boolean
 
     if (!payload.state) {
       if (shouldKeepLocalGameState(localState, null)) {
+        if (localState.status === "FINAL") queueFirstGamePrismaSync(localState);
         return;
       }
 
@@ -250,6 +251,7 @@ export async function hydrateFirstGameStateFromPrisma(options: { force?: boolean
     );
 
     if (shouldKeepLocalGameState(localState, normalizedRemoteState)) {
+      if (localState.status === "FINAL" && normalizedRemoteState.status !== "FINAL") queueFirstGamePrismaSync(localState);
       return;
     }
 
@@ -264,9 +266,15 @@ export async function hydrateFirstGameStateFromPrisma(options: { force?: boolean
 }
 
 export function shouldKeepLocalGameState(localState: GameState, remoteState: GameState | null) {
-  if (localState.status !== "IN_PROGRESS" || !localState.lineup.length) {
+  if (!localState.lineup.length) {
     return false;
   }
+
+  if (localState.status === "FINAL") {
+    return remoteState?.status !== "FINAL" || getSavedActionCount(localState) >= getSavedActionCount(remoteState);
+  }
+
+  if (localState.status !== "IN_PROGRESS") return false;
 
   if (!remoteState || remoteState.status === "PREGAME") {
     return true;
@@ -318,20 +326,31 @@ function queueFirstGamePrismaSync(state: GameState) {
 
   prismaSyncQueue = prismaSyncQueue
     .catch(() => undefined)
-    .then(() => fetch("/api/first-game", {
-      method: "POST",
-      headers: getTeamAccountHeaders({
-        "Content-Type": "application/json",
-      }),
-      body: JSON.stringify({
-        state,
-        team: activeTeam,
-      }),
-    }))
+    .then(async () => {
+      const maximumAttempts = state.status === "FINAL" ? 2 : 1;
+      for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+        try {
+          const response = await fetch("/api/first-game", {
+            method: "POST",
+            headers: await getVerifiedTeamAccountHeaders({ "Content-Type": "application/json" }),
+            body: JSON.stringify({ state, team: activeTeam }),
+          });
+          if (response.ok) return;
+        } catch {
+          // A final state gets one short retry and remains authoritative locally until it syncs.
+        }
+        if (attempt < maximumAttempts) await waitForRetry(2_000);
+      }
+      throw new Error("Unable to sync game state.");
+    })
     .then(() => undefined)
     .catch(() => {
       // Keep the local game usable if DATABASE_URL or the network is unavailable.
     });
+}
+
+function waitForRetry(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function queueFirstGamePrismaReset() {
@@ -340,9 +359,9 @@ function queueFirstGamePrismaReset() {
 
   prismaSyncQueue = prismaSyncQueue
     .catch(() => undefined)
-    .then(() => fetch(`/api/first-game${query}`, {
+    .then(async () => fetch(`/api/first-game${query}`, {
       method: "DELETE",
-      headers: getTeamAccountHeaders(),
+      headers: await getVerifiedTeamAccountHeaders(),
     }))
     .then(() => undefined)
     .catch(() => {
@@ -373,6 +392,7 @@ export function normalizeStoredGameState(
 
   return {
     ...state,
+    gameId: typeof state.gameId === "string" ? state.gameId : null,
     lineup: state.lineup.map((player) => {
       const activePlayer = activePlayers.find((item) => item.id === player.id);
 

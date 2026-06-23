@@ -9,6 +9,7 @@ import {
 } from "@/lib/gameEngine";
 import { calculateStats, formatPercent, formatRate } from "@/lib/statCalculations";
 import { useActiveTeam } from "@/lib/teamStorage";
+import { useTeamSchedule } from "@/lib/scheduleClient";
 import { useCompletedGameStates } from "@/lib/useCompletedGameStates";
 import { useFirstGameState } from "@/lib/useFirstGameState";
 import { GameHistoryCard, StatsPlayerTable, type StatsPlayerRow } from "@/sections/StatsEntrySection";
@@ -17,6 +18,7 @@ export function SeasonStatsSection() {
   const activeTeam = useActiveTeam();
   const firstGameState = useFirstGameState();
   const completedGameStates = useCompletedGameStates();
+  const { schedule } = useTeamSchedule(activeTeam?.id ?? null);
 
   if (!activeTeam) {
     return <TeamSetupGate title="Create your team before reviewing season stats." />;
@@ -32,7 +34,23 @@ export function SeasonStatsSection() {
     };
   });
   const seasonTotals = getTeamSeasonTotals(activeTeam.players, firstGameState);
-  const gameHistory = getCompletedGameHistory(completedGameStates);
+  const localGameHistory = getCompletedGameHistory(completedGameStates);
+  const localGameIds = new Set(localGameHistory.map((game) => game.id));
+  const backendGameHistory = (schedule?.weeks ?? []).flatMap((week) => (
+    week.kind === "GAME" && week.status === "FINAL" && !localGameIds.has(week.gameId)
+      ? [{
+          id: week.gameId,
+          opponent: week.opponent,
+          endedAt: week.scheduledStartAt,
+          teamScore: week.teamScore,
+          opponentScore: week.opponentScore,
+          result: week.result === "WIN" ? "Win" as const : week.result === "LOSS" ? "Loss" as const : "Tie" as const,
+          playCount: week.playCount,
+          href: `/stats/games/${week.gameId}`,
+        }]
+      : []
+  ));
+  const gameHistory = [...localGameHistory, ...backendGameHistory];
 
   return (
     <section className="bg-background py-6 sm:py-8">

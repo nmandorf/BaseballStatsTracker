@@ -121,14 +121,14 @@ export function PriorStatsEditor({ playerName, stats, currentGameStats, onCancel
 
       <div className="sticky -bottom-4 z-10 grid grid-cols-2 gap-2 border-t border-[var(--border)] bg-[var(--card)] py-3">
         <button
-          className="min-h-12 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 text-sm font-bold text-foreground"
+          className="btn-base btn-secondary min-h-12 px-3 text-sm"
           onClick={onCancel}
           type="button"
         >
           Cancel
         </button>
         <button
-          className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-3 text-sm font-bold text-white disabled:opacity-45"
+          className="btn-base btn-primary min-h-12 px-3 text-sm"
           disabled={Boolean(validationError)}
           type="submit"
         >

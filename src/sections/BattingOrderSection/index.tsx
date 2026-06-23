@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -22,16 +22,21 @@ import { TeamSetupGate } from "@/components/TeamSetupGate";
 import { createInitialGameState, getLiveGameHref, initializeStartingDefense } from "@/lib/gameEngine";
 import { createDefaultDefensiveAlignment, getDefensiveAlignmentIssues, getFirstDefensiveHalf } from "@/lib/defenseEngine";
 import { saveFirstGameState } from "@/lib/firstGameStorage";
-import { recommendBattingOrder, validateLineupGenderRules, validateLineupPlayerPool, type RecommendedLineupRow } from "@/lib/lineupRules";
+import { isLineupGenderOptimized, recommendBattingOrder, validateLineupGenderRules, validateLineupPlayerPool, type RecommendedLineupRow } from "@/lib/lineupRules";
 import {
   buildPregamePlayerPool,
   generateLineupIds,
+  flushPregameSetupSync,
   resolveSuggestedLineupIds,
   savePregameSetup,
   usePregameSetup,
 } from "@/lib/pregameSetupStorage";
 import { useActiveTeam } from "@/lib/teamStorage";
+import { getVerifiedTeamAccountHeaders } from "@/lib/teamStorage";
+import { useTeamSchedule } from "@/lib/scheduleClient";
+import { gameStartLeadTimeMs } from "@/lib/scheduleRules";
 import { useFirstGameState } from "@/lib/useFirstGameState";
+import { cn } from "@/lib/utils";
 import type { DefensiveAlignment } from "@/types/defense";
 
 const priorities = ["OBP", "Out rate", "SLG", "OPS", "XBH%", "Speed bonus"];
@@ -41,8 +46,11 @@ export function BattingOrderSection() {
   const activeTeam = useActiveTeam();
   const setup = usePregameSetup();
   const firstGameState = useFirstGameState();
+  const { schedule } = useTeamSchedule(activeTeam?.id ?? null);
+  const [now, setNow] = useState(() => Date.now());
+  const [startError, setStartError] = useState<string | null>(null);
+  const [isStarting, setIsStarting] = useState(false);
   const [manualOrderIds, setManualOrderIds] = useState<string[] | null>(null);
-  const [startingDefense, setStartingDefense] = useState<DefensiveAlignment | null>(null);
 
   const suggestedLineup = resolveSuggestedLineupIds(setup, firstGameState, activeTeam);
   const generatedLineupIds = suggestedLineup.lineupIds;
@@ -61,24 +69,43 @@ export function BattingOrderSection() {
     : recommendedLineup;
   const lineupPlayers = lineup.map((row) => row.player);
   const firstDefensiveHalf = getFirstDefensiveHalf(setup.isHome);
-  const defenseAlignment = resolveStartingDefenseAlignment(lineupPlayers, startingDefense, firstDefensiveHalf);
+  const defenseAlignment = resolveStartingDefenseAlignment(lineupPlayers, setup.startingDefense, firstDefensiveHalf);
   const defenseIssues = defenseAlignment
     ? getDefensiveAlignmentIssues(defenseAlignment, lineupPlayers)
     : [];
   const [selectedPriority, setSelectedPriority] = useState("OBP");
   const lineupValidation = validateLineupGenderRules(lineup.map((row) => row.player));
+  const lineupGenderOptimized = isLineupGenderOptimized(lineup.map((row) => row.player));
   const acceptedMatchesLineup =
     lineup.length > 0 &&
     setup.acceptedLineupIds.length === lineup.length &&
     setup.acceptedLineupIds.every((playerId, index) => playerId === lineup[index]?.player.id);
-  const canStartGame = acceptedMatchesLineup
+  const selectedScheduledGame = schedule?.weeks.find((week) => week.kind === "GAME" && week.gameId === setup.gameId);
+  const startEligibleAt = selectedScheduledGame?.kind === "GAME" ? Date.parse(selectedScheduledGame.scheduledStartAt) - gameStartLeadTimeMs : Number.POSITIVE_INFINITY;
+  const lineupReady = acceptedMatchesLineup
     && lineupValidation.isLeagueCompliant
+    && lineupGenderOptimized
     && defenseIssues.length === 0;
+  const canStartGame = lineupReady && Boolean(selectedScheduledGame) && now >= startEligibleAt && !isStarting;
   const lineupWarnings = [
     ...suggestedLineup.warnings,
     ...playerPoolValidation.warnings,
     ...(lineup.length ? lineupValidation.warnings : []),
   ].filter((warning, index, warnings) => warnings.indexOf(warning) === index);
+  const acceptIsPrimaryAction = !acceptedMatchesLineup;
+  const startIsPrimaryAction = acceptedMatchesLineup;
+  const startGameLabel = !selectedScheduledGame
+    ? "Start Game"
+    : now < startEligibleAt
+      ? `Locked · ${formatStartCountdown(startEligibleAt - now)}`
+      : "Start Game";
+
+  useEffect(() => {
+    const clientBase = Date.now();
+    const serverBase = schedule ? Date.parse(schedule.serverNow) : clientBase;
+    const timer = window.setInterval(() => setNow(serverBase + Date.now() - clientBase), 1_000);
+    return () => window.clearInterval(timer);
+  }, [schedule]);
 
   if (!activeTeam) {
     return <TeamSetupGate title="Create your team before reviewing the batting order." />;
@@ -110,12 +137,13 @@ export function BattingOrderSection() {
       ...setup,
       generatedLineupIds: nextGeneratedLineupIds,
       acceptedLineupIds: [],
+      startingDefense: null,
       status: "GENERATED",
     });
   }
 
   function acceptLineup() {
-    if (!lineupValidation.isLeagueCompliant) {
+    if (!lineupGenderOptimized) {
       return;
     }
 
@@ -127,7 +155,7 @@ export function BattingOrderSection() {
     });
   }
 
-  function startGame() {
+  async function startGame() {
     if (!canStartGame) {
       return;
     }
@@ -140,7 +168,27 @@ export function BattingOrderSection() {
       return;
     }
 
+    if (!setup.gameId) return;
+
+    setIsStarting(true);
+    setStartError(null);
+    try {
+      await flushPregameSetupSync();
+      const preparationResponse = await fetch(`/api/games/${encodeURIComponent(setup.gameId)}/preparation`, {
+        method: "PUT",
+        headers: await getVerifiedTeamAccountHeaders({ "Content-Type": "application/json" }),
+        body: JSON.stringify(setup),
+      });
+      if (!preparationResponse.ok) throw new Error("Unable to save the accepted lineup.");
+      const startResponse = await fetch(`/api/games/${encodeURIComponent(setup.gameId)}/start`, {
+        method: "POST",
+        headers: await getVerifiedTeamAccountHeaders(),
+      });
+      const startPayload = await startResponse.json() as { error?: { message?: string } };
+      if (!startResponse.ok) throw new Error(startPayload.error?.message ?? "Unable to start this game.");
+
     const initialState = createInitialGameState(players, {
+      gameId: setup.gameId,
       opponent: setup.opponent || "Opponent",
       isHome: setup.isHome,
       gameRules: setup.gameRules,
@@ -159,6 +207,11 @@ export function BattingOrderSection() {
       status: "STARTED",
     });
     router.push(getLiveGameHref(gameStateWithDefense));
+    } catch (caught) {
+      setStartError(caught instanceof Error ? caught.message : "Unable to start this game.");
+    } finally {
+      setIsStarting(false);
+    }
   }
 
   return (
@@ -188,7 +241,7 @@ export function BattingOrderSection() {
             </div>
             <div className="mt-4 grid gap-2 sm:grid-cols-4">
               <button
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--surface)] px-3 text-sm font-bold text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                className="btn-base btn-secondary min-h-11 px-3 text-sm"
                 disabled={!playerPoolValidation.isLeagueCompliant}
                 onClick={generateLatestLineup}
                 type="button"
@@ -197,7 +250,7 @@ export function BattingOrderSection() {
                 Generate
               </button>
               <button
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--surface)] px-3 text-sm font-bold text-foreground"
+                className="btn-base btn-secondary min-h-11 px-3 text-sm"
                 onClick={() => setManualOrderIds(null)}
                 type="button"
               >
@@ -205,8 +258,11 @@ export function BattingOrderSection() {
                 Reset
               </button>
               <button
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--success-soft)] px-3 text-sm font-bold text-[var(--success)] disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={!lineup.length || !lineupValidation.isLeagueCompliant}
+                className={cn(
+                  "btn-base min-h-11 px-3 text-sm",
+                  acceptIsPrimaryAction ? "btn-primary" : "btn-secondary",
+                )}
+                disabled={!lineup.length || !lineupGenderOptimized}
                 onClick={acceptLineup}
                 type="button"
               >
@@ -214,15 +270,27 @@ export function BattingOrderSection() {
                 Accept
               </button>
               <button
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                className={cn(
+                  "btn-base min-h-11 px-3 text-sm",
+                  startIsPrimaryAction ? "btn-primary" : "btn-secondary",
+                )}
                 disabled={!canStartGame}
                 onClick={startGame}
                 type="button"
               >
                 <Play className="size-4" aria-hidden="true" />
-                Start Game
+                {isStarting ? "Starting…" : startGameLabel}
               </button>
             </div>
+            {!selectedScheduledGame ? (
+              <Link
+                className="btn-base btn-secondary mt-3 min-h-11 px-4 text-sm"
+                href="/game-setup"
+              >
+                Select Scheduled Game
+              </Link>
+            ) : null}
+            {startError ? <p className="mt-3 rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-sm font-bold text-[var(--danger)]">{startError}</p> : null}
             {lineupWarnings
               .map((warning) => (
                 <p
@@ -256,7 +324,7 @@ export function BattingOrderSection() {
                       </span>
                       <button
                         aria-label={`Move ${row.player.name} up`}
-                        className="flex size-9 items-center justify-center rounded-lg bg-[var(--card)] text-[var(--accent)] disabled:opacity-30"
+                        className="btn-base btn-secondary size-9 min-h-0 p-0 text-[var(--accent)]"
                         disabled={index === 0}
                         onClick={() => movePlayer(index, -1)}
                         type="button"
@@ -265,7 +333,7 @@ export function BattingOrderSection() {
                       </button>
                       <button
                         aria-label={`Move ${row.player.name} down`}
-                        className="flex size-9 items-center justify-center rounded-lg bg-[var(--card)] text-[var(--accent)] disabled:opacity-30"
+                        className="btn-base btn-secondary size-9 min-h-0 p-0 text-[var(--accent)]"
                         disabled={index === lineup.length - 1}
                         onClick={() => movePlayer(index, 1)}
                         type="button"
@@ -282,7 +350,7 @@ export function BattingOrderSection() {
                     {suggestedLineup.emptyReason ?? "No suggested lineup is available yet."}
                   </p>
                   <Link
-                    className="mt-3 inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white"
+                    className="btn-base btn-primary mt-3 min-h-11 px-4 text-sm"
                     href="/game-setup"
                   >
                     Open Game Setup
@@ -320,7 +388,7 @@ export function BattingOrderSection() {
                 <DefensiveAlignmentEditor
                   alignment={defenseAlignment}
                   players={lineupPlayers}
-                  onChange={setStartingDefense}
+                  onChange={(alignment) => savePregameSetup({ ...setup, startingDefense: alignment })}
                 />
               ) : (
                 <p className="rounded-lg bg-[var(--surface)] p-3 text-sm font-bold text-[var(--muted-foreground)]">
@@ -346,9 +414,10 @@ export function BattingOrderSection() {
                 <button
                   className={
                     selectedPriority === priority
-                      ? "flex min-h-11 items-center gap-3 rounded-lg bg-[var(--accent)] px-3 text-left text-sm font-semibold text-white"
-                      : "flex min-h-11 items-center gap-3 rounded-lg bg-[var(--surface)] px-3 text-left text-sm font-semibold text-foreground"
+                      ? "btn-base btn-choice-selected min-h-11 justify-start gap-3 px-3 text-left text-sm font-semibold"
+                      : "btn-base btn-choice min-h-11 justify-start gap-3 px-3 text-left text-sm font-semibold"
                   }
+                  aria-pressed={selectedPriority === priority}
                   key={priority}
                   onClick={() => setSelectedPriority(priority)}
                   type="button"
@@ -394,4 +463,11 @@ function resolveStartingDefenseAlignment(
   return defenseUsesCurrentLineup
     ? startingDefense
     : createDefaultDefensiveAlignment(lineupPlayers, firstDefensiveHalf.inning, firstDefensiveHalf.half);
+}
+
+function formatStartCountdown(milliseconds: number) {
+  const totalMinutes = Math.max(0, Math.ceil(milliseconds / 60_000));
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
 }
