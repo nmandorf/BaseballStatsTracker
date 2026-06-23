@@ -18,7 +18,8 @@
     "prisma:studio": "prisma studio",
     "push": "git push -u origin main",
     "pm": "node scripts/project-manager.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "schedule:tester-backfill": "node scripts/mark-tester-schedule-setup.mjs"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",

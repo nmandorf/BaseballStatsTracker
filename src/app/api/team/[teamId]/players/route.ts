@@ -1,6 +1,6 @@
 import { addPlayerToTeamInBackend } from "@/lib/teamBackend";
 import { apiErrorResponse, validationError } from "@/lib/appErrors";
-import { readTeamAccountFromRequest } from "@/lib/teamAccount";
+import { readVerifiedTeamAccountFromRequest } from "@/lib/teamAccount";
 import type { PlayerProfileInput } from "@/types/player";
 
 export const runtime = "nodejs";
@@ -15,7 +15,7 @@ export async function POST(
   context: { params: Promise<{ teamId: string }> },
 ) {
   try {
-    const account = readTeamAccountFromRequest(request);
+    const account = await readVerifiedTeamAccountFromRequest(request);
     const { teamId } = await context.params;
     const payload = (await request.json()) as AddPlayerPayload;
 

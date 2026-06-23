@@ -1,3 +1,6 @@
+import { AppError } from "./appErrors.ts";
+import { firebaseConfig } from "./firebaseConfig.ts";
+
 export type TeamAccount = {
   uid: string;
   email: string | null;
@@ -8,14 +11,29 @@ export const legacyTeamAccount: TeamAccount = {
   email: null,
 };
 
-const userIdHeader = "x-baseball-user-id";
-const userEmailHeader = "x-baseball-user-email";
+export async function readVerifiedTeamAccountFromRequest(request: Request): Promise<TeamAccount> {
+  const authorization = request.headers.get("authorization") ?? "";
+  const idToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+  const apiKey = firebaseConfig.apiKey;
 
-export function readTeamAccountFromRequest(request: Request): TeamAccount {
-  return normalizeTeamAccount(
-    request.headers.get(userIdHeader),
-    request.headers.get(userEmailHeader),
-  );
+  if (!idToken || !apiKey) {
+    throw new AppError("AUTH_REQUIRED", "Sign in again before changing team data.", 401);
+  }
+
+  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken }),
+    cache: "no-store",
+  });
+  const payload = await response.json() as { users?: Array<{ localId?: string; email?: string }> };
+  const user = payload.users?.[0];
+
+  if (!response.ok || !user?.localId) {
+    throw new AppError("AUTH_REQUIRED", "Your sign-in could not be verified. Sign in again.", 401);
+  }
+
+  return normalizeTeamAccount(user.localId, user.email);
 }
 
 export function normalizeTeamAccount(uid: unknown, email: unknown): TeamAccount {
@@ -31,21 +49,6 @@ export function normalizeTeamAccount(uid: unknown, email: unknown): TeamAccount 
   return {
     uid: normalizedUid,
     email: normalizedEmail,
-  };
-}
-
-export function teamAccountHeaders(
-  account: TeamAccount | null,
-  baseHeaders: Record<string, string> = {},
-) {
-  if (!account?.uid) {
-    return baseHeaders;
-  }
-
-  return {
-    ...baseHeaders,
-    "X-Baseball-User-Id": account.uid,
-    "X-Baseball-User-Email": account.email ?? "",
   };
 }
 

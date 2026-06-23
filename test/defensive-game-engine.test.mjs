@@ -242,6 +242,13 @@ test("a newer remote final can close the same local in-progress game", () => {
   assert.equal(shouldKeepLocalGameState(localGame, newerRemoteFinal), false);
 });
 
+test("a stale in-progress snapshot cannot reopen a locally completed game", () => {
+  const localFinal = { ...createInitialGameState([player("local-player")]), status: "FINAL", endedAt: "2026-06-21T21:00:00.000Z" };
+  const staleRemote = { ...localFinal, status: "IN_PROGRESS", endedAt: null };
+
+  assert.equal(shouldKeepLocalGameState(localFinal, staleRemote), true);
+});
+
 test("legacy remote snapshots normalize removed defensive slots before hydration", () => {
   const fielder = player("legacy-rover");
   const remoteGame = {

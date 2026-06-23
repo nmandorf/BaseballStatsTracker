@@ -37,9 +37,14 @@ export function recommendBattingOrder(players: Player[]): RecommendedLineupRow[]
     ? arrangeLineupBySlot(rankedPlayers)
     : rankedPlayers;
   const lineup = arrangeLineupByGender(baseLineup);
-  const balancedLineup = balanceLowerLineupContact(lineup);
+  const contactBalancedLineup = balanceLowerLineupContact(lineup);
+  const balancedLineup = arrangeLineupByGender(contactBalancedLineup);
 
   return balancedLineup.map((player, index) => buildLineupRow(player, index + 1, getLineupScore(player)));
+}
+
+export function isLineupGenderOptimized(lineup: Player[]) {
+  return validateLineupGenderRules(lineup).isLeagueCompliant && !hasAvoidableBackToBackFemales(lineup);
 }
 
 export function validateLineupPlayerPool(players: Player[]): LineupGenderValidation {
@@ -135,16 +140,32 @@ function arrangeLineupByGender(players: Player[]) {
 
   while (remaining.length) {
     const lastPlayer = lineup[lineup.length - 1];
-    const shouldSeparateFemale = lastPlayer?.gender === "Female";
-    const nextIndex = shouldSeparateFemale
-      ? remaining.findIndex((player) => player.gender !== "Female")
-      : 0;
-    const index = nextIndex >= 0 ? nextIndex : 0;
+    const index = chooseNextGenderBalancedIndex(remaining, lastPlayer);
 
     lineup.push(remaining.splice(index, 1)[0]);
   }
 
   return lineup;
+}
+
+function chooseNextGenderBalancedIndex(remaining: Player[], lastPlayer?: Player) {
+  const firstNonFemaleIndex = remaining.findIndex((player) => player.gender !== "Female");
+
+  if (lastPlayer?.gender === "Female") {
+    return firstNonFemaleIndex >= 0 ? firstNonFemaleIndex : 0;
+  }
+
+  const firstFemaleIndex = remaining.findIndex((player) => player.gender === "Female");
+
+  if (firstFemaleIndex < 0) {
+    return 0;
+  }
+
+  const femaleCount = remaining.filter((player) => player.gender === "Female").length;
+  const nonFemaleCount = remaining.length - femaleCount;
+  const needsSavedSeparator = remaining[0]?.gender !== "Female" && nonFemaleCount <= femaleCount - 1;
+
+  return needsSavedSeparator ? firstFemaleIndex : 0;
 }
 
 function buildLineupRow(player: Player, lineupSlot: number, score: number): RecommendedLineupRow {
@@ -335,11 +356,12 @@ function formatNameList(names: string[]) {
 function hasAvoidableBackToBackFemales(players: Player[]) {
   const femaleCount = players.filter((player) => player.gender === "Female").length;
   const maleCount = players.filter((player) => player.gender === "Male").length;
-  const enoughMaleSeparators = femaleCount > 1 && maleCount >= femaleCount - 1;
-
-  return enoughMaleSeparators && players.some((player, index) => (
+  const minimumBackToBackFemalePairs = Math.max(0, femaleCount - (maleCount + 1));
+  const backToBackFemalePairs = players.filter((player, index) => (
     index > 0 && player.gender === "Female" && players[index - 1]?.gender === "Female"
-  ));
+  )).length;
+
+  return backToBackFemalePairs > minimumBackToBackFemalePairs;
 }
 
 function slotRole(slot: number, fallback: string) {

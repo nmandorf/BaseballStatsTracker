@@ -25,7 +25,7 @@ export function AuthStatus() {
   if (!isConfigured || !user) {
     return (
       <Link
-        className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[var(--accent)] bg-[var(--accent)] px-3 text-xs font-bold text-white shadow-sm shadow-[var(--accent)]/20"
+        className="btn-base btn-primary min-h-10 px-3 text-xs"
         href="/login"
       >
         <LogIn className="size-4" aria-hidden="true" />
@@ -38,17 +38,17 @@ export function AuthStatus() {
 
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <span className="hidden max-w-44 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-xs font-bold text-foreground shadow-sm shadow-foreground/[0.025] lg:inline-flex">
+      <span className="hidden h-10 w-28 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 text-xs font-bold text-foreground shadow-sm shadow-foreground/[0.025] lg:inline-flex">
         <UserRound className="size-4 shrink-0 text-[var(--accent)]" aria-hidden="true" />
         <span className="truncate">{label}</span>
       </span>
       <button
-        className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 text-xs font-bold text-[var(--muted-foreground)] shadow-sm shadow-foreground/[0.025] hover:bg-[var(--surface)] hover:text-foreground"
+        className="btn-base btn-secondary h-10 w-28 min-h-0 shrink-0 whitespace-nowrap px-3 text-xs text-[var(--muted-foreground)]"
         onClick={() => void signOutAndReturnHome()}
         type="button"
       >
         <LogOut className="size-4" aria-hidden="true" />
-        <span className="hidden sm:inline">Sign out</span>
+        <span>Sign out</span>
       </button>
     </div>
   );

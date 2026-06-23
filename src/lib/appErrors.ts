@@ -1,23 +1,37 @@
 export type AppErrorCode =
+  | "AUTH_REQUIRED"
   | "BACKEND_UNAVAILABLE"
   | "FIRST_GAME_STATE_INVALID"
+  | "GAME_NOT_STARTABLE"
+  | "GAME_START_TOO_EARLY"
+  | "GAME_START_TIME_UNVERIFIED"
   | "INVALID_JSON"
   | "PLAYER_INPUT_REQUIRED"
   | "PLAYER_NAME_REQUIRED"
   | "TEAM_NAME_REQUIRED"
-  | "TEAM_NOT_FOUND";
+  | "TEAM_NOT_FOUND"
+  | "TEAM_GAME_ALREADY_IN_PROGRESS"
+  | "SCHEDULE_ENTRY_READ_ONLY"
+  | "SCHEDULE_WEEK_INVALID";
 
 export type AppErrorDetails = Record<string, string | number | boolean | null>;
 
 export class AppError extends Error {
+  readonly code: AppErrorCode;
+  readonly status: number;
+  readonly details?: AppErrorDetails;
+
   constructor(
-    readonly code: AppErrorCode,
+    code: AppErrorCode,
     message: string,
-    readonly status: number,
-    readonly details?: AppErrorDetails,
+    status: number,
+    details?: AppErrorDetails,
   ) {
     super(message);
     this.name = "AppError";
+    this.code = code;
+    this.status = status;
+    this.details = details;
   }
 }
 

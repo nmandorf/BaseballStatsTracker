@@ -45,6 +45,7 @@ export type MovementSelections = Partial<Record<BaseLabel, UiRunnerDestination>>
 export type PinchRunnerSelections = Partial<Record<BaseLabel, RunnerSlot>>;
 
 export type GameState = {
+  gameId: string | null;
   status: LocalGameStatus;
   endedAt: string | null;
   opponent: string;
@@ -151,6 +152,7 @@ export type CompletedGameSummary = {
 export const firstGameHistoryId = "first-game";
 
 type CreateInitialGameStateOptions = {
+  gameId?: string;
   opponent?: string;
   isHome?: boolean;
   status?: LocalGameStatus;
@@ -159,6 +161,7 @@ type CreateInitialGameStateOptions = {
 
 export function createInitialGameState(lineup: Player[], options: CreateInitialGameStateOptions = {}): GameState {
   return {
+    gameId: options.gameId ?? null,
     status: options.status ?? "PREGAME",
     endedAt: null,
     opponent: options.opponent ?? "Opponent",
@@ -348,15 +351,11 @@ export function getCompletedGameHistory(source: GameState | GameState[]): Comple
 }
 
 export function getCompletedGameById(source: GameState | GameState[], gameId: string) {
-  if (gameId !== firstGameHistoryId) {
-    return null;
-  }
-
   if (Array.isArray(source)) {
-    return source.find((game) => game.status === "FINAL") ?? null;
+    return source.find((game) => game.status === "FINAL" && getCompletedGameId(game) === gameId) ?? null;
   }
 
-  return source.status === "FINAL" ? source : null;
+  return source.status === "FINAL" && getCompletedGameId(source) === gameId ? source : null;
 }
 
 export function upsertCompletedGame(games: GameState[], game: GameState): GameState[] {
@@ -376,14 +375,12 @@ export function getCompletedGameSummary(state: GameState): CompletedGameSummary 
     opponentScore: state.opponentScore,
     result: getGameOutcomeLabel(state.teamScore, state.opponentScore),
     playCount: state.plays.length,
-    href: `/stats/games/${firstGameHistoryId}`,
+    href: `/stats/games/${getCompletedGameId(state)}`,
   };
 }
 
 function getCompletedGameId(state: GameState) {
-  void state;
-
-  return firstGameHistoryId;
+  return state.gameId ?? firstGameHistoryId;
 }
 
 
@@ -1203,6 +1200,7 @@ function findPrePlaySnapshotIndex(state: GameState, play: ScoredPlay) {
 
 function snapshotState(state: GameState): GameStateSnapshot {
   return {
+    gameId: state.gameId,
     status: state.status,
     endedAt: state.endedAt,
     opponent: state.opponent,

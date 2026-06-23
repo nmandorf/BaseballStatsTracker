@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 const headerSource = readFileSync(new URL("../src/sections/HeaderSection/index.tsx", import.meta.url), "utf8");
+const schedulePageSource = readFileSync(new URL("../src/pages/Schedule/index.tsx", import.meta.url), "utf8");
 const offenseSource = readFileSync(new URL("../src/sections/StatsEntrySection/index.tsx", import.meta.url), "utf8");
 const defenseSource = readFileSync(new URL("../src/sections/DefenseSection/index.tsx", import.meta.url), "utf8");
 
@@ -23,6 +24,13 @@ test("live game shell locks non-game routes", () => {
   assert.match(headerSource, /gameState\.status === "IN_PROGRESS"/);
   assert.match(headerSource, /liveGamePaths\.has\(pathname\)/);
   assert.match(headerSource, /router\.replace\(getLiveGameHref\(gameState\)\)/);
+});
+
+test("responsive navigation keeps the active mobile tab visible", () => {
+  assert.match(headerSource, /activeMobileNavItemRef\.current\?\.scrollIntoView/);
+  assert.match(headerSource, /ref=\{isActive \? activeMobileNavItemRef : undefined\}/);
+  assert.match(schedulePageSource, /activeNav="schedule"/);
+  assert.doesNotMatch(headerSource, />Game day</);
 });
 
 test("both game modes follow saved phase transitions and can end the game", () => {

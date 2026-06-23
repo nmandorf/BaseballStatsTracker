@@ -42,6 +42,8 @@ import {
 } from "@/lib/gameEngine";
 import { calculateStats, formatPercent, formatRate } from "@/lib/statCalculations";
 import { useActiveTeam } from "@/lib/teamStorage";
+import { usePregameSetup } from "@/lib/pregameSetupStorage";
+import { useTeamSchedule } from "@/lib/scheduleClient";
 import { useFirstGameState } from "@/lib/useFirstGameState";
 import { cn } from "@/lib/utils";
 import type { BatterResult, OutType } from "@/types/game";
@@ -53,13 +55,16 @@ import type { CalculatedStats, PlayerStats } from "@/types/stats";
 export function StatsEntrySection() {
   const activeTeam = useActiveTeam();
   const gameState = useFirstGameState();
+  const setup = usePregameSetup();
+  const { schedule } = useTeamSchedule(activeTeam?.id ?? null);
+  const scheduledGame = schedule?.weeks.find((week) => week.kind === "GAME" && week.gameId === setup.gameId);
 
   if (!activeTeam) {
     return <TeamSetupGate title="Create your team before entering stats." />;
   }
 
   if (gameState.status === "PREGAME" || !gameState.lineup.length) {
-    return <PregameStatsEntryPrompt teamName={activeTeam.name} />;
+    return <PregameStatsEntryPrompt eligibleAt={scheduledGame?.kind === "GAME" ? new Date(Date.parse(scheduledGame.scheduledStartAt) - 5 * 60_000).toLocaleString() : null} teamName={activeTeam.name} />;
   }
 
   if (gameState.status === "FINAL") {
@@ -96,7 +101,7 @@ function DefensiveHalfPrompt({ gameState, teamName }: { gameState: GameState; te
             Your team is fielding. Open Defense to record the next play.
           </p>
           <Link
-            className="mt-4 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white"
+            className="btn-base btn-primary mt-4 min-h-12 w-full px-4 text-sm"
             href="/defense"
           >
             Open Defense
@@ -332,14 +337,14 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
             </div>
             <div className="mt-3 grid shrink-0 grid-cols-2 gap-2 sm:mt-0">
               <button
-                className="min-h-11 rounded-lg bg-[var(--card)] px-3 text-sm font-bold text-foreground"
+                className="btn-base btn-secondary min-h-11 px-3 text-sm"
                 onClick={resetPlayForm}
                 type="button"
               >
                 Cancel
               </button>
               <button
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-3 text-sm font-bold text-white disabled:opacity-45"
+                className="btn-base btn-primary min-h-11 px-3 text-sm"
                 disabled={!selectedResult || Boolean(playValidationError)}
                 onClick={saveCurrentPlay}
                 type="button"
@@ -448,7 +453,7 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
                     </div>
                     <div className="mt-3 flex flex-wrap gap-2">
                       <button
-                        className="inline-flex min-h-9 items-center gap-2 rounded-lg bg-[var(--card)] px-3 text-xs font-bold text-[var(--accent)]"
+                        className="btn-base btn-secondary min-h-9 px-3 text-xs text-[var(--accent)]"
                         onClick={() => setPinchBase(base)}
                         type="button"
                       >
@@ -457,7 +462,7 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
                       </button>
                       {pinchRunners[base] ? (
                         <button
-                          className="inline-flex min-h-9 items-center rounded-lg bg-[var(--danger-soft)] px-3 text-xs font-bold text-[var(--danger)]"
+                          className="btn-base btn-danger-secondary min-h-9 px-3 text-xs"
                           onClick={() =>
                             setPinchRunners((current) => {
                               const next = { ...current };
@@ -494,9 +499,10 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
               <div className="grid grid-cols-2 gap-2 text-center text-sm font-bold">
                 <button
                   className={cn(
-                    "min-h-11 rounded-lg px-3",
-                    rbiCredit ? "bg-[var(--accent)] text-white" : "bg-[var(--card)] text-foreground",
+                    "btn-base min-h-11 px-3",
+                    rbiCredit ? "btn-choice-selected" : "btn-secondary",
                   )}
+                  aria-pressed={rbiCredit}
                   onClick={() => setRbiCredit(true)}
                   type="button"
                 >
@@ -504,9 +510,10 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
                 </button>
                 <button
                   className={cn(
-                    "min-h-11 rounded-lg px-3",
-                    !rbiCredit ? "bg-[var(--accent)] text-white" : "bg-[var(--card)] text-foreground",
+                    "btn-base min-h-11 px-3",
+                    !rbiCredit ? "btn-choice-selected" : "btn-secondary",
                   )}
+                  aria-pressed={!rbiCredit}
                   onClick={() => setRbiCredit(false)}
                   type="button"
                 >
@@ -541,7 +548,7 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
       <div className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--border)] bg-[var(--card)]/95 px-3 py-3 shadow-2xl shadow-foreground/10 backdrop-blur">
         <div className="mx-auto grid w-full max-w-md grid-cols-[0.72fr_1.28fr] gap-2">
           <button
-            className="flex min-h-12 items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] text-sm font-bold text-foreground disabled:opacity-40"
+            className="btn-base btn-secondary min-h-12 text-sm"
             disabled={!gameState.history.length}
             onClick={undo}
             type="button"
@@ -550,7 +557,7 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
             Undo
           </button>
           <button
-            className="flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-3 text-sm font-bold text-white shadow-sm shadow-[var(--accent)]/20 disabled:opacity-45"
+            className="btn-base btn-primary min-h-12 px-3 text-sm"
             disabled={!selectedResult || Boolean(playValidationError)}
             onClick={saveCurrentPlay}
             type="button"
@@ -580,7 +587,7 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
                 </h2>
               </div>
               <button
-                className="flex size-10 items-center justify-center rounded-lg bg-[var(--surface)] text-foreground"
+                className="btn-base btn-secondary size-10 min-h-0 p-0"
                 onClick={() => setPinchBase(null)}
                 type="button"
               >
@@ -593,7 +600,7 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
 
                 return (
                   <button
-                    className="min-h-11 rounded-lg bg-[var(--surface)] px-3 text-left text-sm font-bold text-foreground hover:bg-[var(--accent-soft)]"
+                    className="btn-base btn-secondary min-h-11 justify-start px-3 text-left text-sm"
                     key={player.id}
                     onClick={() => {
                       setPinchRunners((current) => ({
@@ -720,7 +727,7 @@ export function FinalGameStatsView({
             </div>
 
             <button
-              className="mt-auto flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] text-sm font-bold text-white shadow-sm shadow-[var(--accent)]/20"
+              className="btn-base btn-primary mt-auto min-h-12 w-full text-sm"
               onClick={finishGame}
               type="button"
             >
@@ -731,7 +738,7 @@ export function FinalGameStatsView({
 
             {onReset ? (
               <button
-                className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] text-sm font-bold text-[var(--muted-foreground)]"
+                className="btn-base btn-secondary mt-2 min-h-11 w-full text-sm text-[var(--muted-foreground)]"
                 onClick={onReset}
                 type="button"
               >
@@ -873,12 +880,12 @@ export function GameHistoryCard({
   );
 }
 
-function PregameStatsEntryPrompt({ teamName }: { teamName: string }) {
+function PregameStatsEntryPrompt({ teamName, eligibleAt }: { teamName: string; eligibleAt: string | null }) {
   return (
     <section className="bg-background py-6 sm:py-8">
       <div className="mx-auto w-full max-w-3xl px-4 sm:px-6 lg:px-8">
         <ScreenHeader
-          description="Pick today's players in Game Setup, generate the lineup, let the coach approve it, then start the game to unlock live scoring."
+          description={eligibleAt ? `Live scoring stays locked until ${eligibleAt}. You can prepare and accept the lineup now.` : "Choose a scheduled game, generate the lineup, let the coach approve it, then start the game to unlock live scoring."}
           eyebrow="Stats entry"
           icon={BarChart3}
           status="Pregame"
@@ -886,14 +893,14 @@ function PregameStatsEntryPrompt({ teamName }: { teamName: string }) {
         />
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
           <Link
-            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[var(--surface)] px-4 text-sm font-bold text-foreground"
+            className="btn-base btn-secondary min-h-12 px-4 text-sm"
             href="/game-setup"
           >
             Game Setup
             <ArrowRight className="size-4" aria-hidden="true" />
           </Link>
           <Link
-            className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white"
+            className="btn-base btn-primary min-h-12 px-4 text-sm"
             href="/batting-order"
           >
             Review Lineup

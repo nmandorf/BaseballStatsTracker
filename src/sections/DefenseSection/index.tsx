@@ -195,7 +195,7 @@ export function DefenseSection() {
           <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
             <p className="text-sm font-bold text-foreground">Defense is queued for the next fielding half.</p>
             <Link
-              className="mt-3 inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white"
+              className="btn-base btn-primary mt-3 min-h-11 px-4 text-sm"
               href="/stats-entry"
             >
               Open Stats Entry
@@ -215,7 +215,8 @@ export function DefenseSection() {
                 </h2>
               </div>
               <button
-                className="flex size-10 items-center justify-center rounded-lg bg-[var(--surface)] text-foreground"
+                className="btn-base btn-secondary size-10 min-h-0 p-0"
+                disabled={!gameState.history.length}
                 onClick={undo}
                 type="button"
                 aria-label="Undo last play"
@@ -228,11 +229,12 @@ export function DefenseSection() {
               {eventTypes.map((type) => (
                 <button
                   className={cn(
-                    "min-h-11 rounded-lg px-3 text-sm font-bold",
+                    "btn-base min-h-11 px-3 text-sm",
                     eventType === type
-                      ? "bg-[var(--accent)] text-white"
-                      : "bg-[var(--surface)] text-foreground",
+                      ? "btn-choice-selected"
+                      : "btn-choice",
                   )}
+                  aria-pressed={eventType === type}
                   key={type}
                   onClick={() => changeEventType(type)}
                   type="button"
@@ -366,7 +368,7 @@ export function DefenseSection() {
               </div>
 
               <button
-                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                className="btn-base btn-primary min-h-12 px-4 text-sm"
                 disabled={!isFielding}
                 onClick={saveEvent}
                 type="button"
@@ -402,7 +404,7 @@ export function DefenseSection() {
             </div>
             {!savedAlignment ? (
               <button
-                className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white"
+                className="btn-base btn-secondary mt-3 min-h-11 w-full px-4 text-sm"
                 onClick={() => persistAlignment()}
                 type="button"
               >
@@ -424,7 +426,7 @@ function PregameDefensePrompt() {
         <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
           <p className="text-sm font-bold text-foreground">Approve a batting order before setting game defense.</p>
           <Link
-            className="mt-3 inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white"
+            className="btn-base btn-primary mt-3 min-h-11 px-4 text-sm"
             href="/batting-order"
           >
             Open Batting Order
@@ -442,7 +444,7 @@ function FinalDefensePrompt() {
         <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
           <p className="text-sm font-bold text-foreground">This game is final.</p>
           <Link
-            className="mt-3 inline-flex min-h-11 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white"
+            className="btn-base btn-primary mt-3 min-h-11 px-4 text-sm"
             href="/stats"
           >
             Open Stats

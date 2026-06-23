@@ -37,10 +37,10 @@ export function GameModeTabs({ activeMode, currentPhase, onEndGame }: GameModeTa
           <Link
             aria-current={isActive ? "page" : undefined}
             className={cn(
-              "inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-3 text-sm font-bold",
+              "btn-base min-h-11 px-3 text-sm",
               isActive
-                ? "border-[var(--accent)] bg-[var(--accent)] text-white"
-                : "border-[var(--border)] bg-[var(--card)] text-foreground",
+                ? "btn-choice-selected"
+                : "btn-secondary",
             )}
             href={href}
             key={mode}
@@ -58,7 +58,7 @@ export function GameModeTabs({ activeMode, currentPhase, onEndGame }: GameModeTa
       })}
       <button
         aria-label="End game"
-        className="flex size-11 items-center justify-center rounded-lg border border-[var(--danger)]/25 bg-[var(--danger-soft)] text-[var(--danger)]"
+        className="btn-base btn-danger-secondary size-11 min-h-0 p-0"
         onClick={onEndGame}
         title="End game"
         type="button"

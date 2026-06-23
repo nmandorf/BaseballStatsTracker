@@ -4,10 +4,11 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
+import { ScheduleEditor } from "@/components/ScheduleEditor";
 import { useAuth } from "@/components/AuthProvider";
 import { getMissingFirebaseConfig } from "@/lib/firebase";
 import { hydrateFirstGameStateFromPrisma } from "@/lib/firstGameStorage";
-import { hydrateActiveTeamFromBackend } from "@/lib/teamStorage";
+import { hydrateActiveTeamFromBackend, saveActiveTeam, useActiveTeam } from "@/lib/teamStorage";
 
 type AuthGateProps = {
   children: React.ReactNode;
@@ -16,6 +17,7 @@ type AuthGateProps = {
 export function AuthGate({ children }: AuthGateProps) {
   const { isConfigured, isLoading, user } = useAuth();
   const pathname = usePathname();
+  const activeTeam = useActiveTeam();
   const loginHref = `/login?next=${encodeURIComponent(pathname ?? "/")}`;
 
   useEffect(() => {
@@ -85,12 +87,26 @@ export function AuthGate({ children }: AuthGateProps) {
                 </p>
               </div>
               <Link
-                className="inline-flex min-h-12 items-center justify-center rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white shadow-sm shadow-[var(--accent)]/20"
+                className="btn-base btn-primary min-h-12 px-4 text-sm"
                 href={loginHref}
               >
                 Sign in
               </Link>
             </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (activeTeam && !activeTeam.scheduleSetupCompleted && pathname !== "/schedule") {
+    return (
+      <section className="bg-background py-6 sm:py-8">
+        <div className="mx-auto w-full max-w-4xl px-4 sm:px-6 lg:px-8">
+          <h1 className="text-2xl font-black text-foreground">Finish your team schedule</h1>
+          <p className="mt-1 text-sm font-semibold text-[var(--muted-foreground)]">Your roster and existing stats are safe. Add schedule weeks to unlock team workflows.</p>
+          <div className="mt-4">
+            <ScheduleEditor teamId={activeTeam.id} onSaved={(schedule) => saveActiveTeam({ ...activeTeam, timeZone: schedule.timeZone, scheduleSetupCompleted: true })} />
           </div>
         </div>
       </section>

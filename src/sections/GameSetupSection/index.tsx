@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import Link from "next/link";
 import { ArrowRight, CalendarDays, Check, Home, Settings2, Sparkles, UsersRound } from "lucide-react";
 import { StatTile } from "@/components/StatTile";
@@ -12,19 +12,27 @@ import {
   getLineupTargetCount,
   resolveSuggestedLineupIds,
   savePregameSetup,
+  selectScheduledGameForPregame,
   usePregameSetup,
   type LineupSizeOption,
 } from "@/lib/pregameSetupStorage";
 import { validateLineupPlayerPool } from "@/lib/lineupRules";
 import { useActiveTeam } from "@/lib/teamStorage";
+import { useTeamSchedule } from "@/lib/scheduleClient";
 import { useFirstGameState } from "@/lib/useFirstGameState";
 import { cn } from "@/lib/utils";
 import type { GameRules } from "@/types/game";
+import type { ScheduleWeek } from "@/types/schedule";
 
 export function GameSetupSection() {
   const activeTeam = useActiveTeam();
   const setup = usePregameSetup();
   const gameState = useFirstGameState();
+  const { schedule, isLoading: isScheduleLoading } = useTeamSchedule(activeTeam?.id ?? null);
+  const scheduledGames = (schedule?.weeks ?? []).filter(
+    (week): week is Extract<ScheduleWeek, { kind: "GAME" }> => week.kind === "GAME" && week.status === "SCHEDULED",
+  );
+  const selectedGame = scheduledGames.find((game) => game.gameId === setup.gameId) ?? null;
   const lineupTarget = getLineupTargetCount(setup.lineupSize, setup.selectedPlayerIds.length);
   const players = activeTeam?.players.filter((player) => player.isActive) ?? [];
   const selectedPlayerPool = useMemo(
@@ -34,6 +42,12 @@ export function GameSetupSection() {
   const lineupValidation = validateLineupPlayerPool(selectedPlayerPool);
   const canGenerateLineup = setup.selectedPlayerIds.length > 0 && lineupValidation.isLeagueCompliant;
   const suggestedLineup = resolveSuggestedLineupIds(setup, gameState, activeTeam);
+  const canReviewLineup = Boolean(suggestedLineup.lineupIds.length || suggestedLineup.canGenerate);
+
+  useEffect(() => {
+    if (!activeTeam || !scheduledGames.length || selectedGame) return;
+    selectScheduledGameForPregame(activeTeam.id, scheduledGames[0], activeTeam);
+  }, [activeTeam, scheduledGames, selectedGame]);
 
   if (!activeTeam) {
     return <TeamSetupGate title="Create your team before setting up a game." />;
@@ -49,23 +63,8 @@ export function GameSetupSection() {
       selectedPlayerIds,
       generatedLineupIds: [],
       acceptedLineupIds: [],
+      startingDefense: null,
       status: "SETUP",
-    });
-  }
-
-  function updateOpponent(opponent: string) {
-    savePregameSetup({
-      ...setup,
-      opponent,
-      status: setup.status === "STARTED" ? "SETUP" : setup.status,
-    });
-  }
-
-  function updateSide(isHome: boolean) {
-    savePregameSetup({
-      ...setup,
-      isHome,
-      status: setup.status === "STARTED" ? "SETUP" : setup.status,
     });
   }
 
@@ -75,6 +74,7 @@ export function GameSetupSection() {
       lineupSize,
       generatedLineupIds: [],
       acceptedLineupIds: [],
+      startingDefense: null,
       status: "SETUP",
     });
   }
@@ -107,42 +107,20 @@ export function GameSetupSection() {
                   Game details
                 </p>
                 <h2 className="mt-1 text-lg font-semibold text-foreground">
-                  Ready for lineup review
+                  {selectedGame ? "Ready for lineup review" : "Choose an upcoming game"}
                 </h2>
               </div>
               <StatusPill tone="planned">Local only</StatusPill>
             </div>
 
             <div className="mt-4 grid gap-3">
-              <label className="grid gap-1 text-sm font-bold text-foreground">
-                Opponent
-                <input
-                  className="min-h-11 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 font-semibold outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
-                  onChange={(event) => updateOpponent(event.target.value)}
-                  value={setup.opponent}
-                />
+              <label className="grid gap-1 text-sm font-bold text-foreground">Scheduled game
+                <select className="min-h-11 rounded-lg border border-[var(--border)] bg-background px-3" disabled={isScheduleLoading || !scheduledGames.length} onChange={(event) => { const game = scheduledGames.find((item) => item.gameId === event.target.value); if (game) selectScheduledGameForPregame(activeTeam.id, game, activeTeam); }} value={selectedGame?.gameId ?? ""}>
+                  {!scheduledGames.length ? <option value="">No upcoming games</option> : null}
+                  {scheduledGames.map((game) => <option key={game.gameId} value={game.gameId}>{game.localDate} · {game.opponent} · {game.isHome ? "Home" : "Away"}</option>)}
+                </select>
               </label>
-
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  ["Home", true],
-                  ["Away", false],
-                ].map(([label, value]) => (
-                  <button
-                    className={cn(
-                      "min-h-11 rounded-lg border text-sm font-bold",
-                      setup.isHome === value
-                        ? "border-[var(--accent)] bg-[var(--accent)] text-white"
-                        : "border-[var(--border)] bg-[var(--surface)] text-foreground",
-                    )}
-                    key={String(label)}
-                    onClick={() => updateSide(Boolean(value))}
-                    type="button"
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+              {selectedGame ? <div className="grid grid-cols-2 gap-2"><div className="rounded-lg bg-[var(--surface)] p-3 text-sm font-bold text-foreground">{selectedGame.opponent}</div><div className="rounded-lg bg-[var(--surface)] p-3 text-sm font-bold text-foreground">{selectedGame.isHome ? "Home" : "Away"}</div></div> : <Link className="btn-base btn-secondary min-h-11 text-sm" href="/schedule">Manage Schedule</Link>}
 
               <label className="grid gap-1 text-sm font-bold text-foreground">
                 Batting lineup size
@@ -161,26 +139,32 @@ export function GameSetupSection() {
 
               <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                 <button
-                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={!canGenerateLineup}
+                  className="btn-base btn-secondary min-h-12 px-4 text-sm"
+                  disabled={!canGenerateLineup || !selectedGame}
                   onClick={generateLineup}
                   type="button"
                 >
                   <Sparkles className="size-4" aria-hidden="true" />
                   Generate Lineup
                 </button>
-                <Link
-                  className={cn(
-                    "inline-flex min-h-12 items-center justify-center gap-2 rounded-lg px-4 text-sm font-bold",
-                    suggestedLineup.lineupIds.length || suggestedLineup.canGenerate
-                      ? "bg-[var(--success-soft)] text-[var(--success)]"
-                      : "pointer-events-none bg-[var(--surface)] text-[var(--muted-foreground)]",
-                  )}
-                  href="/batting-order"
-                >
-                  Review
-                  <ArrowRight className="size-4" aria-hidden="true" />
-                </Link>
+                {canReviewLineup ? (
+                  <Link
+                    className="btn-base btn-primary min-h-12 px-4 text-sm"
+                    href="/batting-order"
+                  >
+                    Review
+                    <ArrowRight className="size-4" aria-hidden="true" />
+                  </Link>
+                ) : (
+                  <button
+                    className="btn-base btn-secondary min-h-12 px-4 text-sm text-[var(--muted-foreground)]"
+                    disabled
+                    type="button"
+                  >
+                    Review
+                    <ArrowRight className="size-4" aria-hidden="true" />
+                  </button>
+                )}
               </div>
             </div>
             {lineupValidation.warnings.length ? (
@@ -216,11 +200,12 @@ export function GameSetupSection() {
                 return (
                   <button
                     className={cn(
-                      "inline-flex min-h-10 min-w-0 items-center gap-2 rounded-lg px-3 text-left text-sm font-bold",
+                      "btn-base min-h-10 min-w-0 justify-start px-3 text-left text-sm",
                       selected
-                        ? "bg-[var(--success-soft)] text-[var(--success)]"
-                        : "bg-[var(--surface)] text-[var(--muted-foreground)]",
+                        ? "btn-choice-selected"
+                        : "btn-choice text-[var(--muted-foreground)]",
                     )}
+                    aria-pressed={selected}
                     key={player.id}
                     onClick={() => togglePlayer(player.id)}
                     type="button"
@@ -253,7 +238,7 @@ export function GameSetupSection() {
             </h2>
             </div>
             <Link
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white"
+              className="btn-base btn-secondary min-h-11 px-4 text-sm"
               href="/game-settings"
             >
               <Settings2 className="size-4" aria-hidden="true" />

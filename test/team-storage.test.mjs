@@ -7,11 +7,29 @@ import {
   createPlayerFromInput,
   createZeroPlayerStats,
   isSameTeamWorkspace,
+  loadAvailableTeamsFromBackend,
   loadActiveTeam,
   resetActiveTeam,
   saveActiveTeam,
 } from "../src/lib/teamStorage.ts";
-import { canUseStoredTeam } from "../src/lib/teamAccount.ts";
+import { canUseStoredTeam, readVerifiedTeamAccountFromRequest } from "../src/lib/teamAccount.ts";
+
+test("server auth verification uses the same configured Firebase project as the client", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async (url, options) => {
+    assert.match(String(url), /identitytoolkit\.googleapis\.com/);
+    assert.match(String(url), /key=.+/);
+    assert.deepEqual(JSON.parse(options.body), { idToken: "signed-token" });
+    return Response.json({ users: [{ localId: "account-a", email: "tester@example.com" }] });
+  };
+
+  try {
+    const request = new Request("http://localhost/api/team", { headers: { Authorization: "Bearer signed-token" } });
+    assert.deepEqual(await readVerifiedTeamAccountFromRequest(request), { uid: "account-a", email: "tester@example.com" });
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
 
 test("configured auth rejects stored teams until the owning account is resolved", () => {
   assert.equal(canUseStoredTeam("account-a", null, true), false);
@@ -131,6 +149,37 @@ test("createBackendTeam returns a usable local team when the backend is unavaila
     assert.equal(team.name, "Fallback Crew");
     assert.equal(team.id, "fallback-crew");
     assert.deepEqual(team.players, []);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("account team display can surface backend unavailability", async () => {
+  const originalFetch = global.fetch;
+
+  global.fetch = async () => new Response(null, { status: 503 });
+
+  try {
+    await assert.rejects(
+      loadAvailableTeamsFromBackend({ fallbackToActiveTeam: false }),
+      /Unable to load account teams/,
+    );
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("account team display respects a successful empty backend list", async () => {
+  const originalFetch = global.fetch;
+
+  global.fetch = async () => Response.json({ teams: [] });
+
+  try {
+    const teams = await loadAvailableTeamsFromBackend({
+      fallbackToActiveTeam: false,
+    });
+
+    assert.deepEqual(teams, []);
   } finally {
     global.fetch = originalFetch;
   }

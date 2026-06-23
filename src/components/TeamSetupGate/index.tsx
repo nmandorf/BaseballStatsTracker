@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Check } from "lucide-react";
 import { PlayerForm } from "@/components/PlayerForm";
+import { ScheduleEditor } from "@/components/ScheduleEditor";
 import { createInitialGameState } from "@/lib/gameEngine";
 import { saveFirstGameState } from "@/lib/firstGameStorage";
 import { createDefaultPregameSetup, savePregameSetup } from "@/lib/pregameSetupStorage";
@@ -25,6 +26,7 @@ export function TeamSetupGate({
   const [players, setPlayers] = useState<Player[]>([]);
   const [isSavingTeam, setIsSavingTeam] = useState(false);
   const [isSavingPlayer, setIsSavingPlayer] = useState(false);
+  const [isAddingSchedule, setIsAddingSchedule] = useState(false);
 
   const canCreateTeam = Boolean(teamName.trim());
   const confirmedTeamName = pendingTeam?.name ?? "";
@@ -58,7 +60,7 @@ export function TeamSetupGate({
     setIsSavingPlayer(false);
   }
 
-  function finishSetup() {
+  function finishSetup(timeZone: string | null) {
     if (!canFinish) {
       return;
     }
@@ -66,12 +68,14 @@ export function TeamSetupGate({
     const team = pendingTeam
       ? {
           ...pendingTeam,
+          timeZone,
+          scheduleSetupCompleted: true,
           players: players.map((player, index) => ({ ...player, seedOrder: index + 1 })),
           updatedAt: new Date().toISOString(),
         }
       : createActiveTeam(confirmedTeamName, players);
 
-    saveActiveTeam(team);
+    saveActiveTeam({ ...team, timeZone, scheduleSetupCompleted: true });
     syncActiveTeamToBackend(team);
     savePregameSetup(createDefaultPregameSetup(team));
     saveFirstGameState(createInitialGameState(team.players));
@@ -103,7 +107,7 @@ export function TeamSetupGate({
                 />
               </label>
               <button
-                className="min-h-11 rounded-lg bg-[var(--accent)] px-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-45"
+                className="btn-base btn-primary min-h-11 px-3 text-sm"
                 disabled={!canCreateTeam || Boolean(confirmedTeamName) || isSavingTeam}
                 onClick={confirmTeam}
                 type="button"
@@ -130,27 +134,38 @@ export function TeamSetupGate({
           </article>
         </div>
 
-        {confirmedTeamName ? (
+        {confirmedTeamName && !isAddingSchedule ? (
           <div className="mt-4">
             <PlayerForm
               seedOrder={players.length + 1}
-              submitLabel={isSavingPlayer ? "Saving Player..." : "Add Player"}
+              submitLabel={isSavingPlayer ? "Saving Player..." : players.length ? "Add Another Player" : "Add Player"}
+              submitVariant={players.length ? "secondary" : "primary"}
               onSubmit={addPlayer}
             />
           </div>
         ) : null}
 
-        <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--card)] p-3 shadow-sm shadow-foreground/[0.035]">
+        {!isAddingSchedule ? <div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--card)] p-3 shadow-sm shadow-foreground/[0.035]">
           <button
-            className="flex min-h-12 w-full items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-45"
+            className="btn-base btn-primary min-h-12 w-full px-4 text-sm"
             disabled={!canFinish}
-            onClick={finishSetup}
+            onClick={() => setIsAddingSchedule(true)}
             type="button"
           >
             <Check className="size-4" aria-hidden="true" />
-            Finish Team Setup
+            Continue to Schedule
           </button>
-        </div>
+        </div> : null}
+
+        {isAddingSchedule && pendingTeam ? (
+          <div className="mt-4">
+            <div className="mb-3 rounded-lg bg-[var(--accent-soft)] p-4">
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--accent)]">Final setup step</p>
+              <h2 className="mt-1 text-lg font-semibold text-foreground">Add games and bye weeks</h2>
+            </div>
+            <ScheduleEditor teamId={pendingTeam.id} onSaved={(schedule) => finishSetup(schedule.timeZone)} />
+          </div>
+        ) : null}
       </div>
     </section>
   );
