@@ -130,6 +130,7 @@ export function generateDefensiveAlignment(input: {
   inning: number;
   half: InningHalf;
   lockedPitcherPlayerId?: string | null;
+  requiredPlayerIds?: Iterable<string>;
   id?: string;
   updatedAt?: string;
 }): DefensiveAlignment {
@@ -139,6 +140,7 @@ export function generateDefensiveAlignment(input: {
     defensivePositions,
     benchCounts,
     input.lockedPitcherPlayerId,
+    new Set(input.requiredPlayerIds ?? []),
   );
 
   return buildAlignment({
@@ -584,6 +586,7 @@ function optimizeDefensiveAssignments(
   positions: DefensivePosition[],
   benchCounts: Record<string, number>,
   lockedPitcherPlayerId?: string | null,
+  requiredPlayerIds = new Set<string>(),
 ): DefensiveAlignment["slots"] {
   let assignmentStates = new Map<string, AssignmentState>([
     ["0:0", {
@@ -596,7 +599,9 @@ function optimizeDefensiveAssignments(
   ]);
 
   players.forEach((player) => {
-    const nextStates = new Map(assignmentStates);
+    const nextStates = requiredPlayerIds.has(player.id)
+      ? new Map<string, AssignmentState>()
+      : new Map(assignmentStates);
 
     assignmentStates.forEach((state) => {
       positions.forEach((position, positionIndex) => {

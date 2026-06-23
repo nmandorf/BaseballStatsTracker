@@ -8,6 +8,7 @@ import {
   ArrowUp,
   BarChart3,
   CheckCircle2,
+  Download,
   GripVertical,
   Medal,
   MoveDown,
@@ -19,6 +20,8 @@ import { DefensiveAlignmentEditor } from "@/components/DefensiveAlignmentEditor"
 import { StatTile } from "@/components/StatTile";
 import { StatusPill } from "@/components/StatusPill";
 import { TeamSetupGate } from "@/components/TeamSetupGate";
+import { createDefensiveLineupPdf } from "@/lib/defensiveLineupPdf";
+import { buildFullGameDefensiveLineupPlan } from "@/lib/defensiveLineupPlanner";
 import { createInitialGameState, getLiveGameHref, initializeStartingDefense } from "@/lib/gameEngine";
 import { createDefaultDefensiveAlignment, getDefensiveAlignmentIssues, getFirstDefensiveHalf } from "@/lib/defenseEngine";
 import { saveFirstGameState } from "@/lib/firstGameStorage";
@@ -73,6 +76,15 @@ export function BattingOrderSection() {
   const defenseIssues = defenseAlignment
     ? getDefensiveAlignmentIssues(defenseAlignment, lineupPlayers)
     : [];
+  const canBuildFullGameDefensePlan = Boolean(defenseAlignment) && defenseIssues.length === 0;
+  const fullGameDefensePlan = canBuildFullGameDefensePlan && defenseAlignment
+    ? buildFullGameDefensiveLineupPlan({
+        players: lineupPlayers,
+        firstInning: firstDefensiveHalf.inning,
+        half: firstDefensiveHalf.half,
+        startingAlignment: defenseAlignment,
+      })
+    : null;
   const [selectedPriority, setSelectedPriority] = useState("OBP");
   const lineupValidation = validateLineupGenderRules(lineup.map((row) => row.player));
   const lineupGenderOptimized = isLineupGenderOptimized(lineup.map((row) => row.player));
@@ -86,6 +98,9 @@ export function BattingOrderSection() {
     && lineupValidation.isLeagueCompliant
     && lineupGenderOptimized
     && defenseIssues.length === 0;
+  const fullGameDefenseEmptyReason = defenseIssues.length
+    ? "Fix the starting defense to build the full-game grid."
+    : "Generate a batting order to build the defensive grid.";
   const canStartGame = lineupReady && Boolean(selectedScheduledGame) && now >= startEligibleAt && !isStarting;
   const lineupWarnings = [
     ...suggestedLineup.warnings,
@@ -212,6 +227,23 @@ export function BattingOrderSection() {
     } finally {
       setIsStarting(false);
     }
+  }
+
+  function downloadDefensiveLineupPdf() {
+    if (!fullGameDefensePlan) {
+      return;
+    }
+
+    const pdf = createDefensiveLineupPdf(fullGameDefensePlan);
+    const url = URL.createObjectURL(pdf);
+    const link = document.createElement("a");
+
+    link.href = url;
+    link.download = "defensive-lineup.pdf";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }
 
   return (
@@ -398,7 +430,80 @@ export function BattingOrderSection() {
             </div>
           </article>
 
-          <article className="order-5 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]">
+          <article className="order-5 min-w-0 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035] lg:col-span-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+                  Full-game defense
+                </p>
+                <h2 className="mt-1 text-lg font-semibold text-foreground">
+                  7-inning lineup grid
+                </h2>
+              </div>
+              <button
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={!fullGameDefensePlan}
+                onClick={downloadDefensiveLineupPdf}
+                type="button"
+              >
+                <Download className="size-4" aria-hidden="true" />
+                PDF
+              </button>
+            </div>
+            {fullGameDefensePlan?.warnings.map((warning) => (
+              <p
+                className="mt-3 rounded-lg bg-[var(--warning-soft)] px-3 py-2 text-sm font-bold text-[var(--warning)]"
+                key={warning}
+              >
+                {warning}
+              </p>
+            ))}
+            <div className="mt-4 overflow-x-auto rounded-lg border border-[var(--border)]">
+              {fullGameDefensePlan ? (
+                <table className="w-full min-w-[760px] border-collapse text-sm">
+                  <thead>
+                    <tr className="bg-[#172033] text-white">
+                      <th className="min-w-48 border-r border-white/30 px-3 py-3 text-left font-bold">
+                        Batting Order
+                      </th>
+                      {fullGameDefensePlan.innings.map((inning) => (
+                        <th className="border-r border-white/30 px-3 py-3 text-center font-bold last:border-r-0" key={inning}>
+                          Inn {inning}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {fullGameDefensePlan.rows.map((row) => (
+                      <tr className="odd:bg-white even:bg-[var(--surface)]" key={row.playerId}>
+                        <th className="border-r border-t border-[var(--border)] bg-[var(--surface)] px-3 py-3 text-left font-bold text-foreground">
+                          {row.battingOrderPosition}. {row.playerName}
+                        </th>
+                        {row.cells.map((cell) => (
+                          <td
+                            className={
+                              cell.isBench
+                                ? "border-r border-t border-[var(--border)] bg-[#f2c66d] px-3 py-3 text-center font-black text-[#5b3a00] last:border-r-0"
+                                : "border-r border-t border-[var(--border)] px-3 py-3 text-center font-bold text-foreground last:border-r-0"
+                            }
+                            key={`${row.playerId}-${cell.inning}`}
+                          >
+                            {cell.value}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="bg-[var(--surface)] p-4 text-sm font-bold text-[var(--muted-foreground)]">
+                  {fullGameDefenseEmptyReason}
+                </p>
+              )}
+            </div>
+          </article>
+
+          <article className="order-6 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]">
             <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
               Ranking priorities
             </p>
