@@ -137,6 +137,49 @@ test("defense generation uses strongest, preferred, backup, and avoid positions"
   assert.equal(getAssignedFemaleDefenderCount(alignment, profiles), 3);
 });
 
+test("roster primary positions are the first default for starting defense", () => {
+  const primaryShortstop = player("primary-shortstop", {
+    gender: "Female",
+    primaryPosition: "SS",
+    seedOrder: 1,
+  });
+  primaryShortstop.defensiveProfile.notes.bestPosition = "LF";
+  const primaryLeftFielder = player("primary-left-fielder", {
+    gender: "Female",
+    primaryPosition: "LF",
+    seedOrder: 2,
+  });
+  const primaryCenterFielder = player("primary-center-fielder", {
+    gender: "Female",
+    primaryPosition: "CF",
+    seedOrder: 3,
+  });
+  const remainingPlayers = ["P", "C", "1B", "2B", "3B", "RC", "RF"].map((position, index) => (
+    player(`primary-${position}`, {
+      gender: "Male",
+      primaryPosition: position,
+      seedOrder: index + 4,
+    })
+  ));
+  const players = [
+    primaryShortstop,
+    primaryLeftFielder,
+    primaryCenterFielder,
+    ...remainingPlayers,
+  ];
+
+  const alignment = generateDefensiveAlignment({
+    players,
+    priorAlignments: [],
+    inning: 1,
+    half: "Top",
+  });
+
+  assert.equal(alignment.slots.SS.playerId, primaryShortstop.id);
+  assert.equal(alignment.slots.LF.playerId, primaryLeftFielder.id);
+  assert.equal(alignment.slots.LC.playerId, primaryCenterFielder.id);
+});
+
 test("defense generation locks the pitcher and avoids repeat bench innings when possible", () => {
   const players = Array.from({ length: 12 }, (_, index) => player(`rotation-${index + 1}`, {
     seedOrder: index + 1,
@@ -194,6 +237,8 @@ test("defensive validation blocks a lineup with fewer than three female players"
 test("legacy defensive position labels normalize to supported positions", () => {
   assert.equal(defensivePositions.length, 10);
   assert.equal(normalizeDefensivePosition("Left Center Field"), "LC");
+  assert.equal(normalizeDefensivePosition("CF"), "LC");
+  assert.equal(normalizeDefensivePosition("Center Field"), "LC");
   assert.equal(normalizeDefensivePosition("first base"), "1B");
   assert.equal(normalizeDefensivePosition("rover"), null);
   assert.equal(normalizeDefensivePosition("not a position"), null);

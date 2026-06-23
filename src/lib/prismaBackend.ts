@@ -16,6 +16,7 @@ import {
   ThrowingSide as PrismaThrowingSide,
 } from "@/generated/prisma/enums";
 import { getPrisma } from "@/lib/prisma";
+import { AppError, notFoundError } from "@/lib/appErrors";
 import { defaultGameRules, seedPlayers, testTeamName } from "@/lib/seedTeam";
 import { legacyTeamAccount, type TeamAccount } from "@/lib/teamAccount";
 import { getPlayerGameStats, getTeamGameTotals, occupiedBaseEntries, type GameState } from "@/lib/gameEngine";
@@ -128,6 +129,29 @@ export async function saveFirstGameSnapshotToPrisma(
 
   return prisma.$transaction(async (tx) => {
     const team = await upsertSnapshotTeam(tx, options.team, account);
+    const scheduledGameId = options.gameId ?? state.gameId;
+    if (scheduledGameId) {
+      const scheduledGame = await tx.game.findFirst({
+        where: { id: scheduledGameId, teamId: team.id },
+        select: { status: true },
+      });
+      if (!scheduledGame) {
+        throw notFoundError("TEAM_NOT_FOUND", "Scheduled game not found for this team.", { gameId: scheduledGameId });
+      }
+      if (scheduledGame.status !== PrismaGameStatus.IN_PROGRESS) {
+        throw new AppError(
+          "GAME_NOT_STARTABLE",
+          scheduledGame.status === PrismaGameStatus.FINAL
+            ? "Completed games are read-only."
+            : "Start this game from its scheduled game screen before saving stats.",
+          409,
+          { gameId: scheduledGameId, status: scheduledGame.status },
+        );
+      }
+      if (state.status !== "IN_PROGRESS" && state.status !== "FINAL") {
+        throw new AppError("GAME_NOT_STARTABLE", "Only a started scheduled game can save live stats.", 409);
+      }
+    }
     const season = await tx.season.upsert({
       where: {
         teamId_year: {
@@ -159,7 +183,7 @@ export async function saveFirstGameSnapshotToPrisma(
       });
     }
 
-    const gameId = options.gameId ?? getFirstGameId(seasonYear, team.id);
+    const gameId = scheduledGameId ?? getFirstGameId(seasonYear, team.id);
     const result = state.status === "FINAL" ? getGameResult(state.teamScore, state.opponentScore) : null;
     const game = await tx.game.upsert({
       where: { id: gameId },
@@ -183,8 +207,7 @@ export async function saveFirstGameSnapshotToPrisma(
       },
       update: {
         seasonId: season.id,
-        opponent: state.opponent,
-        isHome: state.isHome,
+        ...(!scheduledGameId ? { opponent: state.opponent, isHome: state.isHome } : {}),
         teamScore: state.teamScore,
         opponentScore: state.opponentScore,
         inning: state.inning,
@@ -200,8 +223,8 @@ export async function saveFirstGameSnapshotToPrisma(
 
     await tx.gameRuleSettings.upsert({
       where: { gameId: game.id },
-      create: toRuleSettingsCreate(game.id),
-      update: toRuleSettingsUpdate(),
+      create: toRuleSettingsCreate(game.id, state.gameRules),
+      update: toRuleSettingsUpdate(state.gameRules),
     });
 
     await tx.gameLineup.deleteMany({ where: { gameId: game.id } });
@@ -357,10 +380,11 @@ export async function saveFirstGameSnapshotToPrisma(
 }
 
 export async function loadFirstGameSnapshotFromPrisma(
-  seasonYear = defaultSeasonYear,
+  _seasonYear = defaultSeasonYear,
   teamId = testTeamName,
   account: TeamAccount = legacyTeamAccount,
 ) {
+  void _seasonYear;
   const prisma = getPrisma();
   const team = await findAccountTeam(prisma, teamId, account);
 
@@ -368,8 +392,17 @@ export async function loadFirstGameSnapshotFromPrisma(
     return null;
   }
 
-  const game = await prisma.game.findUnique({
-    where: { id: getFirstGameId(seasonYear, team.id) },
+  const game = await prisma.game.findFirst({
+    where: {
+      teamId: team.id,
+      status: PrismaGameStatus.IN_PROGRESS,
+      snapshot: { not: Prisma.DbNull },
+    },
+    orderBy: { updatedAt: "desc" },
+    select: { snapshot: true },
+  }) ?? await prisma.game.findFirst({
+    where: { teamId: team.id, status: PrismaGameStatus.FINAL, snapshot: { not: Prisma.DbNull } },
+    orderBy: { updatedAt: "desc" },
     select: { snapshot: true },
   });
 
@@ -501,25 +534,25 @@ function toPlayerUpdate(player: Player) {
   };
 }
 
-function toRuleSettingsCreate(gameId: string) {
+function toRuleSettingsCreate(gameId: string, rules = defaultGameRules) {
   return {
     gameId,
-    ...toRuleSettingsUpdate(),
+    ...toRuleSettingsUpdate(rules),
   };
 }
 
-function toRuleSettingsUpdate() {
+function toRuleSettingsUpdate(rules = defaultGameRules) {
   return {
-    homeRunLimitEnabled: defaultGameRules.homeRunLimitEnabled,
-    homeRunLimit: defaultGameRules.homeRunLimit,
-    afterHomeRunLimit: mapHomeRunLimitOutcome(defaultGameRules.afterHomeRunLimit),
-    runLimitPerInning: defaultGameRules.runLimitPerInning,
-    mercyRule: defaultGameRules.mercyRule,
-    courtesyRunnersAllowed: defaultGameRules.courtesyRunnersAllowed,
-    walksAllowed: defaultGameRules.walksAllowed,
-    sacFliesTracked: defaultGameRules.sacFliesTracked,
-    errorsTracked: defaultGameRules.errorsTracked,
-    fieldersChoicesTracked: defaultGameRules.fieldersChoicesTracked,
+    homeRunLimitEnabled: rules.homeRunLimitEnabled,
+    homeRunLimit: rules.homeRunLimit,
+    afterHomeRunLimit: mapHomeRunLimitOutcome(rules.afterHomeRunLimit),
+    runLimitPerInning: rules.runLimitPerInning,
+    mercyRule: rules.mercyRule,
+    courtesyRunnersAllowed: rules.courtesyRunnersAllowed,
+    walksAllowed: rules.walksAllowed,
+    sacFliesTracked: rules.sacFliesTracked,
+    errorsTracked: rules.errorsTracked,
+    fieldersChoicesTracked: rules.fieldersChoicesTracked,
   };
 }
 

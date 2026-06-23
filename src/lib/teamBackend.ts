@@ -68,6 +68,7 @@ export async function createTeamInBackend(
         name: teamName,
         ownerUid: account.uid,
         ownerEmail: account.email,
+        scheduleSetupCompleted: false,
       },
       update: {
         name: teamName,
@@ -96,6 +97,25 @@ export async function createTeamInBackend(
   });
 
   return loadTeamFromBackend(team.id, account);
+}
+
+export async function deleteTeamFromBackend(
+  teamId: string,
+  account: TeamAccount = legacyTeamAccount,
+) {
+  const prisma = getPrisma();
+  const deletion = await prisma.team.deleteMany({
+    where: {
+      id: teamId,
+      ownerUid: account.uid,
+    },
+  });
+
+  if (deletion.count === 0) {
+    throw notFoundError("TEAM_NOT_FOUND", "Team not found.", { teamId });
+  }
+
+  return { teamId };
 }
 
 export async function upsertActiveTeamInBackend(
@@ -322,6 +342,8 @@ function serializeTeam(team: NonNullable<TeamWithPlayers>): ActiveTeam {
     ownerUid: team.ownerUid,
     ownerEmail: team.ownerEmail,
     name: team.name,
+    timeZone: team.timeZone,
+    scheduleSetupCompleted: team.scheduleSetupCompleted,
     players: team.players.map((player, index) => ({
       id: player.id,
       name: player.name,

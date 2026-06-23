@@ -309,11 +309,12 @@ function EmailPasswordAuthForm() {
         <div className="grid grid-cols-2 gap-2 rounded-lg bg-[var(--surface)] p-1">
           <button
             className={cn(
-              "inline-flex min-h-11 items-center justify-center rounded-md px-3 text-sm font-bold transition",
+              "btn-base min-h-11 rounded-md px-3 text-sm",
               isLoginMode
-                ? "bg-[var(--accent)] text-white shadow-sm shadow-[var(--accent)]/15"
-                : "text-[var(--muted-foreground)] hover:bg-[var(--card)] hover:text-foreground",
+                ? "btn-choice-selected"
+                : "btn-choice text-[var(--muted-foreground)] hover:bg-[var(--card)] hover:text-foreground",
             )}
+            aria-pressed={isLoginMode}
             onClick={() => switchMode("login")}
             type="button"
           >
@@ -321,11 +322,12 @@ function EmailPasswordAuthForm() {
           </button>
           <button
             className={cn(
-              "inline-flex min-h-11 items-center justify-center rounded-md px-3 text-sm font-bold transition",
+              "btn-base min-h-11 rounded-md px-3 text-sm",
               !isLoginMode
-                ? "bg-[var(--accent)] text-white shadow-sm shadow-[var(--accent)]/15"
-                : "text-[var(--muted-foreground)] hover:bg-[var(--card)] hover:text-foreground",
+                ? "btn-choice-selected"
+                : "btn-choice text-[var(--muted-foreground)] hover:bg-[var(--card)] hover:text-foreground",
             )}
+            aria-pressed={!isLoginMode}
             onClick={() => switchMode("create")}
             type="button"
           >
@@ -378,7 +380,7 @@ function EmailPasswordAuthForm() {
       ) : null}
 
       <button
-        className="inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white shadow-sm shadow-[var(--accent)]/20 disabled:opacity-60"
+        className="btn-base btn-primary min-h-12 px-4 text-sm"
         disabled={isSubmitting}
         type="submit"
       >
@@ -516,7 +518,7 @@ function SignedInTeamSelector({
               value={teamName}
             />
             <button
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-bold text-white shadow-sm shadow-[var(--accent)]/20 disabled:opacity-60"
+              className="btn-base btn-primary min-h-11 px-4 text-sm"
               disabled={isCreatingTeam || !teamName.trim()}
               type="submit"
             >
@@ -533,7 +535,7 @@ function SignedInTeamSelector({
             Available teams
           </h3>
           <button
-            className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 text-xs font-bold text-[var(--muted-foreground)] hover:bg-[var(--surface)] hover:text-foreground"
+            className="btn-base btn-secondary min-h-9 px-3 text-xs text-[var(--muted-foreground)]"
             disabled={isLoadingTeams}
             onClick={async () => {
               setIsLoadingTeams(true);
@@ -596,7 +598,7 @@ function SignedInTeamSelector({
                     {isActive ? <span>Current team</span> : null}
                   </span>
                 </span>
-                <span className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-3 text-xs font-bold text-white">
+                <span className="btn-base btn-primary min-h-10 px-3 text-xs">
                   {isSelecting ? "Opening" : "Open"}
                   <ArrowRight className="size-4" aria-hidden="true" />
                 </span>

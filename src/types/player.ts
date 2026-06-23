@@ -28,6 +28,8 @@ export type ActiveTeam = {
   ownerUid?: string;
   ownerEmail?: string | null;
   name: string;
+  timeZone: string | null;
+  scheduleSetupCompleted: boolean;
   players: Player[];
   createdAt: string;
   updatedAt: string;

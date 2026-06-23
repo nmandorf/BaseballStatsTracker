@@ -1,30 +1,14 @@
 "use client";
 
 import { Suspense } from "react";
-import { useEffect, useState } from "react";
 import { CircleDotDashed } from "lucide-react";
 import { FirebaseLogin } from "@/components/FirebaseLogin";
 import { useAuth } from "@/components/AuthProvider";
 import { HomeHeroSection } from "@/sections/HomeHeroSection";
 import { useActiveTeam } from "@/lib/teamStorage";
-import type { QuickScoresSchedule } from "@/lib/quickscoresSchedule";
-
-const loadingSchedule: QuickScoresSchedule = {
-  game: null,
-  note: "Syncing QuickScores schedule...",
-  status: "unavailable",
-};
-
-const unavailableSchedule: QuickScoresSchedule = {
-  game: null,
-  note: "QuickScores is not available right now.",
-  status: "unavailable",
-};
-
-type ScheduleState = {
-  schedule: QuickScoresSchedule;
-  userId: string | null;
-};
+import { ScheduleEditor } from "@/components/ScheduleEditor";
+import { useTeamSchedule } from "@/lib/scheduleClient";
+import { saveActiveTeam } from "@/lib/teamStorage";
 
 function HomeLoadingState() {
   return (
@@ -53,51 +37,7 @@ function HomeLoadingState() {
 export function HomeAuthEntry() {
   const { isLoading, user } = useAuth();
   const activeTeam = useActiveTeam();
-  const [scheduleState, setScheduleState] = useState<ScheduleState>({
-    schedule: loadingSchedule,
-    userId: null,
-  });
-
-  useEffect(() => {
-    if (!user) {
-      return;
-    }
-
-    let isMounted = true;
-    const userId = user.uid;
-
-    async function loadSchedule() {
-      try {
-        const response = await fetch("/api/schedule");
-
-        if (!response.ok) {
-          throw new Error(`Schedule request failed with ${response.status}`);
-        }
-
-        const nextSchedule = (await response.json()) as QuickScoresSchedule;
-
-        if (isMounted) {
-          setScheduleState({
-            schedule: nextSchedule,
-            userId,
-          });
-        }
-      } catch {
-        if (isMounted) {
-          setScheduleState({
-            schedule: unavailableSchedule,
-            userId,
-          });
-        }
-      }
-    }
-
-    void loadSchedule();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [user]);
+  const { schedule, isLoading: isScheduleLoading, error: scheduleError, reload: reloadSchedule } = useTeamSchedule(activeTeam?.id ?? null);
 
   if (isLoading) {
     return <HomeLoadingState />;
@@ -127,8 +67,25 @@ export function HomeAuthEntry() {
     );
   }
 
-  const signedInSchedule =
-    scheduleState.userId === user.uid ? scheduleState.schedule : loadingSchedule;
+  if (!activeTeam.scheduleSetupCompleted) {
+    return <section className="bg-background py-6"><div className="mx-auto w-full max-w-4xl px-4"><h1 className="text-2xl font-black text-foreground">Finish your team schedule</h1><div className="mt-4"><ScheduleEditor teamId={activeTeam.id} onSaved={(saved) => saveActiveTeam({ ...activeTeam, timeZone: saved.timeZone, scheduleSetupCompleted: true })} /></div></div></section>;
+  }
 
-  return <HomeHeroSection schedule={signedInSchedule} />;
+  if (isScheduleLoading) return <HomeLoadingState />;
+
+  if (scheduleError || !schedule) {
+    return (
+      <section className="bg-background py-8">
+        <div className="mx-auto grid w-full max-w-4xl gap-4 px-4 sm:px-6">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-5">
+            <h1 className="text-xl font-black text-foreground">Your schedule could not load</h1>
+            <p className="mt-2 text-sm font-semibold text-[var(--muted-foreground)]">{scheduleError ?? "The schedule service did not return your team schedule."}</p>
+            <button className="btn-base btn-primary mt-4 min-h-11 px-4 text-sm" onClick={() => void reloadSchedule()} type="button">Try Again</button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  return <HomeHeroSection schedule={schedule} />;
 }

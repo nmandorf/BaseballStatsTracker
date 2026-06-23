@@ -153,11 +153,12 @@ export function GameSettingsSection() {
 
               <button
                 className={cn(
-                  "min-h-11 rounded-lg px-3 text-sm font-bold",
+                  "btn-base min-h-11 px-3 text-sm",
                   rules.runLimitPerInning === null
-                    ? "bg-[var(--accent)] text-white"
-                    : "bg-[var(--surface)] text-foreground",
+                    ? "btn-choice-selected"
+                    : "btn-secondary",
                 )}
+                aria-pressed={rules.runLimitPerInning === null}
                 onClick={() => saveRules({ ...rules, runLimitPerInning: rules.runLimitPerInning === null ? 5 : null })}
                 type="button"
               >
@@ -190,11 +191,12 @@ export function GameSettingsSection() {
                 return (
                   <button
                     className={cn(
-                      "flex min-h-16 items-center justify-between gap-3 rounded-lg px-3 py-2.5 text-left",
+                      "btn-base flex min-h-16 justify-between gap-3 px-3 py-2.5 text-left",
                       enabled
-                        ? "bg-[var(--accent-soft)] text-[var(--accent-strong)]"
-                        : "bg-[var(--surface)] text-[var(--muted-foreground)]",
+                        ? "btn-choice-selected"
+                        : "btn-choice text-[var(--muted-foreground)]",
                     )}
+                    aria-pressed={enabled}
                     key={rule.key}
                     onClick={() => updateBooleanRule(rule.key, !enabled)}
                     type="button"

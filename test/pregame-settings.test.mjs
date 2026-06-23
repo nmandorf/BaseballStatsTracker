@@ -6,6 +6,7 @@ import {
   createDefaultPregameSetup,
   resolveSuggestedLineupIds,
 } from "../src/lib/pregameSetupStorage.ts";
+import { validateLineupGenderRules } from "../src/lib/lineupRules.ts";
 import { defaultGameRules, seedPlayers } from "../src/lib/seedTeam.ts";
 
 function activeTeam(players = seedPlayers) {
@@ -60,6 +61,117 @@ test("resolveSuggestedLineupIds derives a reviewable lineup without saved genera
   assert.equal(suggestedLineup.canGenerate, true);
   assert.equal(suggestedLineup.emptyReason, null);
   assert.equal(suggestedLineup.lineupIds.length, 10);
+});
+
+test("resolveSuggestedLineupIds regenerates saved lineups that lost the female leadoff", () => {
+  const team = activeTeam();
+  const setup = {
+    ...createDefaultPregameSetup(team),
+    generatedLineupIds: [
+      "jordan-lee",
+      "maya-johnson",
+      "alex-smith",
+      "sam-green",
+      "riley-park",
+      "casey-kim",
+      "drew-allen",
+      "ari-stone",
+      "taylor-fox",
+      "noa-cohen",
+    ],
+  };
+  const state = createInitialGameState(team.players);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, state, team);
+
+  assert.equal(suggestedLineup.canGenerate, true);
+  assert.equal(suggestedLineup.lineupIds[0], "maya-johnson");
+});
+
+test("resolveSuggestedLineupIds regenerates unaccepted lineups with avoidable back-to-back female hitters", () => {
+  const players = seedPlayers.map((player) => ({
+    ...player,
+    gender: ["maya-johnson", "riley-park", "casey-kim"].includes(player.id) ? "Female" : "Male",
+  }));
+  const team = activeTeam(players);
+  const setup = {
+    ...createDefaultPregameSetup(team),
+    generatedLineupIds: [
+      "maya-johnson",
+      "riley-park",
+      "jordan-lee",
+      "alex-smith",
+      "sam-green",
+      "casey-kim",
+      "drew-allen",
+      "ari-stone",
+      "taylor-fox",
+      "noa-cohen",
+    ],
+  };
+  const state = createInitialGameState(team.players);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, state, team);
+  const playersById = new Map(team.players.map((player) => [player.id, player]));
+  const lineupPlayers = suggestedLineup.lineupIds
+    .map((playerId) => playersById.get(playerId))
+    .filter(Boolean);
+
+  assert.notDeepEqual(suggestedLineup.lineupIds, setup.generatedLineupIds);
+  assert.equal(validateLineupGenderRules(lineupPlayers).warnings.some((warning) => warning.includes("back-to-back")), false);
+});
+
+test("resolveSuggestedLineupIds regenerates accepted lineups with avoidable female clusters", () => {
+  const team = activeTeam();
+  const clusteredLineupIds = [
+    "maya-johnson",
+    "riley-park",
+    "jordan-lee",
+    "alex-smith",
+    "sam-green",
+    "casey-kim",
+    "drew-allen",
+    "ari-stone",
+    "taylor-fox",
+    "noa-cohen",
+  ];
+  const setup = {
+    ...createDefaultPregameSetup(team),
+    generatedLineupIds: clusteredLineupIds,
+    acceptedLineupIds: clusteredLineupIds,
+  };
+  const state = createInitialGameState(team.players);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, state, team);
+  const playersById = new Map(team.players.map((player) => [player.id, player]));
+  const lineupPlayers = suggestedLineup.lineupIds
+    .map((playerId) => playersById.get(playerId))
+    .filter(Boolean);
+
+  assert.notDeepEqual(suggestedLineup.lineupIds, clusteredLineupIds);
+  assert.equal(validateLineupGenderRules(lineupPlayers).warnings.some((warning) => warning.includes("back-to-back")), false);
+});
+
+test("resolveSuggestedLineupIds preserves accepted lineups that already spread female hitters", () => {
+  const team = activeTeam();
+  const acceptedLineupIds = [
+    "maya-johnson",
+    "jordan-lee",
+    "riley-park",
+    "alex-smith",
+    "casey-kim",
+    "sam-green",
+    "ari-stone",
+    "drew-allen",
+    "taylor-fox",
+    "noa-cohen",
+  ];
+  const setup = {
+    ...createDefaultPregameSetup(team),
+    generatedLineupIds: acceptedLineupIds,
+    acceptedLineupIds,
+  };
+  const state = createInitialGameState(team.players);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, state, team);
+
+  assert.deepEqual(suggestedLineup.lineupIds, acceptedLineupIds);
 });
 
 test("resolveSuggestedLineupIds explains invalid selected player pools", () => {

@@ -13,6 +13,7 @@ import type { PlayerStats } from "@/types/stats";
 type PlayerFormProps = {
   seedOrder: number;
   submitLabel: string;
+  submitVariant?: "primary" | "secondary";
   variant?: "card" | "plain";
   onSubmit: (input: PlayerProfileInput) => void;
   onCancel?: () => void;
@@ -45,16 +46,17 @@ const statFields: Array<{ key: keyof PlayerStats; label: string }> = [
 const fieldLabelClass = "grid gap-1 text-base font-bold text-foreground sm:text-sm";
 const fieldControlClass = "min-h-12 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 text-base font-semibold outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] sm:min-h-11 sm:text-sm";
 const multilineControlClass = "min-h-28 rounded-lg border border-[var(--border)] bg-[var(--background)] px-3 py-3 text-base font-semibold outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] sm:min-h-24 sm:py-2 sm:text-sm";
-const secondaryButtonClass = "inline-flex min-h-12 items-center justify-center gap-2 rounded-lg bg-[var(--surface)] px-3 text-base font-bold text-foreground sm:min-h-11 sm:text-sm";
+const secondaryButtonClass = "btn-base btn-secondary min-h-12 px-3 text-base sm:min-h-11 sm:text-sm";
 const statLabelClass = "grid min-w-0 gap-1 rounded-lg border border-[var(--border)] bg-[var(--card)] p-2 text-sm font-bold text-[var(--muted-foreground)] sm:text-xs";
 const statInputClass = "min-h-11 w-full min-w-0 rounded-md border border-[var(--border)] bg-[var(--background)] px-2 text-center text-base font-bold tabular-nums text-foreground outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] sm:min-h-10 sm:text-sm";
-const resetStatsButtonClass = "min-h-11 rounded-lg bg-[var(--card)] px-3 text-sm font-bold text-[var(--muted-foreground)] sm:min-h-10 sm:text-xs";
-const cancelButtonClass = "min-h-12 min-w-0 rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 text-base font-bold text-foreground sm:min-h-11 sm:text-sm";
-const submitButtonClass = "inline-flex min-h-12 min-w-0 items-center justify-center gap-2 rounded-lg bg-[var(--accent)] px-3 text-center text-base font-bold text-white disabled:cursor-not-allowed disabled:opacity-45 sm:min-h-11 sm:text-sm";
+const resetStatsButtonClass = "btn-base btn-secondary min-h-11 px-3 text-sm text-[var(--muted-foreground)] sm:min-h-10 sm:text-xs";
+const cancelButtonClass = "btn-base btn-secondary min-h-12 min-w-0 px-3 text-base sm:min-h-11 sm:text-sm";
+const submitButtonClass = "btn-base min-h-12 min-w-0 px-3 text-center text-base sm:min-h-11 sm:text-sm";
 
 export function PlayerForm({
   seedOrder,
   submitLabel,
+  submitVariant = "primary",
   variant = "card",
   onSubmit,
   onCancel,
@@ -441,7 +443,7 @@ export function PlayerForm({
             </button>
           ) : null}
           <button
-            className={submitButtonClass}
+            className={cn(submitButtonClass, submitVariant === "primary" ? "btn-primary" : "btn-secondary")}
             disabled={!canSubmit}
             onClick={submit}
             type="button"
