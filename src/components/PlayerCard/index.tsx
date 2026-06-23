@@ -35,6 +35,8 @@ export function PlayerCard({
   status = "Active",
   icon: Icon = UserRound,
 }: PlayerCardProps) {
+  const visibleNote = isImportSourceNote(note) ? "" : note.trim();
+
   return (
     <article className="flex h-full flex-col rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]">
       <div className="flex items-start justify-between gap-3">
@@ -104,10 +106,12 @@ export function PlayerCard({
         </div>
       ) : null}
 
-      <div className="mt-4 flex gap-2 rounded-lg bg-[var(--surface)] p-3 text-sm text-[var(--muted-foreground)]">
-        <CircleDot className="mt-0.5 size-4 shrink-0 text-[var(--accent)]" aria-hidden="true" />
-        <p className="min-h-10 overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">{note}</p>
-      </div>
+      {visibleNote ? (
+        <div className="mt-4 flex gap-2 rounded-lg bg-[var(--surface)] p-3 text-sm text-[var(--muted-foreground)]">
+          <CircleDot className="mt-0.5 size-4 shrink-0 text-[var(--accent)]" aria-hidden="true" />
+          <p className="min-h-10 overflow-hidden [display:-webkit-box] [-webkit-box-orient:vertical] [-webkit-line-clamp:2]">{visibleNote}</p>
+        </div>
+      ) : null}
 
       <div className="mt-auto grid grid-cols-2 gap-2 pt-4 text-xs font-bold text-[var(--muted-foreground)]">
         <span className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2">
@@ -121,4 +125,8 @@ export function PlayerCard({
       </div>
     </article>
   );
+}
+
+function isImportSourceNote(note: string) {
+  return /^imported from\b/i.test(note.trim());
 }

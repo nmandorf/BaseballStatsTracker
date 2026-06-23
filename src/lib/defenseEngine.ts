@@ -257,6 +257,9 @@ export function normalizeDefensivePosition(value: string | null | undefined): De
     THIRDBASE: "3B",
     LF: "LF",
     LEFTFIELD: "LF",
+    CF: "LC",
+    CENTER: "LC",
+    CENTERFIELD: "LC",
     LC: "LC",
     LCF: "LC",
     LEFTCENTER: "LC",
@@ -705,8 +708,8 @@ function getPositionFitScore(
   let score = (benchCounts[player.id] ?? 0) * 1_000;
 
   if (position === avoidPosition) score -= 10_000;
+  if (position === primaryPosition) score += 420;
   if (position === bestPosition) score += 300;
-  if (position === primaryPosition) score += 240;
   if (position === backupPosition) score += 160;
   if (
     (bestPosition || primaryPosition || backupPosition)
