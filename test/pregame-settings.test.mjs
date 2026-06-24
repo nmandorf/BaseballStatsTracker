@@ -1,13 +1,30 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { createInitialGameState } from "../src/lib/gameEngine.ts";
 import { normalizeGameRules } from "../src/lib/gameRules.ts";
 import {
+  buildAcceptedPregameSetup,
   createDefaultPregameSetup,
+  isStartingDefenseSavedForFirstFieldingHalf,
   resolveSuggestedLineupIds,
 } from "../src/lib/pregameSetupStorage.ts";
 import { validateLineupGenderRules } from "../src/lib/lineupRules.ts";
+import { createDefaultDefensiveAlignment } from "../src/lib/defenseEngine.ts";
 import { defaultGameRules, seedPlayers } from "../src/lib/seedTeam.ts";
+
+const startRouteSource = readFileSync(
+  new URL("../src/app/api/games/[gameId]/start/route.ts", import.meta.url),
+  "utf8",
+);
+const battingOrderSource = readFileSync(
+  new URL("../src/sections/BattingOrderSection/index.tsx", import.meta.url),
+  "utf8",
+);
+const scheduleBackendSource = readFileSync(
+  new URL("../src/lib/scheduleBackend.ts", import.meta.url),
+  "utf8",
+);
 
 function activeTeam(players = seedPlayers) {
   return {
@@ -52,6 +69,61 @@ test("createInitialGameState preserves configured game rules", () => {
   assert.equal(state.gameRules.walksAllowed, false);
 });
 
+test("buildAcceptedPregameSetup persists the accepted lineup and starting defense", () => {
+  const team = activeTeam();
+  const setup = createDefaultPregameSetup(team);
+  const acceptedLineupIds = seedPlayers.slice(0, 10).map((player) => player.id);
+  const startingDefense = createDefaultDefensiveAlignment(seedPlayers.slice(0, 10), 1, "Top");
+  const acceptedSetup = buildAcceptedPregameSetup(setup, acceptedLineupIds, startingDefense);
+
+  assert.equal(acceptedSetup.status, "ACCEPTED");
+  assert.deepEqual(acceptedSetup.generatedLineupIds, acceptedLineupIds);
+  assert.deepEqual(acceptedSetup.acceptedLineupIds, acceptedLineupIds);
+  assert.equal(acceptedSetup.startingDefense, startingDefense);
+});
+
+test("isStartingDefenseSavedForFirstFieldingHalf requires a saved current defense", () => {
+  const startingDefense = createDefaultDefensiveAlignment(seedPlayers.slice(0, 10), 1, "Top");
+  const editedDefense = {
+    ...startingDefense,
+    slots: {
+      ...startingDefense.slots,
+      RF: { status: "VACANT" },
+    },
+  };
+
+  assert.equal(
+    isStartingDefenseSavedForFirstFieldingHalf(startingDefense, startingDefense, { inning: 1, half: "Top" }),
+    true,
+  );
+  assert.equal(
+    isStartingDefenseSavedForFirstFieldingHalf(null, startingDefense, { inning: 1, half: "Top" }),
+    false,
+  );
+  assert.equal(
+    isStartingDefenseSavedForFirstFieldingHalf(startingDefense, startingDefense, { inning: 1, half: "Bottom" }),
+    false,
+  );
+  assert.equal(
+    isStartingDefenseSavedForFirstFieldingHalf(startingDefense, editedDefense, { inning: 1, half: "Top" }),
+    false,
+  );
+});
+
+test("start route returns canonical preparation after authorizing start", () => {
+  assert.match(startRouteSource, /authorizeScheduledGameStart\(gameId, account\)/);
+  assert.doesNotMatch(startRouteSource, /loadGamePreparation/);
+  assert.match(scheduleBackendSource, /preparation: buildStartedGamePreparation/);
+});
+
+test("pregame start ignores stale wrong-half defensive alignments", () => {
+  assert.match(battingOrderSource, /startingDefense: startingDefenseSaved \? defenseAlignment : null/);
+  assert.match(battingOrderSource, /startingDefense\.inning !== firstDefensiveHalf\.inning/);
+  assert.match(scheduleBackendSource, /getPrismaFirstDefensiveHalf\(game\.isHome\)/);
+  assert.match(scheduleBackendSource, /alignment\.inning === 1 && alignment\.half === firstDefensiveHalf/);
+  assert.doesNotMatch(scheduleBackendSource, /defensiveAlignments: \{[^}]*take: 1/s);
+});
+
 test("resolveSuggestedLineupIds derives a reviewable lineup without saved generated ids", () => {
   const team = activeTeam();
   const setup = createDefaultPregameSetup(team);
@@ -61,6 +133,40 @@ test("resolveSuggestedLineupIds derives a reviewable lineup without saved genera
   assert.equal(suggestedLineup.canGenerate, true);
   assert.equal(suggestedLineup.emptyReason, null);
   assert.equal(suggestedLineup.lineupIds.length, 10);
+});
+
+test("resolveSuggestedLineupIds keeps a male wraparound hitter when trimming a larger active pool", () => {
+  const players = [
+    ...seedPlayers.map((player, index) => ({
+      ...player,
+      id: `female-${index + 1}`,
+      name: `Female ${index + 1}`,
+      gender: "Female",
+      seedOrder: index + 1,
+    })),
+    {
+      ...seedPlayers[1],
+      id: "only-male",
+      name: "Only Male",
+      gender: "Male",
+      seedOrder: 11,
+    },
+  ];
+  const team = activeTeam(players);
+  const setup = {
+    ...createDefaultPregameSetup(team),
+    lineupSize: "9",
+  };
+  const state = createInitialGameState(team.players);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, state, team);
+  const playersById = new Map(team.players.map((player) => [player.id, player]));
+  const lineupPlayers = suggestedLineup.lineupIds
+    .map((playerId) => playersById.get(playerId))
+    .filter(Boolean);
+
+  assert.equal(suggestedLineup.lineupIds.length, 9);
+  assert.equal(suggestedLineup.lineupIds.includes("only-male"), true);
+  assert.equal(lineupPlayers.at(-1).gender, "Male");
 });
 
 test("resolveSuggestedLineupIds regenerates saved lineups that lost the female leadoff", () => {
@@ -149,7 +255,7 @@ test("resolveSuggestedLineupIds regenerates accepted lineups with avoidable fema
   assert.equal(validateLineupGenderRules(lineupPlayers).warnings.some((warning) => warning.includes("back-to-back")), false);
 });
 
-test("resolveSuggestedLineupIds preserves accepted lineups that already spread female hitters", () => {
+test("resolveSuggestedLineupIds regenerates accepted lineups that miss the male wraparound hitter", () => {
   const team = activeTeam();
   const acceptedLineupIds = [
     "maya-johnson",
@@ -162,6 +268,37 @@ test("resolveSuggestedLineupIds preserves accepted lineups that already spread f
     "drew-allen",
     "taylor-fox",
     "noa-cohen",
+  ];
+  const setup = {
+    ...createDefaultPregameSetup(team),
+    generatedLineupIds: acceptedLineupIds,
+    acceptedLineupIds,
+  };
+  const state = createInitialGameState(team.players);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, state, team);
+  const playersById = new Map(team.players.map((player) => [player.id, player]));
+  const lineupPlayers = suggestedLineup.lineupIds
+    .map((playerId) => playersById.get(playerId))
+    .filter(Boolean);
+
+  assert.notDeepEqual(suggestedLineup.lineupIds, acceptedLineupIds);
+  assert.equal(lineupPlayers.at(-1).gender, "Male");
+  assert.equal(validateLineupGenderRules(lineupPlayers).warnings.some((warning) => warning.includes("two-base walk")), false);
+});
+
+test("resolveSuggestedLineupIds preserves accepted lineups that already protect the female leadoff wraparound", () => {
+  const team = activeTeam();
+  const acceptedLineupIds = [
+    "maya-johnson",
+    "jordan-lee",
+    "riley-park",
+    "alex-smith",
+    "casey-kim",
+    "sam-green",
+    "noa-cohen",
+    "ari-stone",
+    "taylor-fox",
+    "drew-allen",
   ];
   const setup = {
     ...createDefaultPregameSetup(team),

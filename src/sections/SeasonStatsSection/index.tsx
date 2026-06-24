@@ -8,14 +8,14 @@ import {
   getTeamSeasonTotals,
 } from "@/lib/gameEngine";
 import { calculateStats, formatPercent, formatRate } from "@/lib/statCalculations";
-import { useActiveTeam } from "@/lib/teamStorage";
+import { useBackendSyncedActiveTeam } from "@/lib/teamStorage";
 import { useTeamSchedule } from "@/lib/scheduleClient";
 import { useCompletedGameStates } from "@/lib/useCompletedGameStates";
 import { useFirstGameState } from "@/lib/useFirstGameState";
 import { GameHistoryCard, StatsPlayerTable, type StatsPlayerRow } from "@/sections/StatsEntrySection";
 
 export function SeasonStatsSection() {
-  const activeTeam = useActiveTeam();
+  const activeTeam = useBackendSyncedActiveTeam();
   const firstGameState = useFirstGameState();
   const completedGameStates = useCompletedGameStates();
   const { schedule } = useTeamSchedule(activeTeam?.id ?? null);

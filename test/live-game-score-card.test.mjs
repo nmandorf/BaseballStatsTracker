@@ -15,6 +15,14 @@ test("offense and defense use the same live game score card", () => {
   assert.match(headerSource, /gameState\.outs/);
 });
 
+test("offense and defense expose matching sticky live action controls", () => {
+  assert.match(offenseSource, /fixed inset-x-0 bottom-0 z-30/);
+  assert.match(defenseSource, /fixed inset-x-0 bottom-0 z-30/);
+  assert.match(defenseSource, />\s*Undo\s*</);
+  assert.match(defenseSource, />\s*Save Defensive Event\s*</);
+  assert.match(defenseSource, /grid-cols-\[0\.72fr_1\.28fr\]/);
+});
+
 test("stats entry exposes explicit latest-play correction controls", () => {
   assert.match(offenseSource, /replaceLatestSavedPlay/);
   assert.match(offenseSource, /Editing .*latest saved play/);

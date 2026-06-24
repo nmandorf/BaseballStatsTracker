@@ -180,7 +180,7 @@ export function DefenseSection() {
   }
 
   return (
-    <section className="min-w-0 overflow-x-clip bg-background pb-8 pt-3 sm:pb-10">
+    <section className="min-w-0 overflow-x-clip bg-background pb-28 pt-3 sm:pb-32">
       <LiveGameHeader
         activeMode="DEFENSE"
         currentPhase={teamPhase}
@@ -214,15 +214,9 @@ export function DefenseSection() {
                   {defensiveEventLabels[eventType]}
                 </h2>
               </div>
-              <button
-                className="btn-base btn-secondary size-10 min-h-0 p-0"
-                disabled={!gameState.history.length}
-                onClick={undo}
-                type="button"
-                aria-label="Undo last play"
-              >
-                <RotateCcw className="size-4" aria-hidden="true" />
-              </button>
+              <StatusPill tone={isFielding ? "ready" : "review"}>
+                {isFielding ? "Live" : "Queued"}
+              </StatusPill>
             </div>
 
             <div className="mt-4 grid min-w-0 grid-cols-2 gap-2">
@@ -367,15 +361,6 @@ export function DefenseSection() {
                 {preview.summary}
               </div>
 
-              <button
-                className="btn-base btn-primary min-h-12 px-4 text-sm"
-                disabled={!isFielding}
-                onClick={saveEvent}
-                type="button"
-              >
-                <Save className="size-4" aria-hidden="true" />
-                Save Defensive Event
-              </button>
             </div>
           </article>
 
@@ -413,6 +398,29 @@ export function DefenseSection() {
               </button>
             ) : null}
           </article>
+        </div>
+      </div>
+
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--border)] bg-[var(--card)]/95 px-3 py-3 shadow-2xl shadow-foreground/10 backdrop-blur">
+        <div className="mx-auto grid w-full max-w-md grid-cols-[0.72fr_1.28fr] gap-2">
+          <button
+            className="btn-base btn-secondary min-h-12 text-sm"
+            disabled={!gameState.history.length}
+            onClick={undo}
+            type="button"
+          >
+            <RotateCcw className="size-4" aria-hidden="true" />
+            Undo
+          </button>
+          <button
+            className="btn-base btn-primary min-h-12 px-3 text-sm"
+            disabled={!isFielding}
+            onClick={saveEvent}
+            type="button"
+          >
+            <Save className="size-4" aria-hidden="true" />
+            Save Defensive Event
+          </button>
         </div>
       </div>
     </section>

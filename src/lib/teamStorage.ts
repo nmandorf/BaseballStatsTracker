@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { createZeroStats } from "./statCalculations.ts";
 import {
   createDefaultDefensiveProfile,
@@ -208,6 +208,20 @@ export function useActiveTeam() {
   );
 }
 
+export function useBackendSyncedActiveTeam() {
+  const activeTeam = useActiveTeam();
+
+  useEffect(() => {
+    if (!activeTeam?.id) {
+      return;
+    }
+
+    void hydrateActiveTeamFromBackend();
+  }, [activeTeam?.id]);
+
+  return activeTeam;
+}
+
 export async function createBackendTeam(
   name: string,
   options: { fallbackToLocal?: boolean } = {},
@@ -373,8 +387,10 @@ export async function hydrateActiveTeamFromBackend() {
     const backendTeam = payload.team ? normalizeActiveTeam(payload.team) : null;
 
     if (backendTeam) {
-      saveActiveTeam(backendTeam);
-      return backendTeam;
+      const nextTeam = mergeBackendTeamWithLocalSeasonStats(backendTeam, activeTeam);
+
+      saveActiveTeam(nextTeam);
+      return nextTeam;
     }
   } catch {
     return activeTeam;
@@ -383,11 +399,51 @@ export async function hydrateActiveTeamFromBackend() {
   return activeTeam;
 }
 
+function mergeBackendTeamWithLocalSeasonStats(backendTeam: ActiveTeam, localTeam: ActiveTeam | null): ActiveTeam {
+  if (!localTeam || !isSameTeamWorkspace(localTeam, backendTeam)) {
+    return backendTeam;
+  }
+
+  const localPlayersById = new Map(localTeam.players.map((player) => [player.id, player]));
+
+  return {
+    ...backendTeam,
+    players: backendTeam.players.map((backendPlayer) => {
+      const localPlayer = localPlayersById.get(backendPlayer.id);
+
+      if (!localPlayer || !isStatsProgressAhead(localPlayer.seasonStats, backendPlayer.seasonStats)) {
+        return backendPlayer;
+      }
+
+      return {
+        ...backendPlayer,
+        seasonStats: localPlayer.seasonStats,
+      };
+    }),
+  };
+}
+
+function isStatsProgressAhead(localStats: PlayerStats, backendStats: PlayerStats) {
+  if (localStats.gamesPlayed !== backendStats.gamesPlayed) {
+    return localStats.gamesPlayed > backendStats.gamesPlayed;
+  }
+
+  if (localStats.plateAppearances !== backendStats.plateAppearances) {
+    return localStats.plateAppearances > backendStats.plateAppearances;
+  }
+
+  return localStats.atBats > backendStats.atBats;
+}
+
 export async function getVerifiedTeamAccountHeaders(baseHeaders: Record<string, string> = {}) {
-  const user = getFirebaseAuth().currentUser;
-  if (!user) return baseHeaders;
-  const idToken = await user.getIdToken();
-  return { ...baseHeaders, Authorization: `Bearer ${idToken}` };
+  try {
+    const user = getFirebaseAuth().currentUser;
+    if (!user) return baseHeaders;
+    const idToken = await user.getIdToken();
+    return { ...baseHeaders, Authorization: `Bearer ${idToken}` };
+  } catch {
+    return baseHeaders;
+  }
 }
 
 async function readTeamDeletionError(response: Response) {

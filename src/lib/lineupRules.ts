@@ -9,6 +9,14 @@ export type RecommendedLineupRow = {
   score: number;
 };
 
+export const lineupRankingPriorities = ["OBP", "Out rate", "SLG", "OPS", "XBH%", "Speed bonus"] as const;
+
+export type LineupRankingPriority = (typeof lineupRankingPriorities)[number];
+
+export type LineupRecommendationOptions = {
+  rankingPriority?: LineupRankingPriority;
+};
+
 export type LineupGenderValidation = {
   isLeagueCompliant: boolean;
   hasFemaleLeadoff: boolean;
@@ -29,22 +37,114 @@ const roleOrder = new Map([
   ["Second leadoff type", 2],
 ]);
 
-export function recommendBattingOrder(players: Player[]): RecommendedLineupRow[] {
+const defaultRankingPriority: LineupRankingPriority = "OBP";
+
+const rankingPriorityWeights: Record<LineupRankingPriority, {
+  average: number;
+  avoidOuts: number;
+  extraBaseHits: number;
+  obp: number;
+  ops: number;
+  outQuality: number;
+  runProduction: number;
+  slg: number;
+  speed: number;
+}> = {
+  OBP: {
+    obp: 3,
+    avoidOuts: 1.3,
+    slg: 1,
+    ops: 0.8,
+    extraBaseHits: 0.35,
+    average: 0.45,
+    runProduction: 1,
+    outQuality: 1,
+    speed: 1,
+  },
+  "Out rate": {
+    obp: 1.4,
+    avoidOuts: 3.2,
+    slg: 0.8,
+    ops: 0.7,
+    extraBaseHits: 0.3,
+    average: 0.35,
+    runProduction: 0.8,
+    outQuality: 1.2,
+    speed: 1,
+  },
+  SLG: {
+    obp: 1.4,
+    avoidOuts: 1,
+    slg: 3,
+    ops: 1,
+    extraBaseHits: 0.75,
+    average: 0.25,
+    runProduction: 1.1,
+    outQuality: 0.8,
+    speed: 0.8,
+  },
+  OPS: {
+    obp: 1.7,
+    avoidOuts: 1,
+    slg: 1.7,
+    ops: 2.3,
+    extraBaseHits: 0.45,
+    average: 0.3,
+    runProduction: 1,
+    outQuality: 0.9,
+    speed: 0.8,
+  },
+  "XBH%": {
+    obp: 1.1,
+    avoidOuts: 0.9,
+    slg: 1.8,
+    ops: 0.9,
+    extraBaseHits: 2.4,
+    average: 0.2,
+    runProduction: 1.1,
+    outQuality: 0.8,
+    speed: 0.7,
+  },
+  "Speed bonus": {
+    obp: 1.8,
+    avoidOuts: 1.2,
+    slg: 0.9,
+    ops: 0.8,
+    extraBaseHits: 0.35,
+    average: 0.4,
+    runProduction: 0.8,
+    outQuality: 1,
+    speed: 8,
+  },
+};
+
+export function recommendBattingOrder(
+  players: Player[],
+  options: LineupRecommendationOptions = {},
+): RecommendedLineupRow[] {
+  const rankingPriority = options.rankingPriority ?? defaultRankingPriority;
   const activePlayers = players.filter((player) => player.isActive);
-  const rankedPlayers = rankLineupPlayers(activePlayers);
+  const rankedPlayers = rankLineupPlayers(activePlayers, rankingPriority);
 
   const baseLineup = activePlayers.length >= 9
-    ? arrangeLineupBySlot(rankedPlayers)
+    ? arrangeLineupBySlot(rankedPlayers, rankingPriority)
     : rankedPlayers;
-  const lineup = arrangeLineupByGender(baseLineup);
+  const lineup = arrangeLineupByGender(baseLineup, rankingPriority);
   const contactBalancedLineup = balanceLowerLineupContact(lineup);
-  const balancedLineup = arrangeLineupByGender(contactBalancedLineup);
+  const balancedLineup = arrangeLineupByGender(contactBalancedLineup, rankingPriority);
+  const wraparoundOptimizedLineup = preferMaleWraparoundLeadoffProtection(balancedLineup);
 
-  return balancedLineup.map((player, index) => buildLineupRow(player, index + 1, getLineupScore(player)));
+  return wraparoundOptimizedLineup.map((player, index) => (
+    buildLineupRow(player, index + 1, getLineupScore(player, rankingPriority), rankingPriority)
+  ));
 }
 
 export function isLineupGenderOptimized(lineup: Player[]) {
-  return validateLineupGenderRules(lineup).isLeagueCompliant && !hasAvoidableBackToBackFemales(lineup);
+  return (
+    validateLineupGenderRules(lineup).isLeagueCompliant &&
+    !hasAvoidableBackToBackFemales(lineup) &&
+    !needsMaleWraparoundHitter(lineup)
+  );
 }
 
 export function validateLineupPlayerPool(players: Player[]): LineupGenderValidation {
@@ -85,6 +185,10 @@ export function validateLineupGenderRules(lineup: Player[]): LineupGenderValidat
     warnings.push("Female hitters are back-to-back; spread them out when enough male hitters are available.");
   }
 
+  if (needsMaleWraparoundHitter(lineup)) {
+    warnings.push("Place a male hitter in the final lineup spot before the female leadoff hitter to maximize the two-base walk rule.");
+  }
+
   return {
     isLeagueCompliant: missingGenderPlayerNames.length === 0 && hasFemaleLeadoff,
     hasFemaleLeadoff,
@@ -93,15 +197,18 @@ export function validateLineupGenderRules(lineup: Player[]): LineupGenderValidat
   };
 }
 
-function rankLineupPlayers(players: Player[]) {
+function rankLineupPlayers(players: Player[], rankingPriority: LineupRankingPriority) {
   if (players.length >= 9 && players.every((player) => player.seasonStats.plateAppearances === 0)) {
     return [...players].sort((a, b) => a.seedOrder - b.seedOrder);
   }
 
-  return [...players].sort((a, b) => getLineupScore(b) - getLineupScore(a) || a.seedOrder - b.seedOrder);
+  return [...players].sort((a, b) => (
+    getLineupScore(b, rankingPriority) - getLineupScore(a, rankingPriority) ||
+    a.seedOrder - b.seedOrder
+  ));
 }
 
-function arrangeLineupBySlot(players: Player[]) {
+function arrangeLineupBySlot(players: Player[], rankingPriority: LineupRankingPriority) {
   if (players.length < 9) {
     return players;
   }
@@ -113,12 +220,12 @@ function arrangeLineupBySlot(players: Player[]) {
   lineup[0] = take(0);
   lineup[1] = take(0);
   lineup[2] = take(0);
-  lineup[3] = take(bestPowerIndex(remaining));
-  lineup[4] = take(bestPowerIndex(remaining));
+  lineup[3] = take(bestPowerIndex(remaining, rankingPriority));
+  lineup[4] = take(bestPowerIndex(remaining, rankingPriority));
   lineup[5] = take(0);
 
-  const weakest = remaining.splice(weakestIndex(remaining), 1)[0];
-  const secondLeadoff = remaining.splice(bestTurnoverIndex(remaining), 1)[0];
+  const weakest = remaining.splice(weakestIndex(remaining, rankingPriority), 1)[0];
+  const secondLeadoff = remaining.splice(bestTurnoverIndex(remaining, rankingPriority), 1)[0];
   lineup.push(...remaining);
   lineup.push(weakest);
   lineup.push(secondLeadoff);
@@ -126,10 +233,13 @@ function arrangeLineupBySlot(players: Player[]) {
   return lineup.filter(Boolean);
 }
 
-function arrangeLineupByGender(players: Player[]) {
+function arrangeLineupByGender(players: Player[], rankingPriority: LineupRankingPriority) {
   const femaleLeadoff = players
     .filter((player) => player.gender === "Female")
-    .sort((a, b) => getLineupScore(b) - getLineupScore(a) || a.seedOrder - b.seedOrder)[0];
+    .sort((a, b) => (
+      getLineupScore(b, rankingPriority) - getLineupScore(a, rankingPriority) ||
+      a.seedOrder - b.seedOrder
+    ))[0];
 
   if (!femaleLeadoff) {
     return players;
@@ -168,45 +278,126 @@ function chooseNextGenderBalancedIndex(remaining: Player[], lastPlayer?: Player)
   return needsSavedSeparator ? firstFemaleIndex : 0;
 }
 
-function buildLineupRow(player: Player, lineupSlot: number, score: number): RecommendedLineupRow {
+function preferMaleWraparoundLeadoffProtection(players: Player[]) {
+  if (!needsMaleWraparoundHitter(players)) {
+    return players;
+  }
+
+  const wraparoundHitterIndex = chooseMaleWraparoundHitterIndex(players);
+
+  if (wraparoundHitterIndex < 0) {
+    return players;
+  }
+
+  return movePlayerToFinalSlot(players, wraparoundHitterIndex);
+}
+
+function needsMaleWraparoundHitter(players: Player[]) {
+  return (
+    players.length > 1 &&
+    players[0]?.gender === "Female" &&
+    players[players.length - 1]?.gender !== "Male" &&
+    players.some((player, index) => index > 0 && player.gender === "Male")
+  );
+}
+
+function chooseMaleWraparoundHitterIndex(players: Player[]) {
+  const candidateIndexes = players
+    .map((player, index) => ({ player, index }))
+    .filter(({ player, index }) => index > 0 && player.gender === "Male")
+    .map(({ index }) => index);
+
+  if (!candidateIndexes.length) {
+    return -1;
+  }
+
+  return candidateIndexes.reduce((bestIndex, candidateIndex) => {
+    const bestLineup = movePlayerToFinalSlot(players, bestIndex);
+    const candidateLineup = movePlayerToFinalSlot(players, candidateIndex);
+    const bestBackToBackFemales = countBackToBackFemalePairs(bestLineup);
+    const candidateBackToBackFemales = countBackToBackFemalePairs(candidateLineup);
+
+    if (candidateBackToBackFemales !== bestBackToBackFemales) {
+      return candidateBackToBackFemales < bestBackToBackFemales ? candidateIndex : bestIndex;
+    }
+
+    return candidateIndex > bestIndex ? candidateIndex : bestIndex;
+  }, candidateIndexes[0]);
+}
+
+function movePlayerToFinalSlot(players: Player[], playerIndex: number) {
+  const lineup = [...players];
+  const [wraparoundHitter] = lineup.splice(playerIndex, 1);
+
+  lineup.push(wraparoundHitter);
+
+  return lineup;
+}
+
+function buildLineupRow(
+  player: Player,
+  lineupSlot: number,
+  score: number,
+  rankingPriority: LineupRankingPriority,
+): RecommendedLineupRow {
   return {
     player,
     lineupSlot,
     role: slotRole(lineupSlot, player.roleHint),
-    signal: buildSignal(player),
+    signal: buildSignal(player, rankingPriority),
     score,
   };
 }
 
-function getLineupScore(player: Player) {
+function getLineupScore(player: Player, rankingPriority: LineupRankingPriority = defaultRankingPriority) {
   const stats = calculateStats(player.seasonStats);
-  const speedBonus = player.speedRating === "Fast" ? 0.04 : player.speedRating === "Average" ? 0.02 : 0;
+  const weights = rankingPriorityWeights[rankingPriority];
+  const speedBonus = getSpeedBonus(player);
   const roleBonus = (roleOrder.get(player.roleHint) ?? 0) / 100;
 
   if (player.seasonStats.plateAppearances === 0) {
-    return roleBonus + speedBonus + (11 - player.seedOrder) / 1000;
+    return roleBonus + speedBonus * weights.speed + (11 - player.seedOrder) / 1000;
   }
 
   return (
-    stats.onBasePercentage * 2.2 +
-    (1 - stats.outRate) * 1.4 +
-    stats.sluggingPercentage * 1.3 +
-    stats.ops +
-    stats.extraBaseHitPercentage * 0.55 +
-    stats.battingAverage * 0.45 +
-    player.seasonStats.runs * 0.015 +
-    player.seasonStats.rbis * 0.012 +
-    getOutQualityAdjustment(player) +
-    speedBonus +
+    stats.onBasePercentage * weights.obp +
+    (1 - stats.outRate) * weights.avoidOuts +
+    stats.sluggingPercentage * weights.slg +
+    stats.ops * weights.ops +
+    stats.extraBaseHitPercentage * weights.extraBaseHits +
+    stats.battingAverage * weights.average +
+    (player.seasonStats.runs * 0.015 + player.seasonStats.rbis * 0.012) * weights.runProduction +
+    getOutQualityAdjustment(player) * weights.outQuality +
+    speedBonus * weights.speed +
     roleBonus
   );
 }
 
-function buildSignal(player: Player) {
+function buildSignal(player: Player, rankingPriority: LineupRankingPriority) {
   const stats = calculateStats(player.seasonStats);
 
   if (player.seasonStats.plateAppearances === 0) {
     return player.roleHint;
+  }
+
+  if (rankingPriority === "Out rate") {
+    return `${formatInlineRate(stats.outRate)} Out rate`;
+  }
+
+  if (rankingPriority === "SLG") {
+    return `${formatInlineRate(stats.sluggingPercentage)} SLG`;
+  }
+
+  if (rankingPriority === "OPS") {
+    return `${formatInlineRate(stats.ops)} OPS`;
+  }
+
+  if (rankingPriority === "XBH%") {
+    return `${formatPercent(stats.extraBaseHitPercentage)} XBH`;
+  }
+
+  if (rankingPriority === "Speed bonus") {
+    return `${player.speedRating} speed / ${formatInlineRate(stats.onBasePercentage)} OBP`;
   }
 
   return `${formatInlineRate(stats.onBasePercentage)} OBP / ${formatInlineRate(stats.sluggingPercentage)} SLG`;
@@ -216,7 +407,11 @@ function formatInlineRate(value: number) {
   return value.toFixed(3).replace(/^0/, "");
 }
 
-function bestPowerIndex(players: Player[]) {
+function formatPercent(value: number) {
+  return `${Math.round(value * 100)}%`;
+}
+
+function bestPowerIndex(players: Player[], rankingPriority: LineupRankingPriority) {
   return players.reduce((bestIndex, player, index) => {
     const best = players[bestIndex];
     const playerStats = calculateStats(player.seasonStats);
@@ -231,26 +426,34 @@ function bestPowerIndex(players: Player[]) {
       bestStats.extraBaseHitPercentage +
       powerHint(best) -
       doublePlayPenalty(best);
+    const playerPriorityAdjustment = getLineupScore(player, rankingPriority) * 0.12;
+    const bestPriorityAdjustment = getLineupScore(best, rankingPriority) * 0.12;
 
-    return playerPower > bestPower ? index : bestIndex;
+    return playerPower + playerPriorityAdjustment > bestPower + bestPriorityAdjustment ? index : bestIndex;
   }, 0);
 }
 
-function weakestIndex(players: Player[]) {
+function weakestIndex(players: Player[], rankingPriority: LineupRankingPriority) {
   return players.reduce((weakestPlayerIndex, player, index) => {
     const weakest = players[weakestPlayerIndex];
-    return getLineupScore(player) < getLineupScore(weakest) ? index : weakestPlayerIndex;
+    return getLineupScore(player, rankingPriority) < getLineupScore(weakest, rankingPriority)
+      ? index
+      : weakestPlayerIndex;
   }, 0);
 }
 
-function bestTurnoverIndex(players: Player[]) {
+function bestTurnoverIndex(players: Player[], rankingPriority: LineupRankingPriority) {
   return players.reduce((bestIndex, player, index) => {
     const best = players[bestIndex];
-    const playerValue = getLineupScore(player) + (player.speedRating === "Fast" ? 0.08 : 0) + contactSpotBonus(player);
-    const bestValue = getLineupScore(best) + (best.speedRating === "Fast" ? 0.08 : 0) + contactSpotBonus(best);
+    const playerValue = getLineupScore(player, rankingPriority) + (player.speedRating === "Fast" ? 0.08 : 0) + contactSpotBonus(player);
+    const bestValue = getLineupScore(best, rankingPriority) + (best.speedRating === "Fast" ? 0.08 : 0) + contactSpotBonus(best);
 
     return playerValue > bestValue ? index : bestIndex;
   }, 0);
+}
+
+function getSpeedBonus(player: Player) {
+  return player.speedRating === "Fast" ? 0.04 : player.speedRating === "Average" ? 0.02 : 0;
 }
 
 function powerHint(player: Player) {
@@ -356,12 +559,29 @@ function formatNameList(names: string[]) {
 function hasAvoidableBackToBackFemales(players: Player[]) {
   const femaleCount = players.filter((player) => player.gender === "Female").length;
   const maleCount = players.filter((player) => player.gender === "Male").length;
-  const minimumBackToBackFemalePairs = Math.max(0, femaleCount - (maleCount + 1));
-  const backToBackFemalePairs = players.filter((player, index) => (
-    index > 0 && player.gender === "Female" && players[index - 1]?.gender === "Female"
-  )).length;
+  const minimumBackToBackFemalePairs = getMinimumBackToBackFemalePairs(players, femaleCount, maleCount);
+  const backToBackFemalePairs = countBackToBackFemalePairs(players);
 
   return backToBackFemalePairs > minimumBackToBackFemalePairs;
+}
+
+function getMinimumBackToBackFemalePairs(players: Player[], femaleCount: number, maleCount: number) {
+  const protectsFemaleLeadoff = (
+    players[0]?.gender === "Female" &&
+    players.some((player, index) => index > 0 && player.gender === "Male")
+  );
+
+  if (protectsFemaleLeadoff) {
+    return Math.max(0, femaleCount - maleCount);
+  }
+
+  return Math.max(0, femaleCount - (maleCount + 1));
+}
+
+function countBackToBackFemalePairs(players: Player[]) {
+  return players.filter((player, index) => (
+    index > 0 && player.gender === "Female" && players[index - 1]?.gender === "Female"
+  )).length;
 }
 
 function slotRole(slot: number, fallback: string) {

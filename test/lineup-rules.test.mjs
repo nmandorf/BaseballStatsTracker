@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  isLineupGenderOptimized,
   recommendBattingOrder,
   validateLineupGenderRules,
   validateLineupPlayerPool,
@@ -35,7 +36,7 @@ function stats(overrides = {}) {
   };
 }
 
-function player(id, gender, seedOrder, seasonStats = stats()) {
+function player(id, gender, seedOrder, seasonStats = stats(), overrides = {}) {
   return {
     id,
     name: id.replaceAll("-", " "),
@@ -50,6 +51,7 @@ function player(id, gender, seedOrder, seasonStats = stats()) {
     isActive: true,
     seedOrder,
     seasonStats,
+    ...overrides,
   };
 }
 
@@ -86,6 +88,25 @@ test("recommendBattingOrder spreads female players when male separators are avai
   ]).map((row) => row.player);
 
   assert.equal(validateLineupGenderRules(lineup).warnings.some((warning) => warning.includes("back-to-back")), false);
+});
+
+test("recommendBattingOrder places a male hitter last before the female leadoff when available", () => {
+  const lineup = recommendBattingOrder([
+    player("female-1", "Female", 1, stats({ hits: 9, outs: 1 })),
+    player("female-2", "Female", 2, stats({ hits: 8, outs: 2 })),
+    player("female-3", "Female", 3, stats({ hits: 7, outs: 3 })),
+    player("female-4", "Female", 4, stats({ hits: 6, outs: 4 })),
+    player("female-5", "Female", 5, stats({ hits: 5, outs: 5 })),
+    player("male-1", "Male", 6),
+    player("male-2", "Male", 7),
+    player("male-3", "Male", 8),
+    player("male-4", "Male", 9),
+    player("male-5", "Male", 10),
+  ]).map((row) => row.player);
+
+  assert.equal(lineup[0].gender, "Female");
+  assert.equal(lineup.at(-1).gender, "Male");
+  assert.equal(validateLineupGenderRules(lineup).warnings.some((warning) => warning.includes("two-base walk")), false);
 });
 
 test("recommendBattingOrder keeps female hitters separated after contact balancing", () => {
@@ -125,6 +146,34 @@ test("recommendBattingOrder penalizes double plays more than normal outs for sim
   ]);
 
   assert.equal(lineup[0].player.id, "clean-power");
+});
+
+test("recommendBattingOrder reranks players when a ranking priority is selected", () => {
+  const tableSetter = player("obp-table-setter", "Male", 1, stats({
+    plateAppearances: 10,
+    atBats: 8,
+    hits: 6,
+    singles: 6,
+    doubles: 0,
+    walks: 2,
+    outs: 2,
+  }));
+  const slugger = player("slugging-power", "Male", 2, stats({
+    plateAppearances: 10,
+    atBats: 10,
+    hits: 4,
+    singles: 2,
+    homeRuns: 2,
+    outs: 6,
+    rbis: 5,
+  }));
+
+  const obpLineup = recommendBattingOrder([tableSetter, slugger], { rankingPriority: "OBP" });
+  const sluggingLineup = recommendBattingOrder([tableSetter, slugger], { rankingPriority: "SLG" });
+
+  assert.equal(obpLineup[0].player.id, "obp-table-setter");
+  assert.equal(sluggingLineup[0].player.id, "slugging-power");
+  assert.match(sluggingLineup[0].signal, /SLG/);
 });
 
 test("recommendBattingOrder separates lower-lineup high-strikeout hitters when contact buffer is available", () => {
@@ -180,9 +229,23 @@ test("gender validation warns when female hitters are more clustered than necess
     player("female-2", "Female", 2),
     player("female-3", "Female", 3),
     player("male-1", "Male", 4),
+    player("male-2", "Male", 5),
   ];
   const validation = validateLineupGenderRules(lineup);
 
   assert.equal(validation.isLeagueCompliant, true);
   assert.equal(validation.warnings.some((warning) => warning.includes("back-to-back")), true);
+});
+
+test("gender validation warns when the female leadoff does not have a male wraparound hitter", () => {
+  const lineup = [
+    player("female-1", "Female", 1),
+    player("male-1", "Male", 2),
+    player("female-2", "Female", 3),
+  ];
+  const validation = validateLineupGenderRules(lineup);
+
+  assert.equal(validation.isLeagueCompliant, true);
+  assert.equal(validation.warnings.some((warning) => warning.includes("two-base walk")), true);
+  assert.equal(isLineupGenderOptimized(lineup), false);
 });

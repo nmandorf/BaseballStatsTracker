@@ -8,7 +8,13 @@ import type { DefensiveAlignment } from "@/types/defense";
 import type { GameState } from "./gameEngine.ts";
 import { getPlayerSeasonStats } from "./gameEngine.ts";
 import { normalizeGameRules } from "./gameRules.ts";
-import { isLineupGenderOptimized, recommendBattingOrder, validateLineupGenderRules, validateLineupPlayerPool } from "./lineupRules.ts";
+import {
+  isLineupGenderOptimized,
+  recommendBattingOrder,
+  validateLineupGenderRules,
+  validateLineupPlayerPool,
+  type LineupRecommendationOptions,
+} from "./lineupRules.ts";
 import { defaultGameRules } from "./seedTeam.ts";
 import { getVerifiedTeamAccountHeaders, loadActiveTeam } from "./teamStorage.ts";
 import { loadSelectedScheduledGameId, saveSelectedScheduledGameId, subscribeSelectedScheduledGame } from "./scheduleClient.ts";
@@ -36,6 +42,10 @@ export type SuggestedLineupResolution = {
   canGenerate: boolean;
   emptyReason: string | null;
   warnings: string[];
+};
+
+type SuggestedLineupOptions = LineupRecommendationOptions & {
+  useSavedGeneratedLineup?: boolean;
 };
 
 const storageKey = "baseball-tracker:pregame-setup-by-game:v2";
@@ -219,7 +229,12 @@ export function buildPregamePlayerPool(setup: PregameSetup, state: GameState, ac
     }));
 }
 
-export function generateLineupIds(setup: PregameSetup, state: GameState, activeTeam: ActiveTeam | null) {
+export function generateLineupIds(
+  setup: PregameSetup,
+  state: GameState,
+  activeTeam: ActiveTeam | null,
+  options: LineupRecommendationOptions = {},
+) {
   const pool = buildPregamePlayerPool(setup, state, activeTeam);
   const targetCount = getLineupTargetCount(setup.lineupSize, pool.length);
 
@@ -227,17 +242,53 @@ export function generateLineupIds(setup: PregameSetup, state: GameState, activeT
     return [];
   }
 
-  const targetLineupPlayers = recommendBattingOrder(pool)
-    .slice(0, targetCount)
-    .map((row) => row.player);
+  const recommendedPlayers = recommendBattingOrder(pool, options).map((row) => row.player);
+  const targetLineupPlayers = selectTargetLineupPlayers(recommendedPlayers, targetCount);
 
-  return recommendBattingOrder(targetLineupPlayers).map((row) => row.player.id);
+  return recommendBattingOrder(targetLineupPlayers, options).map((row) => row.player.id);
+}
+
+export function buildAcceptedPregameSetup(
+  setup: PregameSetup,
+  acceptedLineupIds: string[],
+  startingDefense: DefensiveAlignment,
+): PregameSetup {
+  return {
+    ...setup,
+    generatedLineupIds: [...acceptedLineupIds],
+    acceptedLineupIds: [...acceptedLineupIds],
+    startingDefense,
+    status: "ACCEPTED",
+  };
+}
+
+export function isStartingDefenseSavedForFirstFieldingHalf(
+  savedAlignment: DefensiveAlignment | null,
+  currentAlignment: DefensiveAlignment | null,
+  firstDefensiveHalf: Pick<DefensiveAlignment, "inning" | "half">,
+) {
+  if (!savedAlignment || !currentAlignment) {
+    return false;
+  }
+
+  if (
+    savedAlignment.inning !== firstDefensiveHalf.inning ||
+    savedAlignment.half !== firstDefensiveHalf.half ||
+    currentAlignment.inning !== firstDefensiveHalf.inning ||
+    currentAlignment.half !== firstDefensiveHalf.half
+  ) {
+    return false;
+  }
+
+  return defensiveSlotsMatch(savedAlignment, currentAlignment)
+    && unorderedIdsMatch(savedAlignment.benchPlayerIds, currentAlignment.benchPlayerIds);
 }
 
 export function resolveSuggestedLineupIds(
   setup: PregameSetup,
   state: GameState,
   activeTeam: ActiveTeam | null,
+  options: SuggestedLineupOptions = {},
 ): SuggestedLineupResolution {
   const pool = buildPregamePlayerPool(setup, state, activeTeam);
   const validation = validateLineupPlayerPool(pool);
@@ -260,12 +311,14 @@ export function resolveSuggestedLineupIds(
     };
   }
 
-  const generatedLineupIds = generateLineupIds(setup, state, activeTeam);
-  const savedGeneratedLineupIds = resolveSavedGeneratedLineupIds(
-    setup.generatedLineupIds,
-    pool,
-    getLineupTargetCount(setup.lineupSize, pool.length),
-  );
+  const generatedLineupIds = generateLineupIds(setup, state, activeTeam, options);
+  const savedGeneratedLineupIds = options.useSavedGeneratedLineup === false
+    ? []
+    : resolveSavedGeneratedLineupIds(
+        setup.generatedLineupIds,
+        pool,
+        getLineupTargetCount(setup.lineupSize, pool.length),
+      );
   const lineupIds = savedGeneratedLineupIds.length ? savedGeneratedLineupIds : generatedLineupIds;
 
   if (!lineupIds.length) {
@@ -314,11 +367,84 @@ function resolveSavedGeneratedLineupIds(lineupIds: string[], pool: Player[], tar
   return lineupIds;
 }
 
+function selectTargetLineupPlayers(recommendedPlayers: Player[], targetCount: number) {
+  const targetLineupPlayers = recommendedPlayers.slice(0, targetCount);
+
+  if (!needsMaleIncludedForFemaleLeadoffWraparound(targetLineupPlayers, recommendedPlayers, targetCount)) {
+    return targetLineupPlayers;
+  }
+
+  const maleWraparoundCandidate = recommendedPlayers
+    .slice(targetCount)
+    .find((player) => player.gender === "Male");
+  const replacementIndex = findFinalNonMaleReplacementIndex(targetLineupPlayers);
+
+  if (!maleWraparoundCandidate || replacementIndex < 0) {
+    return targetLineupPlayers;
+  }
+
+  return targetLineupPlayers.map((player, index) => (
+    index === replacementIndex ? maleWraparoundCandidate : player
+  ));
+}
+
+function needsMaleIncludedForFemaleLeadoffWraparound(
+  targetLineupPlayers: Player[],
+  recommendedPlayers: Player[],
+  targetCount: number,
+) {
+  return (
+    targetLineupPlayers.length > 1 &&
+    targetLineupPlayers[0]?.gender === "Female" &&
+    !targetLineupPlayers.some((player, index) => index > 0 && player.gender === "Male") &&
+    recommendedPlayers.slice(targetCount).some((player) => player.gender === "Male")
+  );
+}
+
+function findFinalNonMaleReplacementIndex(players: Player[]) {
+  for (let index = players.length - 1; index > 0; index -= 1) {
+    if (players[index].gender !== "Male") {
+      return index;
+    }
+  }
+
+  return -1;
+}
+
 function buildRosterWithStats(state: GameState, players: Player[]) {
   return players.map((player) => ({
     ...player,
     seasonStats: getPlayerSeasonStats(player, state),
   }));
+}
+
+function defensiveSlotsMatch(left: DefensiveAlignment, right: DefensiveAlignment) {
+  const positions = new Set([
+    ...Object.keys(left.slots),
+    ...Object.keys(right.slots),
+  ]);
+
+  for (const position of positions) {
+    const leftSlot = left.slots[position as keyof DefensiveAlignment["slots"]];
+    const rightSlot = right.slots[position as keyof DefensiveAlignment["slots"]];
+    const leftPlayerId = leftSlot?.status === "ASSIGNED" ? leftSlot.playerId : null;
+    const rightPlayerId = rightSlot?.status === "ASSIGNED" ? rightSlot.playerId : null;
+
+    if (leftPlayerId !== rightPlayerId) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function unorderedIdsMatch(left: string[], right: string[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  const rightIds = new Set(right);
+  return left.every((id) => rightIds.has(id));
 }
 
 export function getLineupTargetCount(lineupSize: LineupSizeOption, selectedCount: number) {

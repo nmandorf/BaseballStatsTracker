@@ -14,6 +14,7 @@ import {
   MoveDown,
   Play,
   RotateCcw,
+  Save,
   Sparkles,
 } from "lucide-react";
 import { DefensiveAlignmentEditor } from "@/components/DefensiveAlignmentEditor";
@@ -25,16 +26,28 @@ import { buildFullGameDefensiveLineupPlan } from "@/lib/defensiveLineupPlanner";
 import { createInitialGameState, getLiveGameHref, initializeStartingDefense } from "@/lib/gameEngine";
 import { createDefaultDefensiveAlignment, getDefensiveAlignmentIssues, getFirstDefensiveHalf } from "@/lib/defenseEngine";
 import { saveFirstGameState } from "@/lib/firstGameStorage";
-import { isLineupGenderOptimized, recommendBattingOrder, validateLineupGenderRules, validateLineupPlayerPool, type RecommendedLineupRow } from "@/lib/lineupRules";
 import {
+  isLineupGenderOptimized,
+  lineupRankingPriorities,
+  recommendBattingOrder,
+  validateLineupGenderRules,
+  validateLineupPlayerPool,
+  type LineupRankingPriority,
+  type RecommendedLineupRow,
+} from "@/lib/lineupRules";
+import {
+  buildAcceptedPregameSetup,
   buildPregamePlayerPool,
   generateLineupIds,
   flushPregameSetupSync,
+  isStartingDefenseSavedForFirstFieldingHalf,
   resolveSuggestedLineupIds,
+  resolveLineupPlayers,
   savePregameSetup,
+  type PregameSetup,
   usePregameSetup,
 } from "@/lib/pregameSetupStorage";
-import { useActiveTeam } from "@/lib/teamStorage";
+import { useBackendSyncedActiveTeam } from "@/lib/teamStorage";
 import { getVerifiedTeamAccountHeaders } from "@/lib/teamStorage";
 import { useTeamSchedule } from "@/lib/scheduleClient";
 import { gameStartLeadTimeMs } from "@/lib/scheduleRules";
@@ -42,11 +55,9 @@ import { useFirstGameState } from "@/lib/useFirstGameState";
 import { cn } from "@/lib/utils";
 import type { DefensiveAlignment } from "@/types/defense";
 
-const priorities = ["OBP", "Out rate", "SLG", "OPS", "XBH%", "Speed bonus"];
-
 export function BattingOrderSection() {
   const router = useRouter();
-  const activeTeam = useActiveTeam();
+  const activeTeam = useBackendSyncedActiveTeam();
   const setup = usePregameSetup();
   const firstGameState = useFirstGameState();
   const { schedule } = useTeamSchedule(activeTeam?.id ?? null);
@@ -54,12 +65,23 @@ export function BattingOrderSection() {
   const [startError, setStartError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [manualOrderIds, setManualOrderIds] = useState<string[] | null>(null);
+  const [selectedPriority, setSelectedPriority] = useState<LineupRankingPriority>("OBP");
+  const [priorityOverrideActive, setPriorityOverrideActive] = useState(false);
+  const [draftStartingDefense, setDraftStartingDefense] = useState<{
+    key: string;
+    alignment: DefensiveAlignment;
+  } | null>(null);
 
-  const suggestedLineup = resolveSuggestedLineupIds(setup, firstGameState, activeTeam);
+  const rankingOptions = { rankingPriority: selectedPriority };
+  const pregamePlayerPool = buildPregamePlayerPool(setup, firstGameState, activeTeam);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, firstGameState, activeTeam, {
+    ...rankingOptions,
+    useSavedGeneratedLineup: !priorityOverrideActive,
+  });
   const generatedLineupIds = suggestedLineup.lineupIds;
-  const playerPoolValidation = validateLineupPlayerPool(buildPregamePlayerPool(setup, firstGameState, activeTeam));
+  const playerPoolValidation = validateLineupPlayerPool(pregamePlayerPool);
   const recommendedRowsById = new Map(
-    recommendBattingOrder(buildPregamePlayerPool(setup, firstGameState, activeTeam)).map((row) => [row.player.id, row]),
+    recommendBattingOrder(pregamePlayerPool, rankingOptions).map((row) => [row.player.id, row]),
   );
   const recommendedLineup = generatedLineupIds
     .map((playerId) => recommendedRowsById.get(playerId))
@@ -71,11 +93,27 @@ export function BattingOrderSection() {
         .filter((row): row is RecommendedLineupRow => Boolean(row))
     : recommendedLineup;
   const lineupPlayers = lineup.map((row) => row.player);
+  const lineupPlayerKey = lineupPlayers.map((player) => player.id).join("|");
   const firstDefensiveHalf = getFirstDefensiveHalf(setup.isHome);
-  const defenseAlignment = resolveStartingDefenseAlignment(lineupPlayers, setup.startingDefense, firstDefensiveHalf);
+  const defenseDraftKey = [
+    setup.gameId ?? "unscheduled",
+    firstDefensiveHalf.inning,
+    firstDefensiveHalf.half,
+    lineupPlayerKey,
+  ].join("|");
+  const currentDraftStartingDefense = draftStartingDefense?.key === defenseDraftKey
+    ? draftStartingDefense.alignment
+    : null;
+  const savedDefenseAlignment = resolveStartingDefenseAlignment(lineupPlayers, setup.startingDefense, firstDefensiveHalf);
+  const defenseAlignment = currentDraftStartingDefense ?? savedDefenseAlignment;
   const defenseIssues = defenseAlignment
     ? getDefensiveAlignmentIssues(defenseAlignment, lineupPlayers)
     : [];
+  const startingDefenseSaved = isStartingDefenseSavedForFirstFieldingHalf(
+    setup.startingDefense,
+    defenseAlignment,
+    firstDefensiveHalf,
+  );
   const canBuildFullGameDefensePlan = Boolean(defenseAlignment) && defenseIssues.length === 0;
   const fullGameDefensePlan = canBuildFullGameDefensePlan && defenseAlignment
     ? buildFullGameDefensiveLineupPlan({
@@ -85,7 +123,6 @@ export function BattingOrderSection() {
         startingAlignment: defenseAlignment,
       })
     : null;
-  const [selectedPriority, setSelectedPriority] = useState("OBP");
   const lineupValidation = validateLineupGenderRules(lineup.map((row) => row.player));
   const lineupGenderOptimized = isLineupGenderOptimized(lineup.map((row) => row.player));
   const acceptedMatchesLineup =
@@ -97,6 +134,7 @@ export function BattingOrderSection() {
   const lineupReady = acceptedMatchesLineup
     && lineupValidation.isLeagueCompliant
     && lineupGenderOptimized
+    && startingDefenseSaved
     && defenseIssues.length === 0;
   const fullGameDefenseEmptyReason = defenseIssues.length
     ? "Fix the starting defense to build the full-game grid."
@@ -114,6 +152,13 @@ export function BattingOrderSection() {
     : now < startEligibleAt
       ? `Locked · ${formatStartCountdown(startEligibleAt - now)}`
       : "Start Game";
+  const defenseStatusLabel = canStartGame
+    ? "Ready"
+    : defenseIssues.length
+      ? "Fix defense"
+      : startingDefenseSaved
+        ? "Saved"
+        : "Save defense";
 
   useEffect(() => {
     const clientBase = Date.now();
@@ -145,9 +190,10 @@ export function BattingOrderSection() {
       return;
     }
 
-    const nextGeneratedLineupIds = generateLineupIds(setup, firstGameState, activeTeam);
+    const nextGeneratedLineupIds = generateLineupIds(setup, firstGameState, activeTeam, rankingOptions);
 
     setManualOrderIds(null);
+    setPriorityOverrideActive(false);
     savePregameSetup({
       ...setup,
       generatedLineupIds: nextGeneratedLineupIds,
@@ -157,8 +203,14 @@ export function BattingOrderSection() {
     });
   }
 
+  function selectRankingPriority(priority: LineupRankingPriority) {
+    setSelectedPriority(priority);
+    setPriorityOverrideActive(true);
+    setManualOrderIds(null);
+  }
+
   function acceptLineup() {
-    if (!lineupGenderOptimized) {
+    if (!lineup.length || !lineupGenderOptimized) {
       return;
     }
 
@@ -166,8 +218,21 @@ export function BattingOrderSection() {
       ...setup,
       generatedLineupIds: lineup.map((row) => row.player.id),
       acceptedLineupIds: lineup.map((row) => row.player.id),
+      startingDefense: startingDefenseSaved ? defenseAlignment : null,
       status: "ACCEPTED",
     });
+  }
+
+  function saveStartingDefense() {
+    if (!defenseAlignment || defenseIssues.length) {
+      return;
+    }
+
+    savePregameSetup({
+      ...setup,
+      startingDefense: defenseAlignment,
+    });
+    setDraftStartingDefense(null);
   }
 
   async function startGame() {
@@ -188,40 +253,61 @@ export function BattingOrderSection() {
     setIsStarting(true);
     setStartError(null);
     try {
+      const startingDefenseForStart = defenseAlignment
+        ?? createDefaultDefensiveAlignment(players, firstDefensiveHalf.inning, firstDefensiveHalf.half);
+      const acceptedSetup = buildAcceptedPregameSetup(
+        setup,
+        players.map((player) => player.id),
+        startingDefenseForStart,
+      );
       await flushPregameSetupSync();
       const preparationResponse = await fetch(`/api/games/${encodeURIComponent(setup.gameId)}/preparation`, {
         method: "PUT",
         headers: await getVerifiedTeamAccountHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(setup),
+        body: JSON.stringify(acceptedSetup),
       });
-      if (!preparationResponse.ok) throw new Error("Unable to save the accepted lineup.");
+      const preparationError = preparationResponse.ok
+        ? null
+        : await readApiErrorMessage(preparationResponse, "Unable to save the accepted lineup.");
       const startResponse = await fetch(`/api/games/${encodeURIComponent(setup.gameId)}/start`, {
         method: "POST",
         headers: await getVerifiedTeamAccountHeaders(),
       });
-      const startPayload = await startResponse.json() as { error?: { message?: string } };
-      if (!startResponse.ok) throw new Error(startPayload.error?.message ?? "Unable to start this game.");
+      if (!startResponse.ok) {
+        const startErrorMessage = await readApiErrorMessage(startResponse, "Unable to start this game.");
+        throw new Error(preparationError ? `${startErrorMessage} ${preparationError}` : startErrorMessage);
+      }
+      const startPayload = await startResponse.json() as { preparation?: PregameSetup };
+      const startedSetup = startPayload.preparation ?? acceptedSetup;
+      const startedLineupIds = startedSetup.acceptedLineupIds.length
+        ? startedSetup.acceptedLineupIds
+        : startedSetup.generatedLineupIds;
+      const startedPlayers = resolveLineupPlayers(startedLineupIds, firstGameState, activeTeam);
 
-    const initialState = createInitialGameState(players, {
-      gameId: setup.gameId,
-      opponent: setup.opponent || "Opponent",
-      isHome: setup.isHome,
-      gameRules: setup.gameRules,
-      status: "IN_PROGRESS",
-    });
-    const gameStateWithDefense = initializeStartingDefense(
-      initialState,
-      defenseAlignment ?? createDefaultDefensiveAlignment(players, firstDefensiveHalf.inning, firstDefensiveHalf.half),
-    );
+      if (!startedPlayers.length) {
+        throw new Error("Unable to load the started game's lineup.");
+      }
 
-    saveFirstGameState(gameStateWithDefense);
-    savePregameSetup({
-      ...setup,
-      generatedLineupIds: players.map((player) => player.id),
-      acceptedLineupIds: players.map((player) => player.id),
-      status: "STARTED",
-    });
-    router.push(getLiveGameHref(gameStateWithDefense));
+      const initialState = createInitialGameState(startedPlayers, {
+        gameId: setup.gameId,
+        opponent: startedSetup.opponent || "Opponent",
+        isHome: startedSetup.isHome,
+        gameRules: startedSetup.gameRules,
+        status: "IN_PROGRESS",
+      });
+      const gameStateWithDefense = initializeStartingDefense(
+        initialState,
+        startedSetup.startingDefense ?? startingDefenseForStart,
+      );
+
+      saveFirstGameState(gameStateWithDefense);
+      savePregameSetup({
+        ...startedSetup,
+        generatedLineupIds: startedPlayers.map((player) => player.id),
+        acceptedLineupIds: startedPlayers.map((player) => player.id),
+        status: "STARTED",
+      });
+      router.push(getLiveGameHref(gameStateWithDefense));
     } catch (caught) {
       setStartError(caught instanceof Error ? caught.message : "Unable to start this game.");
     } finally {
@@ -403,7 +489,7 @@ export function BattingOrderSection() {
                 </h2>
               </div>
               <StatusPill tone={canStartGame ? "ready" : "review"}>
-                {canStartGame ? "Ready" : defenseIssues.length ? "Fix defense" : "Accept order first"}
+                {defenseStatusLabel}
               </StatusPill>
             </div>
             <div className="mt-4">
@@ -417,11 +503,27 @@ export function BattingOrderSection() {
                 </p>
               ))}
               {defenseAlignment ? (
-                <DefensiveAlignmentEditor
-                  alignment={defenseAlignment}
-                  players={lineupPlayers}
-                  onChange={(alignment) => savePregameSetup({ ...setup, startingDefense: alignment })}
-                />
+                <div className="grid gap-3">
+                  <button
+                    className="btn-base btn-secondary min-h-11 px-4 text-sm sm:w-fit"
+                    disabled={defenseIssues.length > 0}
+                    onClick={saveStartingDefense}
+                    type="button"
+                  >
+                    <Save className="size-4" aria-hidden="true" />
+                    Save Defense
+                  </button>
+                  {startingDefenseSaved ? (
+                    <p className="rounded-lg bg-[var(--success-soft)] px-3 py-2 text-sm font-bold text-[var(--success)]">
+                      Starting defense saved.
+                    </p>
+                  ) : null}
+                  <DefensiveAlignmentEditor
+                    alignment={defenseAlignment}
+                    players={lineupPlayers}
+                    onChange={(alignment) => setDraftStartingDefense({ key: defenseDraftKey, alignment })}
+                  />
+                </div>
               ) : (
                 <p className="rounded-lg bg-[var(--surface)] p-3 text-sm font-bold text-[var(--muted-foreground)]">
                   Generate a batting order to set the defense.
@@ -503,7 +605,7 @@ export function BattingOrderSection() {
             </div>
           </article>
 
-          <article className="order-6 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035]">
+          <article className="order-6 min-w-0 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035] lg:col-span-2">
             <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
               Ranking priorities
             </p>
@@ -511,20 +613,20 @@ export function BattingOrderSection() {
               Tap a priority to focus review
             </h2>
             <p className="mt-2 text-sm leading-6 text-[var(--muted-foreground)]">
-              The priority chips update the review context only. They do not
-              calculate a new lineup yet.
+              The priority chips recalculate the recommendation for the
+              selected players before coach approval.
             </p>
             <div className="mt-4 grid gap-2">
-              {priorities.map((priority, index) => (
+              {lineupRankingPriorities.map((priority, index) => (
                 <button
                   className={
                     selectedPriority === priority
-                      ? "btn-base btn-choice-selected min-h-11 justify-start gap-3 px-3 text-left text-sm font-semibold"
-                      : "btn-base btn-choice min-h-11 justify-start gap-3 px-3 text-left text-sm font-semibold"
+                      ? "btn-base btn-choice-selected min-h-11 w-full justify-start gap-3 px-3 text-left text-sm font-semibold"
+                      : "btn-base btn-choice min-h-11 w-full justify-start gap-3 px-3 text-left text-sm font-semibold"
                   }
                   aria-pressed={selectedPriority === priority}
                   key={priority}
-                  onClick={() => setSelectedPriority(priority)}
+                  onClick={() => selectRankingPriority(priority)}
                   type="button"
                 >
                   <span className="flex size-7 items-center justify-center rounded-full bg-[var(--card)] text-xs font-bold text-[var(--accent)]">
@@ -558,6 +660,10 @@ function resolveStartingDefenseAlignment(
     return createDefaultDefensiveAlignment(lineupPlayers, firstDefensiveHalf.inning, firstDefensiveHalf.half);
   }
 
+  if (startingDefense.inning !== firstDefensiveHalf.inning || startingDefense.half !== firstDefensiveHalf.half) {
+    return createDefaultDefensiveAlignment(lineupPlayers, firstDefensiveHalf.inning, firstDefensiveHalf.half);
+  }
+
   const activeLineupIds = new Set(lineupPlayers.map((player) => player.id));
   const defenseUsesCurrentLineup = Object.values(startingDefense.slots).every((slot) => (
     !slot ||
@@ -575,4 +681,13 @@ function formatStartCountdown(milliseconds: number) {
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
   return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
+async function readApiErrorMessage(response: Response, fallback: string) {
+  try {
+    const payload = await response.json() as { error?: { message?: string } };
+    return payload.error?.message ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
 }

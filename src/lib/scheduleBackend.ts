@@ -247,7 +247,7 @@ export async function saveGamePreparation(gameId: string, input: GamePreparation
 
   const order = input.status === "ACCEPTED" ? input.acceptedLineupIds : input.generatedLineupIds;
   validatePreparedLineup(input, order, validPlayers);
-  if (input.status === "ACCEPTED") {
+  if (input.startingDefense && input.status !== "SETUP") {
     validateStartingDefense(input.startingDefense, order, validPlayers, game.isHome);
   }
   const positionById = new Map(order.map((playerId, index) => [playerId, index + 1]));
@@ -294,16 +294,20 @@ export async function loadGamePreparation(gameId: string, account: TeamAccount) 
     include: {
       lineup: { orderBy: { battingOrderPosition: "asc" } },
       rules: true,
-      defensiveAlignments: { orderBy: [{ inning: "asc" }, { createdAt: "asc" }], include: { slots: { include: { player: { select: { name: true } } } } }, take: 1 },
+      defensiveAlignments: { orderBy: [{ inning: "asc" }, { createdAt: "asc" }], include: { slots: { include: { player: { select: { name: true } } } } } },
     },
   });
   if (!game) throw notFoundError("TEAM_NOT_FOUND", "Scheduled game not found.", { gameId });
+  const firstDefensiveHalf = getPrismaFirstDefensiveHalf(game.isHome);
+  const startingAlignment = game.defensiveAlignments.find((alignment) => (
+    alignment.inning === 1 && alignment.half === firstDefensiveHalf
+  ));
   const orderedIds = game.lineup.filter((row) => row.battingOrderPosition !== null).map((row) => row.playerId);
   const selectedPlayerIds = game.lineup.map((row) => row.playerId);
   const lineupSize = selectedPlayerIds.length === 9 || selectedPlayerIds.length === 10 || selectedPlayerIds.length === 11
     ? String(selectedPlayerIds.length) as "9" | "10" | "11"
     : "Everyone" as const;
-  const status = game.preparationStatus === PrismaGamePreparationStatus.ACCEPTED
+  const status = game.preparationStatus === PrismaGamePreparationStatus.ACCEPTED || game.preparationStatus === PrismaGamePreparationStatus.STARTED
     ? "ACCEPTED" as const
     : game.preparationStatus === PrismaGamePreparationStatus.GENERATED
       ? "GENERATED" as const
@@ -318,7 +322,7 @@ export async function loadGamePreparation(gameId: string, account: TeamAccount) 
     generatedLineupIds: orderedIds,
     acceptedLineupIds: status === "ACCEPTED" ? orderedIds : [],
     gameRules: game.rules ? fromRuleData(game.rules) : normalizeGameRules(undefined),
-    startingDefense: game.defensiveAlignments[0] ? fromPrismaDefensiveAlignment(game.defensiveAlignments[0], selectedPlayerIds) : null,
+    startingDefense: startingAlignment ? fromPrismaDefensiveAlignment(startingAlignment, selectedPlayerIds) : null,
     status,
     updatedAt: game.updatedAt.toISOString(),
   };
@@ -332,7 +336,8 @@ export async function authorizeScheduledGameStart(gameId: string, account: TeamA
       where: { id: gameId, team: { ownerUid: account.uid } },
       include: {
         lineup: { include: { player: { select: { gender: true } } }, orderBy: { battingOrderPosition: "asc" } },
-        defensiveAlignments: { include: { slots: true }, orderBy: [{ inning: "asc" }, { createdAt: "asc" }], take: 1 },
+        rules: true,
+        defensiveAlignments: { include: { slots: { include: { player: { select: { name: true } } } } }, orderBy: [{ inning: "asc" }, { createdAt: "asc" }] },
       },
     });
     if (!game) throw notFoundError("TEAM_NOT_FOUND", "Scheduled game not found.", { gameId });
@@ -355,13 +360,21 @@ export async function authorizeScheduledGameStart(gameId: string, account: TeamA
     if (game.preparationStatus !== PrismaGamePreparationStatus.ACCEPTED) {
       throw new AppError("GAME_NOT_STARTABLE", "Accept a valid lineup before starting the game.", 409);
     }
-    validatePersistedStartPreparation(acceptedLineup, game.defensiveAlignments[0], acceptedPlayerIds, playerGenders, game.isHome);
+    const firstDefensiveHalf = getPrismaFirstDefensiveHalf(game.isHome);
+    const startingAlignment = game.defensiveAlignments.find((alignment) => (
+      alignment.inning === 1 && alignment.half === firstDefensiveHalf
+    ));
+    validatePersistedStartPreparation(acceptedLineup, startingAlignment, acceptedPlayerIds, playerGenders, game.isHome);
 
     await tx.game.update({
       where: { id: game.id },
       data: { status: PrismaGameStatus.IN_PROGRESS, preparationStatus: PrismaGamePreparationStatus.STARTED },
     });
-    return { gameId: game.id, startedAt: now.toISOString() };
+    return {
+      gameId: game.id,
+      startedAt: now.toISOString(),
+      preparation: buildStartedGamePreparation(game, startingAlignment, now),
+    };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
@@ -369,6 +382,53 @@ export async function authorizeScheduledGameStart(gameId: string, account: TeamA
     }
     throw error;
   }
+}
+
+function buildStartedGamePreparation(
+  game: {
+    id: string;
+    opponent: string;
+    isHome: boolean;
+    updatedAt: Date;
+    lineup: Array<{ playerId: string; battingOrderPosition: number | null }>;
+    rules: {
+      homeRunLimitEnabled: boolean;
+      homeRunLimit: number | null;
+      afterHomeRunLimit: "OUT" | "SINGLE" | "OTHER";
+      runLimitPerInning: number | null;
+      mercyRule: string | null;
+      courtesyRunnersAllowed: boolean;
+      walksAllowed: boolean;
+      sacFliesTracked: boolean;
+      errorsTracked: boolean;
+      fieldersChoicesTracked: boolean;
+    } | null;
+  },
+  startingAlignment: Parameters<typeof fromPrismaDefensiveAlignment>[0] | undefined,
+  startedAt: Date,
+) {
+  const orderedIds = game.lineup
+    .filter((row) => row.battingOrderPosition !== null)
+    .sort((left, right) => (left.battingOrderPosition ?? 0) - (right.battingOrderPosition ?? 0))
+    .map((row) => row.playerId);
+  const selectedPlayerIds = game.lineup.map((row) => row.playerId);
+  const lineupSize = selectedPlayerIds.length === 9 || selectedPlayerIds.length === 10 || selectedPlayerIds.length === 11
+    ? String(selectedPlayerIds.length) as "9" | "10" | "11"
+    : "Everyone" as const;
+
+  return {
+    gameId: game.id,
+    opponent: game.opponent,
+    isHome: game.isHome,
+    lineupSize,
+    selectedPlayerIds,
+    generatedLineupIds: orderedIds,
+    acceptedLineupIds: orderedIds,
+    gameRules: game.rules ? fromRuleData(game.rules) : normalizeGameRules(undefined),
+    startingDefense: startingAlignment ? fromPrismaDefensiveAlignment(startingAlignment, selectedPlayerIds) : null,
+    status: "ACCEPTED" as const,
+    updatedAt: startedAt.toISOString(),
+  };
 }
 
 function validatePreparedLineup(
@@ -454,6 +514,10 @@ function validatePersistedStartPreparation(
   } catch {
     throw new AppError("GAME_NOT_STARTABLE", "The starting defense is incomplete or uses invalid players.", 409);
   }
+}
+
+function getPrismaFirstDefensiveHalf(isHome: boolean) {
+  return isHome ? "TOP" as const : "BOTTOM" as const;
 }
 
 function assertEditable(status: PrismaGameStatus | undefined) {

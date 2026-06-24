@@ -1,8 +1,8 @@
 import type { GameState } from "./gameEngine.ts";
-import { createInitialGameState, upsertCompletedGame } from "./gameEngine.ts";
+import { createInitialGameState, getPlayerSeasonStats, upsertCompletedGame } from "./gameEngine.ts";
 import { defensivePositions, normalizeDefensiveAlignment } from "./defenseEngine.ts";
 import { normalizeGameRules } from "./gameRules.ts";
-import { getVerifiedTeamAccountHeaders, isSameTeamWorkspace, loadActiveTeam } from "./teamStorage.ts";
+import { getVerifiedTeamAccountHeaders, isSameTeamWorkspace, loadActiveTeam, saveActiveTeam, syncActiveTeamToBackend } from "./teamStorage.ts";
 import type { ActiveTeam } from "@/types/player";
 
 const storageKey = "baseball-tracker:first-game-state:v1";
@@ -75,6 +75,7 @@ export function saveFirstGameState(state: GameState) {
 
   if (state.status === "FINAL") {
     upsertCompletedGameHistory(state);
+    syncActiveTeamSeasonStatsFromFinalGame(state);
   }
 
   writeFirstGameState(state);
@@ -259,10 +260,44 @@ export async function hydrateFirstGameStateFromPrisma(options: { force?: boolean
 
     if (normalizedRemoteState.status === "FINAL") {
       upsertCompletedGameHistory(normalizedRemoteState);
+      syncActiveTeamSeasonStatsFromFinalGame(normalizedRemoteState);
     }
   } catch {
     // Local scoring stays available when Prisma is not configured.
   }
+}
+
+function syncActiveTeamSeasonStatsFromFinalGame(state: GameState) {
+  if (typeof window === "undefined" || state.status !== "FINAL") {
+    return;
+  }
+
+  const activeTeam = loadActiveTeam();
+
+  if (!activeTeam) {
+    return;
+  }
+
+  const lineupPlayerIds = new Set(state.lineup.map((player) => player.id));
+  const nextPlayers = activeTeam.players.map((player) => {
+    if (!lineupPlayerIds.has(player.id)) {
+      return player;
+    }
+
+    return {
+      ...player,
+      seasonStats: getPlayerSeasonStats(player, state),
+    };
+  });
+
+  saveActiveTeam({
+    ...activeTeam,
+    players: nextPlayers,
+  });
+  syncActiveTeamToBackend({
+    ...activeTeam,
+    players: nextPlayers,
+  });
 }
 
 export function shouldKeepLocalGameState(localState: GameState, remoteState: GameState | null) {

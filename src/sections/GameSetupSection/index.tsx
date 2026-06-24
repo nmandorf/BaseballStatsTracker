@@ -17,7 +17,7 @@ import {
   type LineupSizeOption,
 } from "@/lib/pregameSetupStorage";
 import { validateLineupPlayerPool } from "@/lib/lineupRules";
-import { useActiveTeam } from "@/lib/teamStorage";
+import { useBackendSyncedActiveTeam } from "@/lib/teamStorage";
 import { useTeamSchedule } from "@/lib/scheduleClient";
 import { useFirstGameState } from "@/lib/useFirstGameState";
 import { cn } from "@/lib/utils";
@@ -25,7 +25,7 @@ import type { GameRules } from "@/types/game";
 import type { ScheduleWeek } from "@/types/schedule";
 
 export function GameSetupSection() {
-  const activeTeam = useActiveTeam();
+  const activeTeam = useBackendSyncedActiveTeam();
   const setup = usePregameSetup();
   const gameState = useFirstGameState();
   const { schedule, isLoading: isScheduleLoading } = useTeamSchedule(activeTeam?.id ?? null);
