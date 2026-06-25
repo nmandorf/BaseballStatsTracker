@@ -135,6 +135,39 @@ test("backend hydration applies backend totals when they are current", async () 
   }
 });
 
+test("backend hydration applies saved game stats over stale local game counters", async () => {
+  const cleanup = installLocalStorage();
+  const originalFetch = global.fetch;
+
+  try {
+    const staleLocalTeam = buildTeamWithStats({
+      gamesPlayed: 4,
+      plateAppearances: 0,
+      atBats: 0,
+      hits: 0,
+    });
+    const backendTeamWithGameStats = buildTeamWithStats({
+      gamesPlayed: 3,
+      plateAppearances: 12,
+      atBats: 10,
+      hits: 7,
+    });
+
+    saveActiveTeam(staleLocalTeam);
+    global.fetch = async () => Response.json({ team: backendTeamWithGameStats });
+
+    const hydratedTeam = await hydrateActiveTeamFromBackend();
+
+    assert.equal(hydratedTeam?.players[0].seasonStats.gamesPlayed, 3);
+    assert.equal(hydratedTeam?.players[0].seasonStats.plateAppearances, 12);
+    assert.equal(loadActiveTeam()?.players[0].seasonStats.hits, 7);
+  } finally {
+    resetActiveTeam();
+    global.fetch = originalFetch;
+    cleanup();
+  }
+});
+
 test("active team backend syncs keep fresher final-game totals as the last write", async () => {
   const originalFetch = global.fetch;
   const staleTeam = buildTeamWithStats({

@@ -8,6 +8,7 @@ import {
 import { notFoundError, validationError } from "@/lib/appErrors";
 import { normalizeDefensivePositionPreference, normalizeDefensiveProfile } from "@/lib/defenseEngine";
 import { getPrisma } from "@/lib/prisma";
+import { getSeasonStatsProgress } from "@/lib/seasonStatRules";
 import { legacyTeamAccount, type TeamAccount } from "@/lib/teamAccount";
 import type { ActiveTeam, BattingSide, Player, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
 import type { DefensiveRatingValue } from "@/types/defense";
@@ -230,17 +231,6 @@ function shouldPersistIncomingSeasonStats(
   }
 
   return getSeasonStatsProgress(incomingSeasonStats) >= getSeasonStatsProgress(existingSeasonStats);
-}
-
-function getSeasonStatsProgress(stats: PlayerStats) {
-  return (
-    stats.gamesPlayed * 1_000_000 +
-    stats.plateAppearances * 10_000 +
-    stats.atBats * 1_000 +
-    stats.hits * 100 +
-    stats.runs * 10 +
-    stats.rbis
-  );
 }
 
 export async function addPlayerToTeamInBackend(

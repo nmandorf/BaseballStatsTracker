@@ -40,3 +40,14 @@ export function subtractStats(seasonStats: PlayerStats, gameStats: PlayerStats):
 export function subtractStat(left: number, right: number) {
   return Math.max(0, left - right);
 }
+
+export function getSeasonStatsProgress(stats: PlayerStats) {
+  return (
+    stats.plateAppearances * 1_000_000 +
+    stats.atBats * 100_000 +
+    stats.hits * 10_000 +
+    stats.runs * 1_000 +
+    stats.rbis * 100 +
+    stats.gamesPlayed
+  );
+}

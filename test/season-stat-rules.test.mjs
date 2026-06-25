@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createZeroStats } from "../src/lib/statCalculations.ts";
-import { replaceGameStatsInSeason } from "../src/lib/seasonStatRules.ts";
+import { getSeasonStatsProgress, replaceGameStatsInSeason } from "../src/lib/seasonStatRules.ts";
 
 function stats(overrides = {}) {
   return {
@@ -33,4 +33,21 @@ test("replaceGameStatsInSeason swaps corrected game contribution into season tot
   assert.equal(nextSeasonStats.hits, 5);
   assert.equal(nextSeasonStats.runs, 4);
   assert.equal(nextSeasonStats.rbis, 4);
+});
+
+test("season stats progress values saved game stats over empty game counters", () => {
+  const staleLocalStats = stats({ gamesPlayed: 4 });
+  const backendStatsWithGameHistory = stats({
+    gamesPlayed: 3,
+    plateAppearances: 4,
+    atBats: 3,
+    hits: 2,
+    runs: 1,
+    rbis: 1,
+  });
+
+  assert.equal(
+    getSeasonStatsProgress(backendStatsWithGameHistory) > getSeasonStatsProgress(staleLocalStats),
+    true,
+  );
 });
