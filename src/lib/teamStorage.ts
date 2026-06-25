@@ -8,6 +8,7 @@ import {
   normalizeDefensiveProfile,
 } from "./defenseEngine.ts";
 import { getFirebaseAuth, isFirebaseConfigured } from "./firebase.ts";
+import { getSeasonStatsProgress } from "./seasonStatRules.ts";
 import { canUseStoredTeam, normalizeTeamAccount, type TeamAccount } from "./teamAccount.ts";
 import type { ActiveTeam, BattingSide, Player, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
 import type { PlayerStats } from "@/types/stats";
@@ -426,15 +427,7 @@ function mergeBackendTeamWithLocalSeasonStats(backendTeam: ActiveTeam, localTeam
 }
 
 function isStatsProgressAhead(localStats: PlayerStats, backendStats: PlayerStats) {
-  if (localStats.gamesPlayed !== backendStats.gamesPlayed) {
-    return localStats.gamesPlayed > backendStats.gamesPlayed;
-  }
-
-  if (localStats.plateAppearances !== backendStats.plateAppearances) {
-    return localStats.plateAppearances > backendStats.plateAppearances;
-  }
-
-  return localStats.atBats > backendStats.atBats;
+  return getSeasonStatsProgress(localStats) > getSeasonStatsProgress(backendStats);
 }
 
 export async function getVerifiedTeamAccountHeaders(baseHeaders: Record<string, string> = {}) {
