@@ -4,19 +4,16 @@ import { StatTile } from "@/components/StatTile";
 import { TeamSetupGate } from "@/components/TeamSetupGate";
 import {
   getCompletedGameHistory,
-  getPlayerSeasonStats,
   getTeamSeasonTotals,
 } from "@/lib/gameEngine";
 import { calculateStats, formatPercent, formatRate } from "@/lib/statCalculations";
 import { useBackendSyncedActiveTeam } from "@/lib/teamStorage";
 import { useTeamSchedule } from "@/lib/scheduleClient";
 import { useCompletedGameStates } from "@/lib/useCompletedGameStates";
-import { useFirstGameState } from "@/lib/useFirstGameState";
 import { GameHistoryCard, StatsPlayerTable, type StatsPlayerRow } from "@/sections/StatsEntrySection";
 
 export function SeasonStatsSection() {
   const activeTeam = useBackendSyncedActiveTeam();
-  const firstGameState = useFirstGameState();
   const completedGameStates = useCompletedGameStates();
   const { schedule } = useTeamSchedule(activeTeam?.id ?? null);
 
@@ -25,7 +22,7 @@ export function SeasonStatsSection() {
   }
 
   const seasonRows: StatsPlayerRow[] = activeTeam.players.map((player) => {
-    const stats = getPlayerSeasonStats(player, firstGameState);
+    const stats = player.seasonStats;
 
     return {
       player,
@@ -33,7 +30,7 @@ export function SeasonStatsSection() {
       calculated: calculateStats(stats),
     };
   });
-  const seasonTotals = getTeamSeasonTotals(activeTeam.players, firstGameState);
+  const seasonTotals = getTeamSeasonTotals(activeTeam.players);
   const localGameHistory = getCompletedGameHistory(completedGameStates);
   const localGameIds = new Set(localGameHistory.map((game) => game.id));
   const backendGameHistory = (schedule?.weeks ?? []).flatMap((week) => (

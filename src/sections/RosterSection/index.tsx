@@ -46,9 +46,9 @@ export function RosterSection() {
 
     return activeTeam.players.map((player) => ({
       ...player,
-      seasonStats: getPlayerSeasonStats(player, firstGameState),
+      seasonStats: player.seasonStats,
     }));
-  }, [activeTeam, firstGameState]);
+  }, [activeTeam]);
 
   const players = useMemo(
     () => playersWithStats,
