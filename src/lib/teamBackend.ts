@@ -179,6 +179,22 @@ export async function upsertActiveTeamInBackend(
         create: toPlayerCreate(savedTeam.id, player),
         update: toPlayerUpdate(player),
       });
+      const existingPlayerSeasonStats = await tx.playerSeasonStats.findUnique({
+        where: {
+          playerId_season: {
+            playerId: savedPlayer.id,
+            season: seasonYear,
+          },
+        },
+      });
+
+      if (!shouldPersistIncomingSeasonStats(
+        existingPlayerSeasonStats ? fromStatsData(existingPlayerSeasonStats) : null,
+        player.seasonStats,
+      )) {
+        continue;
+      }
+
       await tx.playerSeasonStats.upsert({
         where: {
           playerId_season: {
@@ -203,6 +219,28 @@ export async function upsertActiveTeamInBackend(
   });
 
   return loadTeamFromBackend(savedTeamId, account);
+}
+
+function shouldPersistIncomingSeasonStats(
+  existingSeasonStats: PlayerStats | null,
+  incomingSeasonStats: PlayerStats,
+) {
+  if (!existingSeasonStats) {
+    return true;
+  }
+
+  return getSeasonStatsProgress(incomingSeasonStats) >= getSeasonStatsProgress(existingSeasonStats);
+}
+
+function getSeasonStatsProgress(stats: PlayerStats) {
+  return (
+    stats.gamesPlayed * 1_000_000 +
+    stats.plateAppearances * 10_000 +
+    stats.atBats * 1_000 +
+    stats.hits * 100 +
+    stats.runs * 10 +
+    stats.rbis
+  );
 }
 
 export async function addPlayerToTeamInBackend(
