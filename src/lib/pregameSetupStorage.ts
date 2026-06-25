@@ -5,8 +5,6 @@ import type { ActiveTeam } from "@/types/player";
 import type { Player } from "@/types/player";
 import type { GameRules } from "@/types/game";
 import type { DefensiveAlignment } from "@/types/defense";
-import type { GameState } from "./gameEngine.ts";
-import { getPlayerSeasonStats } from "./gameEngine.ts";
 import { normalizeGameRules } from "./gameRules.ts";
 import {
   isLineupGenderOptimized,
@@ -215,9 +213,9 @@ export async function flushPregameSetupSync() {
   await preparationSyncQueue.catch(() => undefined);
 }
 
-export function buildPregamePlayerPool(setup: PregameSetup, state: GameState, activeTeam: ActiveTeam | null): Player[] {
+export function buildPregamePlayerPool(setup: PregameSetup, activeTeam: ActiveTeam | null): Player[] {
   const playersById = new Map(
-    buildRosterWithStats(state, activeTeam?.players.filter((player) => player.isActive) ?? []).map((player) => [player.id, player]),
+    buildRosterPlayers(activeTeam?.players.filter((player) => player.isActive) ?? []).map((player) => [player.id, player]),
   );
 
   return setup.selectedPlayerIds
@@ -231,11 +229,10 @@ export function buildPregamePlayerPool(setup: PregameSetup, state: GameState, ac
 
 export function generateLineupIds(
   setup: PregameSetup,
-  state: GameState,
   activeTeam: ActiveTeam | null,
   options: LineupRecommendationOptions = {},
 ) {
-  const pool = buildPregamePlayerPool(setup, state, activeTeam);
+  const pool = buildPregamePlayerPool(setup, activeTeam);
   const targetCount = getLineupTargetCount(setup.lineupSize, pool.length);
 
   if (!validateLineupPlayerPool(pool).isLeagueCompliant) {
@@ -286,11 +283,10 @@ export function isStartingDefenseSavedForFirstFieldingHalf(
 
 export function resolveSuggestedLineupIds(
   setup: PregameSetup,
-  state: GameState,
   activeTeam: ActiveTeam | null,
   options: SuggestedLineupOptions = {},
 ): SuggestedLineupResolution {
-  const pool = buildPregamePlayerPool(setup, state, activeTeam);
+  const pool = buildPregamePlayerPool(setup, activeTeam);
   const validation = validateLineupPlayerPool(pool);
 
   if (!pool.length) {
@@ -311,7 +307,7 @@ export function resolveSuggestedLineupIds(
     };
   }
 
-  const generatedLineupIds = generateLineupIds(setup, state, activeTeam, options);
+  const generatedLineupIds = generateLineupIds(setup, activeTeam, options);
   const savedGeneratedLineupIds = options.useSavedGeneratedLineup === false
     ? []
     : resolveSavedGeneratedLineupIds(
@@ -338,8 +334,8 @@ export function resolveSuggestedLineupIds(
   };
 }
 
-export function resolveLineupPlayers(lineupIds: string[], state: GameState, activeTeam: ActiveTeam | null) {
-  const playersById = new Map(buildRosterWithStats(state, activeTeam?.players ?? []).map((player) => [player.id, player]));
+export function resolveLineupPlayers(lineupIds: string[], activeTeam: ActiveTeam | null) {
+  const playersById = new Map(buildRosterPlayers(activeTeam?.players ?? []).map((player) => [player.id, player]));
 
   return lineupIds
     .map((playerId) => playersById.get(playerId))
@@ -411,10 +407,10 @@ function findFinalNonMaleReplacementIndex(players: Player[]) {
   return -1;
 }
 
-function buildRosterWithStats(state: GameState, players: Player[]) {
+function buildRosterPlayers(players: Player[]) {
   return players.map((player) => ({
     ...player,
-    seasonStats: getPlayerSeasonStats(player, state),
+    seasonStats: player.seasonStats,
   }));
 }
 

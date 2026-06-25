@@ -51,7 +51,6 @@ import { useBackendSyncedActiveTeam } from "@/lib/teamStorage";
 import { getVerifiedTeamAccountHeaders } from "@/lib/teamStorage";
 import { useTeamSchedule } from "@/lib/scheduleClient";
 import { gameStartLeadTimeMs } from "@/lib/scheduleRules";
-import { useFirstGameState } from "@/lib/useFirstGameState";
 import { cn } from "@/lib/utils";
 import type { DefensiveAlignment } from "@/types/defense";
 
@@ -59,7 +58,6 @@ export function BattingOrderSection() {
   const router = useRouter();
   const activeTeam = useBackendSyncedActiveTeam();
   const setup = usePregameSetup();
-  const firstGameState = useFirstGameState();
   const { schedule } = useTeamSchedule(activeTeam?.id ?? null);
   const [now, setNow] = useState(() => Date.now());
   const [startError, setStartError] = useState<string | null>(null);
@@ -73,8 +71,8 @@ export function BattingOrderSection() {
   } | null>(null);
 
   const rankingOptions = { rankingPriority: selectedPriority };
-  const pregamePlayerPool = buildPregamePlayerPool(setup, firstGameState, activeTeam);
-  const suggestedLineup = resolveSuggestedLineupIds(setup, firstGameState, activeTeam, {
+  const pregamePlayerPool = buildPregamePlayerPool(setup, activeTeam);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, activeTeam, {
     ...rankingOptions,
     useSavedGeneratedLineup: !priorityOverrideActive,
   });
@@ -190,7 +188,7 @@ export function BattingOrderSection() {
       return;
     }
 
-    const nextGeneratedLineupIds = generateLineupIds(setup, firstGameState, activeTeam, rankingOptions);
+    const nextGeneratedLineupIds = generateLineupIds(setup, activeTeam, rankingOptions);
 
     setManualOrderIds(null);
     setPriorityOverrideActive(false);
@@ -282,7 +280,7 @@ export function BattingOrderSection() {
       const startedLineupIds = startedSetup.acceptedLineupIds.length
         ? startedSetup.acceptedLineupIds
         : startedSetup.generatedLineupIds;
-      const startedPlayers = resolveLineupPlayers(startedLineupIds, firstGameState, activeTeam);
+      const startedPlayers = resolveLineupPlayers(startedLineupIds, activeTeam);
 
       if (!startedPlayers.length) {
         throw new Error("Unable to load the started game's lineup.");
