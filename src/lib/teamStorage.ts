@@ -14,10 +14,12 @@ import type { PlayerStats } from "@/types/stats";
 
 const storageKey = "baseball-tracker:active-team:v1";
 const storageEventName = "baseball-tracker:active-team-updated";
+const activeTeamBackendSyncTimeoutMs = 10_000;
 
 let cachedRaw: string | null | undefined;
 let cachedAccountUid: string | null | undefined;
 let cachedTeam: ActiveTeam | null | undefined;
+let activeTeamBackendSyncQueue = Promise.resolve();
 
 export function createZeroPlayerStats(): PlayerStats {
   return createZeroStats();
@@ -500,15 +502,49 @@ function isTeamOwnedByAccount(team: ActiveTeam, account: TeamAccount | null) {
 }
 
 function queueActiveTeamBackendSync(team: ActiveTeam) {
-  getVerifiedTeamAccountHeaders({ "Content-Type": "application/json" }).then((headers) => fetch("/api/team", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ team }),
-  }))
+  activeTeamBackendSyncQueue = activeTeamBackendSyncQueue
+    .catch(() => undefined)
+    .then(() => postActiveTeamToBackend(team, activeTeamBackendSyncTimeoutMs))
     .then(() => undefined)
     .catch(() => {
       // The local team mirror remains usable when Prisma is unavailable.
     });
+}
+
+function postActiveTeamToBackend(team: ActiveTeam, timeoutMs: number) {
+  const controller = new AbortController();
+
+  return withTimeout((async () => {
+    const response = await fetch("/api/team", {
+      method: "POST",
+      headers: await getVerifiedTeamAccountHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ team }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      throw new Error("Unable to sync active team.");
+    }
+  })(), timeoutMs, "Active team sync timed out.", () => {
+    controller.abort();
+  });
+}
+
+function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  message: string,
+  onTimeout: () => void,
+) {
+  let timeout: ReturnType<typeof setTimeout>;
+
+  return new Promise<T>((resolve, reject) => {
+    timeout = setTimeout(() => {
+      onTimeout();
+      reject(new Error(message));
+    }, timeoutMs);
+    promise.then(resolve, reject).finally(() => clearTimeout(timeout));
+  });
 }
 
 function normalizeActiveTeam(team: Partial<ActiveTeam>): ActiveTeam | null {

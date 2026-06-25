@@ -289,15 +289,14 @@ function syncActiveTeamSeasonStatsFromFinalGame(state: GameState) {
       seasonStats: getPlayerSeasonStats(player, state),
     };
   });
+  const nextTeam = {
+    ...activeTeam,
+    players: nextPlayers,
+    updatedAt: new Date().toISOString(),
+  };
 
-  saveActiveTeam({
-    ...activeTeam,
-    players: nextPlayers,
-  });
-  syncActiveTeamToBackend({
-    ...activeTeam,
-    players: nextPlayers,
-  });
+  saveActiveTeam(nextTeam);
+  syncActiveTeamToBackend(nextTeam);
 }
 
 export function shouldKeepLocalGameState(localState: GameState, remoteState: GameState | null) {

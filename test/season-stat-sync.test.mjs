@@ -9,6 +9,7 @@ import {
   loadActiveTeam,
   resetActiveTeam,
   saveActiveTeam,
+  syncActiveTeamToBackend,
 } from "../src/lib/teamStorage.ts";
 
 const firstGameStorageSource = readFileSync(
@@ -17,6 +18,10 @@ const firstGameStorageSource = readFileSync(
 );
 const teamStorageSource = readFileSync(
   new URL("../src/lib/teamStorage.ts", import.meta.url),
+  "utf8",
+);
+const teamBackendSource = readFileSync(
+  new URL("../src/lib/teamBackend.ts", import.meta.url),
   "utf8",
 );
 const seasonStatsSource = readFileSync(
@@ -36,7 +41,9 @@ test("final game saves sync computed season totals into the active roster", () =
   assert.match(firstGameStorageSource, /syncActiveTeamSeasonStatsFromFinalGame\(state\)/);
   assert.match(firstGameStorageSource, /syncActiveTeamSeasonStatsFromFinalGame\(normalizedRemoteState\)/);
   assert.match(firstGameStorageSource, /getPlayerSeasonStats\(player, state\)/);
-  assert.match(firstGameStorageSource, /saveActiveTeam\(\{\s+\.\.\.activeTeam,\s+players: nextPlayers,/);
+  assert.match(firstGameStorageSource, /updatedAt: new Date\(\)\.toISOString\(\)/);
+  assert.match(firstGameStorageSource, /saveActiveTeam\(nextTeam\)/);
+  assert.match(firstGameStorageSource, /syncActiveTeamToBackend\(nextTeam\)/);
 });
 
 test("season and lineup screens refresh active team stats from the backend", () => {
@@ -45,6 +52,21 @@ test("season and lineup screens refresh active team stats from the backend", () 
   assert.match(seasonStatsSource, /useBackendSyncedActiveTeam/);
   assert.match(battingOrderSource, /useBackendSyncedActiveTeam/);
   assert.match(gameSetupSource, /useBackendSyncedActiveTeam/);
+});
+
+test("team backend ignores stale season stat snapshots", () => {
+  assert.match(teamBackendSource, /shouldPersistIncomingSeasonStats/);
+  assert.match(teamBackendSource, /getSeasonStatsProgress\(incomingSeasonStats\) >= getSeasonStatsProgress\(existingSeasonStats\)/);
+  assert.match(teamBackendSource, /existingPlayerSeasonStats \? fromStatsData\(existingPlayerSeasonStats\) : null/);
+  assert.doesNotMatch(teamBackendSource, /incomingTeamSnapshotIsCurrent/);
+});
+
+test("active team backend syncs are ordered and bounded", () => {
+  assert.match(teamStorageSource, /activeTeamBackendSyncQueue/);
+  assert.match(teamStorageSource, /postActiveTeamToBackend\(team, activeTeamBackendSyncTimeoutMs\)/);
+  assert.match(teamStorageSource, /withTimeout/);
+  assert.match(teamStorageSource, /AbortController/);
+  assert.match(teamStorageSource, /activeTeamBackendSyncTimeoutMs/);
 });
 
 test("backend hydration keeps fresher local completed-game season totals", async () => {
@@ -113,6 +135,55 @@ test("backend hydration applies backend totals when they are current", async () 
   }
 });
 
+test("active team backend syncs keep fresher final-game totals as the last write", async () => {
+  const originalFetch = global.fetch;
+  const staleTeam = buildTeamWithStats({
+    gamesPlayed: 2,
+    plateAppearances: 8,
+    atBats: 7,
+    hits: 4,
+  });
+  const finalGameTeam = buildTeamWithStats({
+    gamesPlayed: 3,
+    plateAppearances: 12,
+    atBats: 10,
+    hits: 7,
+  });
+  const savedHitTotals = [];
+  let resolveSlowSync;
+  const slowSync = new Promise((resolve) => {
+    resolveSlowSync = resolve;
+  });
+
+  try {
+    global.fetch = async (_url, init) => {
+      const body = JSON.parse(init.body);
+      savedHitTotals.push(body.team.players[0].seasonStats.hits);
+
+      if (savedHitTotals.length === 1) {
+        return slowSync;
+      }
+
+      return Response.json({ team: body.team });
+    };
+
+    syncActiveTeamToBackend(staleTeam);
+    await waitFor(() => savedHitTotals.length === 1);
+
+    syncActiveTeamToBackend(finalGameTeam);
+    await tick();
+
+    assert.deepEqual(savedHitTotals, [4]);
+
+    resolveSlowSync(Response.json({ team: staleTeam }));
+    await waitFor(() => savedHitTotals.length === 2);
+
+    assert.deepEqual(savedHitTotals, [4, 7]);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
 function installLocalStorage() {
   const store = new Map();
   const previousWindow = global.window;
@@ -159,4 +230,20 @@ function buildTeamWithStats(stats) {
     ownerUid: "account-a",
     ownerEmail: "team@example.com",
   };
+}
+
+function tick() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function waitFor(predicate) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (predicate()) {
+      return;
+    }
+
+    await tick();
+  }
+
+  assert.fail("Timed out waiting for condition.");
 }
