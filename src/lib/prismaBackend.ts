@@ -19,8 +19,10 @@ import { getPrisma } from "@/lib/prisma";
 import { AppError, notFoundError } from "@/lib/appErrors";
 import { defaultGameRules, seedPlayers, testTeamName } from "@/lib/seedTeam";
 import { legacyTeamAccount, type TeamAccount } from "@/lib/teamAccount";
+import { canSaveScheduledGameSnapshot } from "@/lib/gameSnapshotRules";
 import { getPlayerGameStats, getTeamGameTotals, occupiedBaseEntries, type GameState } from "@/lib/gameEngine";
-import { addStats } from "@/lib/statCalculations";
+import { addStats, createZeroStats } from "@/lib/statCalculations";
+import { replaceGameStatsInSeason, subtractStat, subtractStats } from "@/lib/seasonStatRules";
 import type { BatterResult, LocalGameStatus, OutType } from "@/types/game";
 import type { ActiveTeam, Player } from "@/types/player";
 import type { RunnerMovement } from "@/types/runner";
@@ -130,22 +132,29 @@ export async function saveFirstGameSnapshotToPrisma(
   return prisma.$transaction(async (tx) => {
     const team = await upsertSnapshotTeam(tx, options.team, account);
     const scheduledGameId = options.gameId ?? state.gameId;
+    const gameId = scheduledGameId ?? getFirstGameId(seasonYear, team.id);
+    const existingGame = await tx.game.findFirst({
+      where: { id: gameId, teamId: team.id },
+      select: {
+        opponentScore: true,
+        snapshot: true,
+        status: true,
+        teamScore: true,
+      },
+    });
+
     if (scheduledGameId) {
-      const scheduledGame = await tx.game.findFirst({
-        where: { id: scheduledGameId, teamId: team.id },
-        select: { status: true },
-      });
-      if (!scheduledGame) {
+      if (!existingGame) {
         throw notFoundError("TEAM_NOT_FOUND", "Scheduled game not found for this team.", { gameId: scheduledGameId });
       }
-      if (scheduledGame.status !== PrismaGameStatus.IN_PROGRESS) {
+      if (!canSaveScheduledGameSnapshot(existingGame.status, state, existingGame.snapshot)) {
         throw new AppError(
           "GAME_NOT_STARTABLE",
-          scheduledGame.status === PrismaGameStatus.FINAL
-            ? "Completed games are read-only."
+          existingGame.status === PrismaGameStatus.FINAL
+            ? "Completed games can only save final stat snapshots that are at least as complete as the saved game."
             : "Start this game from its scheduled game screen before saving stats.",
           409,
-          { gameId: scheduledGameId, status: scheduledGame.status },
+          { gameId: scheduledGameId, status: existingGame.status },
         );
       }
       if (state.status !== "IN_PROGRESS" && state.status !== "FINAL") {
@@ -183,7 +192,21 @@ export async function saveFirstGameSnapshotToPrisma(
       });
     }
 
-    const gameId = scheduledGameId ?? getFirstGameId(seasonYear, team.id);
+    const lineupPlayerIds = state.lineup.map((player) => player.id);
+    const existingPlayerGameStats = await tx.playerGameStats.findMany({
+      where: { gameId, playerId: { in: lineupPlayerIds } },
+    });
+    const existingPlayerGameStatsByPlayerId = new Map(
+      existingPlayerGameStats.map((stats) => [stats.playerId, fromPlayerStatsRecord(stats)]),
+    );
+    const existingPlayerSeasonStats = await tx.playerSeasonStats.findMany({
+      where: { playerId: { in: lineupPlayerIds }, season: seasonYear },
+    });
+    const existingPlayerSeasonStatsByPlayerId = new Map(
+      existingPlayerSeasonStats.map((stats) => [stats.playerId, fromPlayerStatsRecord(stats)]),
+    );
+    const existingTeamGameStats = await tx.teamGameStats.findUnique({ where: { gameId } });
+    const existingTeamSeasonStats = await tx.teamSeasonStats.findUnique({ where: { seasonId: season.id } });
     const result = state.status === "FINAL" ? getGameResult(state.teamScore, state.opponentScore) : null;
     const game = await tx.game.upsert({
       where: { id: gameId },
@@ -279,7 +302,13 @@ export async function saveFirstGameSnapshotToPrisma(
         ...getPlayerGameStats(state, player.id),
         gamesPlayed: state.status === "PREGAME" ? 0 : 1,
       };
-      const playerSeasonStats = addStats(player.seasonStats, playerGameStats);
+      const existingSeasonStats = existingPlayerSeasonStatsByPlayerId.get(player.id) ?? player.seasonStats;
+      const existingGameStats = existingPlayerGameStatsByPlayerId.get(player.id) ?? createZeroStats();
+      const playerSeasonStats = replaceGameStatsInSeason(
+        existingSeasonStats,
+        existingGameStats,
+        playerGameStats,
+      );
 
       await tx.playerSeasonStats.upsert({
         where: {
@@ -305,6 +334,26 @@ export async function saveFirstGameSnapshotToPrisma(
 
     const teamTotals = getTeamGameTotals(state);
     const record = getRecordCounts(state.status, state.teamScore, state.opponentScore);
+    const existingTeamRecord = existingGame
+      ? getRecordCounts(mapLocalGameStatus(existingGame.status), existingGame.teamScore, existingGame.opponentScore)
+      : getRecordCounts("PREGAME", 0, 0);
+    const nextTeamSeasonStats = addTeamGameToSeasonStats(
+      subtractTeamGameFromSeasonStats(
+        existingTeamSeasonStats ? fromTeamSeasonStatsRecord(existingTeamSeasonStats) : createZeroTeamSeasonStats(),
+        existingTeamGameStats
+          ? fromTeamGameStatsRecord(
+              existingTeamGameStats,
+              mapLocalGameStatus(existingGame?.status ?? PrismaGameStatus.SCHEDULED) === "PREGAME" ? 0 : 1,
+            )
+          : createZeroTeamGameStats(),
+        existingTeamRecord,
+      ),
+      teamTotals,
+      record,
+      state.teamScore,
+      state.opponentScore,
+      state.status === "PREGAME" ? 0 : 1,
+    );
 
     await tx.teamGameStats.upsert({
       where: { gameId: game.id },
@@ -329,20 +378,24 @@ export async function saveFirstGameSnapshotToPrisma(
       create: {
         teamId: team.id,
         seasonId: season.id,
-        gamesPlayed: state.status === "PREGAME" ? 0 : 1,
-        ...record,
-        runsFor: state.teamScore,
-        runsAgainst: state.opponentScore,
-        ...toTeamStatsData(teamTotals),
-        runs: teamTotals.runs,
+        gamesPlayed: nextTeamSeasonStats.gamesPlayed,
+        wins: nextTeamSeasonStats.wins,
+        losses: nextTeamSeasonStats.losses,
+        ties: nextTeamSeasonStats.ties,
+        runsFor: nextTeamSeasonStats.runsFor,
+        runsAgainst: nextTeamSeasonStats.runsAgainst,
+        ...toTeamStatsData(nextTeamSeasonStats),
+        runs: nextTeamSeasonStats.runs,
       },
       update: {
-        gamesPlayed: state.status === "PREGAME" ? 0 : 1,
-        ...record,
-        runsFor: state.teamScore,
-        runsAgainst: state.opponentScore,
-        ...toTeamStatsData(teamTotals),
-        runs: teamTotals.runs,
+        gamesPlayed: nextTeamSeasonStats.gamesPlayed,
+        wins: nextTeamSeasonStats.wins,
+        losses: nextTeamSeasonStats.losses,
+        ties: nextTeamSeasonStats.ties,
+        runsFor: nextTeamSeasonStats.runsFor,
+        runsAgainst: nextTeamSeasonStats.runsAgainst,
+        ...toTeamStatsData(nextTeamSeasonStats),
+        runs: nextTeamSeasonStats.runs,
       },
     });
 
@@ -358,14 +411,18 @@ export async function saveFirstGameSnapshotToPrisma(
         teamId: team.id,
         seasonId: season.id,
         label: "Overall",
-        ...record,
-        runsFor: state.teamScore,
-        runsAgainst: state.opponentScore,
+        wins: nextTeamSeasonStats.wins,
+        losses: nextTeamSeasonStats.losses,
+        ties: nextTeamSeasonStats.ties,
+        runsFor: nextTeamSeasonStats.runsFor,
+        runsAgainst: nextTeamSeasonStats.runsAgainst,
       },
       update: {
-        ...record,
-        runsFor: state.teamScore,
-        runsAgainst: state.opponentScore,
+        wins: nextTeamSeasonStats.wins,
+        losses: nextTeamSeasonStats.losses,
+        ties: nextTeamSeasonStats.ties,
+        runsFor: nextTeamSeasonStats.runsFor,
+        runsAgainst: nextTeamSeasonStats.runsAgainst,
       },
     });
 
@@ -556,7 +613,7 @@ function toRuleSettingsUpdate(rules = defaultGameRules) {
   };
 }
 
-function toStatsData(stats: PlayerStats | undefined) {
+function toStatsData(stats: Partial<PlayerStats> | undefined) {
   return {
     plateAppearances: stats?.plateAppearances ?? 0,
     atBats: stats?.atBats ?? 0,
@@ -583,7 +640,14 @@ function toStatsData(stats: PlayerStats | undefined) {
   };
 }
 
-function toTeamStatsData(stats: ReturnType<typeof getTeamGameTotals>) {
+function fromPlayerStatsRecord(stats: PlayerStats): PlayerStats {
+  return {
+    gamesPlayed: stats.gamesPlayed,
+    ...toStatsData(stats),
+  };
+}
+
+function toTeamStatsData(stats: Omit<PlayerStats, "gamesPlayed">) {
   return {
     plateAppearances: stats.plateAppearances,
     atBats: stats.atBats,
@@ -607,6 +671,95 @@ function toTeamStatsData(stats: ReturnType<typeof getTeamGameTotals>) {
     productiveOuts: stats.productiveOuts,
     runs: stats.runs,
     rbis: stats.rbis,
+  };
+}
+
+type PersistedTeamSeasonStats = ReturnType<typeof createZeroTeamSeasonStats>;
+type PersistedTeamGameStats = ReturnType<typeof createZeroTeamGameStats>;
+
+function createZeroTeamGameStats() {
+  return {
+    ...createZeroStats(),
+    opponentRuns: 0,
+    leftOnBase: 0,
+  };
+}
+
+function createZeroTeamSeasonStats() {
+  return {
+    ...createZeroStats(),
+    gamesPlayed: 0,
+    wins: 0,
+    losses: 0,
+    ties: 0,
+    runsFor: 0,
+    runsAgainst: 0,
+  };
+}
+
+function fromTeamGameStatsRecord(
+  stats: Omit<PersistedTeamGameStats, "gamesPlayed">,
+  gamesPlayed: number,
+): PersistedTeamGameStats {
+  return {
+    ...createZeroTeamGameStats(),
+    gamesPlayed,
+    ...toStatsData(stats),
+    opponentRuns: stats.opponentRuns,
+    leftOnBase: stats.leftOnBase,
+  };
+}
+
+function fromTeamSeasonStatsRecord(stats: PersistedTeamSeasonStats): PersistedTeamSeasonStats {
+  return {
+    ...createZeroTeamSeasonStats(),
+    gamesPlayed: stats.gamesPlayed,
+    wins: stats.wins,
+    losses: stats.losses,
+    ties: stats.ties,
+    runsFor: stats.runsFor,
+    runsAgainst: stats.runsAgainst,
+    ...toStatsData(stats),
+  };
+}
+
+function subtractTeamGameFromSeasonStats(
+  seasonStats: PersistedTeamSeasonStats,
+  gameStats: PersistedTeamGameStats,
+  record: ReturnType<typeof getRecordCounts>,
+): PersistedTeamSeasonStats {
+  return {
+    ...subtractStats(seasonStats, gameStats),
+    gamesPlayed: subtractStat(seasonStats.gamesPlayed, gameStats.gamesPlayed),
+    wins: subtractStat(seasonStats.wins, record.wins),
+    losses: subtractStat(seasonStats.losses, record.losses),
+    ties: subtractStat(seasonStats.ties, record.ties),
+    runsFor: subtractStat(seasonStats.runsFor, gameStats.runs),
+    runsAgainst: subtractStat(seasonStats.runsAgainst, gameStats.opponentRuns),
+  };
+}
+
+function addTeamGameToSeasonStats(
+  seasonStats: PersistedTeamSeasonStats,
+  gameStats: ReturnType<typeof getTeamGameTotals>,
+  record: ReturnType<typeof getRecordCounts>,
+  runsFor: number,
+  runsAgainst: number,
+  gamesPlayed: number,
+): PersistedTeamSeasonStats {
+  const gameStatsWithGamesPlayed = {
+    gamesPlayed,
+    ...toStatsData(gameStats),
+  };
+
+  return {
+    ...addStats(seasonStats, gameStatsWithGamesPlayed),
+    gamesPlayed: seasonStats.gamesPlayed + gamesPlayed,
+    wins: seasonStats.wins + record.wins,
+    losses: seasonStats.losses + record.losses,
+    ties: seasonStats.ties + record.ties,
+    runsFor: seasonStats.runsFor + runsFor,
+    runsAgainst: seasonStats.runsAgainst + runsAgainst,
   };
 }
 
@@ -690,6 +843,12 @@ function mapGameStatus(value: LocalGameStatus) {
   if (value === "IN_PROGRESS") return PrismaGameStatus.IN_PROGRESS;
   if (value === "FINAL") return PrismaGameStatus.FINAL;
   return PrismaGameStatus.SCHEDULED;
+}
+
+function mapLocalGameStatus(value: PrismaGameStatus): LocalGameStatus {
+  if (value === PrismaGameStatus.IN_PROGRESS) return "IN_PROGRESS";
+  if (value === PrismaGameStatus.FINAL) return "FINAL";
+  return "PREGAME";
 }
 
 function mapBatterResult(value: BatterResult) {
