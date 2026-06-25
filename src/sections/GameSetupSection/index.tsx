@@ -19,7 +19,6 @@ import {
 import { validateLineupPlayerPool } from "@/lib/lineupRules";
 import { useBackendSyncedActiveTeam } from "@/lib/teamStorage";
 import { useTeamSchedule } from "@/lib/scheduleClient";
-import { useFirstGameState } from "@/lib/useFirstGameState";
 import { cn } from "@/lib/utils";
 import type { GameRules } from "@/types/game";
 import type { ScheduleWeek } from "@/types/schedule";
@@ -27,7 +26,6 @@ import type { ScheduleWeek } from "@/types/schedule";
 export function GameSetupSection() {
   const activeTeam = useBackendSyncedActiveTeam();
   const setup = usePregameSetup();
-  const gameState = useFirstGameState();
   const { schedule, isLoading: isScheduleLoading } = useTeamSchedule(activeTeam?.id ?? null);
   const scheduledGames = (schedule?.weeks ?? []).filter(
     (week): week is Extract<ScheduleWeek, { kind: "GAME" }> => week.kind === "GAME" && week.status === "SCHEDULED",
@@ -36,12 +34,12 @@ export function GameSetupSection() {
   const lineupTarget = getLineupTargetCount(setup.lineupSize, setup.selectedPlayerIds.length);
   const players = activeTeam?.players.filter((player) => player.isActive) ?? [];
   const selectedPlayerPool = useMemo(
-    () => buildPregamePlayerPool(setup, gameState, activeTeam),
-    [activeTeam, gameState, setup],
+    () => buildPregamePlayerPool(setup, activeTeam),
+    [activeTeam, setup],
   );
   const lineupValidation = validateLineupPlayerPool(selectedPlayerPool);
   const canGenerateLineup = setup.selectedPlayerIds.length > 0 && lineupValidation.isLeagueCompliant;
-  const suggestedLineup = resolveSuggestedLineupIds(setup, gameState, activeTeam);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, activeTeam);
   const canReviewLineup = Boolean(suggestedLineup.lineupIds.length || suggestedLineup.canGenerate);
 
   useEffect(() => {
@@ -80,7 +78,7 @@ export function GameSetupSection() {
   }
 
   function generateLineup() {
-    const generatedLineupIds = generateLineupIds(setup, gameState, activeTeam);
+    const generatedLineupIds = generateLineupIds(setup, activeTeam);
 
     savePregameSetup({
       ...setup,

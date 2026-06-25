@@ -5,6 +5,7 @@ import { createInitialGameState } from "../src/lib/gameEngine.ts";
 import { normalizeGameRules } from "../src/lib/gameRules.ts";
 import {
   buildAcceptedPregameSetup,
+  buildPregamePlayerPool,
   createDefaultPregameSetup,
   isStartingDefenseSavedForFirstFieldingHalf,
   resolveSuggestedLineupIds,
@@ -127,12 +128,38 @@ test("pregame start ignores stale wrong-half defensive alignments", () => {
 test("resolveSuggestedLineupIds derives a reviewable lineup without saved generated ids", () => {
   const team = activeTeam();
   const setup = createDefaultPregameSetup(team);
-  const state = createInitialGameState(team.players);
-  const suggestedLineup = resolveSuggestedLineupIds(setup, state, team);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, team);
 
   assert.equal(suggestedLineup.canGenerate, true);
   assert.equal(suggestedLineup.emptyReason, null);
   assert.equal(suggestedLineup.lineupIds.length, 10);
+});
+
+test("buildPregamePlayerPool uses the same roster season stats shown on roster cards", () => {
+  const playerWithRosterStats = {
+    ...seedPlayers[0],
+    isActive: true,
+    seasonStats: {
+      ...seedPlayers[0].seasonStats,
+      gamesPlayed: 4,
+      plateAppearances: 16,
+      atBats: 15,
+      hits: 11,
+      singles: 7,
+      doubles: 3,
+      triples: 1,
+      runs: 8,
+      rbis: 9,
+      outs: 4,
+    },
+  };
+  const team = activeTeam([playerWithRosterStats]);
+  const setup = createDefaultPregameSetup(team);
+  const playerPool = buildPregamePlayerPool(setup, team);
+
+  assert.equal(playerPool[0].seasonStats.plateAppearances, 16);
+  assert.equal(playerPool[0].seasonStats.hits, 11);
+  assert.equal(playerPool[0].seasonStats.rbis, 9);
 });
 
 test("resolveSuggestedLineupIds keeps a male wraparound hitter when trimming a larger active pool", () => {
@@ -157,8 +184,7 @@ test("resolveSuggestedLineupIds keeps a male wraparound hitter when trimming a l
     ...createDefaultPregameSetup(team),
     lineupSize: "9",
   };
-  const state = createInitialGameState(team.players);
-  const suggestedLineup = resolveSuggestedLineupIds(setup, state, team);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, team);
   const playersById = new Map(team.players.map((player) => [player.id, player]));
   const lineupPlayers = suggestedLineup.lineupIds
     .map((playerId) => playersById.get(playerId))
@@ -186,8 +212,7 @@ test("resolveSuggestedLineupIds regenerates saved lineups that lost the female l
       "noa-cohen",
     ],
   };
-  const state = createInitialGameState(team.players);
-  const suggestedLineup = resolveSuggestedLineupIds(setup, state, team);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, team);
 
   assert.equal(suggestedLineup.canGenerate, true);
   assert.equal(suggestedLineup.lineupIds[0], "maya-johnson");
@@ -214,8 +239,7 @@ test("resolveSuggestedLineupIds regenerates unaccepted lineups with avoidable ba
       "noa-cohen",
     ],
   };
-  const state = createInitialGameState(team.players);
-  const suggestedLineup = resolveSuggestedLineupIds(setup, state, team);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, team);
   const playersById = new Map(team.players.map((player) => [player.id, player]));
   const lineupPlayers = suggestedLineup.lineupIds
     .map((playerId) => playersById.get(playerId))
@@ -244,8 +268,7 @@ test("resolveSuggestedLineupIds regenerates accepted lineups with avoidable fema
     generatedLineupIds: clusteredLineupIds,
     acceptedLineupIds: clusteredLineupIds,
   };
-  const state = createInitialGameState(team.players);
-  const suggestedLineup = resolveSuggestedLineupIds(setup, state, team);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, team);
   const playersById = new Map(team.players.map((player) => [player.id, player]));
   const lineupPlayers = suggestedLineup.lineupIds
     .map((playerId) => playersById.get(playerId))
@@ -274,8 +297,7 @@ test("resolveSuggestedLineupIds regenerates accepted lineups that miss the male 
     generatedLineupIds: acceptedLineupIds,
     acceptedLineupIds,
   };
-  const state = createInitialGameState(team.players);
-  const suggestedLineup = resolveSuggestedLineupIds(setup, state, team);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, team);
   const playersById = new Map(team.players.map((player) => [player.id, player]));
   const lineupPlayers = suggestedLineup.lineupIds
     .map((playerId) => playersById.get(playerId))
@@ -305,8 +327,7 @@ test("resolveSuggestedLineupIds preserves accepted lineups that already protect 
     generatedLineupIds: acceptedLineupIds,
     acceptedLineupIds,
   };
-  const state = createInitialGameState(team.players);
-  const suggestedLineup = resolveSuggestedLineupIds(setup, state, team);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, team);
 
   assert.deepEqual(suggestedLineup.lineupIds, acceptedLineupIds);
 });
@@ -317,8 +338,7 @@ test("resolveSuggestedLineupIds explains invalid selected player pools", () => {
     .slice(0, 3);
   const team = activeTeam(maleOnlyPlayers);
   const setup = createDefaultPregameSetup(team);
-  const state = createInitialGameState(team.players);
-  const suggestedLineup = resolveSuggestedLineupIds(setup, state, team);
+  const suggestedLineup = resolveSuggestedLineupIds(setup, team);
 
   assert.equal(suggestedLineup.canGenerate, false);
   assert.equal(suggestedLineup.lineupIds.length, 0);
