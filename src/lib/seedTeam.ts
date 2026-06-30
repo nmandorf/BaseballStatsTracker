@@ -1,35 +1,7 @@
 import type { GameRules } from "@/types/game";
 import type { Player } from "@/types/player";
-import type { PlayerStats } from "@/types/stats";
 import { createDefaultDefensiveProfile } from "./defenseEngine.ts";
-
-export function createZeroStats(): PlayerStats {
-  return {
-    gamesPlayed: 0,
-    plateAppearances: 0,
-    atBats: 0,
-    hits: 0,
-    singles: 0,
-    doubles: 0,
-    triples: 0,
-    homeRuns: 0,
-    walks: 0,
-    reachedOnError: 0,
-    fieldersChoice: 0,
-    sacFlies: 0,
-    outs: 0,
-    groundouts: 0,
-    flyouts: 0,
-    lineouts: 0,
-    strikeoutsLooking: 0,
-    strikeoutsSwinging: 0,
-    otherOuts: 0,
-    doublePlays: 0,
-    productiveOuts: 0,
-    runs: 0,
-    rbis: 0,
-  };
-}
+import { createZeroStats } from "./statCalculations.ts";
 
 export const testTeamName = "Mavericks";
 

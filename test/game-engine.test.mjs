@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  createDefaultMovements,
   createInitialGameState,
   endGame,
   firstGameHistoryId,
@@ -66,6 +67,22 @@ function player(id, seasonStats = stats()) {
     isActive: true,
     seedOrder: 1,
     seasonStats,
+  };
+}
+
+function createRunnerOnFirstState(runner = player("maya-johnson"), batter = player("jordan-lee")) {
+  return {
+    runner,
+    batter,
+    state: savePlay(createInitialGameState([runner, batter], { status: "IN_PROGRESS" }), "1B", {}, {}, false),
+  };
+}
+
+function basesWithRunners(occupiedBases = []) {
+  return {
+    first: occupiedBases.includes("1B") ? { playerId: "runner-1", name: "Runner 1" } : null,
+    second: occupiedBases.includes("2B") ? { playerId: "runner-2", name: "Runner 2" } : null,
+    third: occupiedBases.includes("3B") ? { playerId: "runner-3", name: "Runner 3" } : null,
   };
 }
 
@@ -432,6 +449,75 @@ test("result locking follows occupied base and out count rules", () => {
   assert.equal(getResultLockReason("DP", runnerOnThirdWithTwoOuts.bases, runnerOnThirdWithTwoOuts.outs), "Double play needs fewer than 2 outs");
 });
 
+test("createDefaultMovements follows the Stats Entry auto-advance matrix", () => {
+  const scenarios = [
+    {
+      result: "1B",
+      occupiedBases: ["1B", "2B", "3B"],
+      movements: { "1B": "2B", "2B": "Scores", "3B": "Scores" },
+    },
+    {
+      result: "2B",
+      occupiedBases: ["1B", "2B", "3B"],
+      movements: { "1B": "3B", "2B": "Scores", "3B": "Scores" },
+    },
+    {
+      result: "3B",
+      occupiedBases: ["1B", "2B", "3B"],
+      movements: { "1B": "Scores", "2B": "Scores", "3B": "Scores" },
+    },
+    {
+      result: "HR",
+      occupiedBases: ["1B", "2B", "3B"],
+      movements: { "1B": "Scores", "2B": "Scores", "3B": "Scores" },
+    },
+    {
+      result: "BB",
+      occupiedBases: ["1B", "2B", "3B"],
+      movements: { "1B": "2B", "2B": "3B", "3B": "Scores" },
+    },
+    {
+      result: "BB",
+      occupiedBases: ["1B", "3B"],
+      movements: { "1B": "2B", "3B": "3B" },
+    },
+    {
+      result: "ROE",
+      occupiedBases: ["1B", "2B", "3B"],
+      movements: { "1B": "2B", "2B": "3B", "3B": "Scores" },
+    },
+    {
+      result: "FC",
+      occupiedBases: ["1B", "2B", "3B"],
+      movements: { "1B": "2B", "2B": "3B", "3B": "Out" },
+    },
+    {
+      result: "FC",
+      occupiedBases: ["1B", "3B"],
+      movements: { "1B": "Out", "3B": "3B" },
+    },
+    {
+      result: "SF",
+      occupiedBases: ["1B", "3B"],
+      movements: { "1B": "1B", "3B": "Scores" },
+    },
+    {
+      result: "DP",
+      occupiedBases: ["1B", "2B"],
+      movements: { "1B": "Out", "2B": "2B" },
+    },
+    {
+      result: "Out",
+      occupiedBases: ["1B", "2B", "3B"],
+      movements: { "1B": "1B", "2B": "2B", "3B": "3B" },
+    },
+  ];
+
+  scenarios.forEach(({ result, occupiedBases, movements }) => {
+    assert.deepEqual(createDefaultMovements(result, basesWithRunners(occupiedBases)), movements);
+  });
+});
+
 test("savePlay rejects impossible results even when called outside the UI", () => {
   const batter = player("maya-johnson");
   const state = createInitialGameState([batter], { status: "IN_PROGRESS" });
@@ -447,9 +533,7 @@ test("savePlay rejects impossible results even when called outside the UI", () =
 });
 
 test("savePlay rejects base collisions before overwriting runners", () => {
-  const runner = player("maya-johnson");
-  const batter = player("jordan-lee");
-  const runnerOnFirst = savePlay(createInitialGameState([runner, batter], { status: "IN_PROGRESS" }), "1B", {}, {}, false);
+  const { state: runnerOnFirst } = createRunnerOnFirstState();
 
   assert.throws(
     () => savePlay(runnerOnFirst, "1B", { "1B": "1B" }, {}, false),
@@ -458,9 +542,7 @@ test("savePlay rejects base collisions before overwriting runners", () => {
 });
 
 test("savePlay rejects plays that would record more than three inning outs", () => {
-  const runner = player("maya-johnson");
-  const batter = player("jordan-lee");
-  const runnerOnFirst = savePlay(createInitialGameState([runner, batter], { status: "IN_PROGRESS" }), "1B", {}, {}, false);
+  const { state: runnerOnFirst } = createRunnerOnFirstState();
   const twoOutState = {
     ...runnerOnFirst,
     outs: 2,

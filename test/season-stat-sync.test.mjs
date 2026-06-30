@@ -11,6 +11,7 @@ import {
   saveActiveTeam,
   syncActiveTeamToBackend,
 } from "../src/lib/teamStorage.ts";
+import { installLocalStorage } from "./helpers/local-storage.mjs";
 
 const firstGameStorageSource = readFileSync(
   new URL("../src/lib/firstGameStorage.ts", import.meta.url),
@@ -70,103 +71,81 @@ test("active team backend syncs are ordered and bounded", () => {
 });
 
 test("backend hydration keeps fresher local completed-game season totals", async () => {
-  const cleanup = installLocalStorage();
-  const originalFetch = global.fetch;
-
-  try {
-    const localTeam = buildTeamWithStats({
+  await assertBackendHydration({
+    localStats: {
       gamesPlayed: 3,
       plateAppearances: 12,
       atBats: 10,
       hits: 7,
-    });
-    const staleBackendTeam = buildTeamWithStats({
+    },
+    backendStats: {
       gamesPlayed: 2,
       plateAppearances: 8,
       atBats: 7,
       hits: 4,
-    });
-
-    saveActiveTeam(localTeam);
-    global.fetch = async () => Response.json({ team: staleBackendTeam });
-
-    const hydratedTeam = await hydrateActiveTeamFromBackend();
-
-    assert.equal(hydratedTeam?.players[0].seasonStats.gamesPlayed, 3);
-    assert.equal(hydratedTeam?.players[0].seasonStats.plateAppearances, 12);
-    assert.equal(loadActiveTeam()?.players[0].seasonStats.hits, 7);
-  } finally {
-    resetActiveTeam();
-    global.fetch = originalFetch;
-    cleanup();
-  }
+    },
+    expectedStats: { gamesPlayed: 3, plateAppearances: 12, hits: 7 },
+  });
 });
 
 test("backend hydration applies backend totals when they are current", async () => {
-  const cleanup = installLocalStorage();
-  const originalFetch = global.fetch;
-
-  try {
-    const localTeam = buildTeamWithStats({
+  await assertBackendHydration({
+    localStats: {
       gamesPlayed: 2,
       plateAppearances: 8,
       atBats: 7,
       hits: 4,
-    });
-    const currentBackendTeam = buildTeamWithStats({
+    },
+    backendStats: {
       gamesPlayed: 3,
       plateAppearances: 12,
       atBats: 10,
       hits: 7,
-    });
-
-    saveActiveTeam(localTeam);
-    global.fetch = async () => Response.json({ team: currentBackendTeam });
-
-    const hydratedTeam = await hydrateActiveTeamFromBackend();
-
-    assert.equal(hydratedTeam?.players[0].seasonStats.gamesPlayed, 3);
-    assert.equal(hydratedTeam?.players[0].seasonStats.plateAppearances, 12);
-    assert.equal(loadActiveTeam()?.players[0].seasonStats.hits, 7);
-  } finally {
-    resetActiveTeam();
-    global.fetch = originalFetch;
-    cleanup();
-  }
+    },
+    expectedStats: { gamesPlayed: 3, plateAppearances: 12, hits: 7 },
+  });
 });
 
 test("backend hydration applies saved game stats over stale local game counters", async () => {
-  const cleanup = installLocalStorage();
-  const originalFetch = global.fetch;
-
-  try {
-    const staleLocalTeam = buildTeamWithStats({
+  await assertBackendHydration({
+    localStats: {
       gamesPlayed: 4,
       plateAppearances: 0,
       atBats: 0,
       hits: 0,
-    });
-    const backendTeamWithGameStats = buildTeamWithStats({
+    },
+    backendStats: {
       gamesPlayed: 3,
       plateAppearances: 12,
       atBats: 10,
       hits: 7,
-    });
+    },
+    expectedStats: { gamesPlayed: 3, plateAppearances: 12, hits: 7 },
+  });
+});
 
-    saveActiveTeam(staleLocalTeam);
-    global.fetch = async () => Response.json({ team: backendTeamWithGameStats });
+async function assertBackendHydration({ localStats, backendStats, expectedStats }) {
+  const cleanup = installLocalStorage();
+  const originalFetch = global.fetch;
+
+  try {
+    const localTeam = buildTeamWithStats(localStats);
+    const backendTeam = buildTeamWithStats(backendStats);
+
+    saveActiveTeam(localTeam);
+    global.fetch = async () => Response.json({ team: backendTeam });
 
     const hydratedTeam = await hydrateActiveTeamFromBackend();
 
-    assert.equal(hydratedTeam?.players[0].seasonStats.gamesPlayed, 3);
-    assert.equal(hydratedTeam?.players[0].seasonStats.plateAppearances, 12);
-    assert.equal(loadActiveTeam()?.players[0].seasonStats.hits, 7);
+    assert.equal(hydratedTeam?.players[0].seasonStats.gamesPlayed, expectedStats.gamesPlayed);
+    assert.equal(hydratedTeam?.players[0].seasonStats.plateAppearances, expectedStats.plateAppearances);
+    assert.equal(loadActiveTeam()?.players[0].seasonStats.hits, expectedStats.hits);
   } finally {
     resetActiveTeam();
     global.fetch = originalFetch;
     cleanup();
   }
-});
+}
 
 test("active team backend syncs keep fresher final-game totals as the last write", async () => {
   const originalFetch = global.fetch;
@@ -216,31 +195,6 @@ test("active team backend syncs keep fresher final-game totals as the last write
     global.fetch = originalFetch;
   }
 });
-
-function installLocalStorage() {
-  const store = new Map();
-  const previousWindow = global.window;
-
-  global.window = {
-    localStorage: {
-      getItem: (key) => store.get(key) ?? null,
-      removeItem: (key) => store.delete(key),
-      setItem: (key, value) => store.set(key, value),
-    },
-    addEventListener: () => {},
-    dispatchEvent: () => true,
-    removeEventListener: () => {},
-  };
-
-  return () => {
-    if (previousWindow === undefined) {
-      delete global.window;
-      return;
-    }
-
-    global.window = previousWindow;
-  };
-}
 
 function buildTeamWithStats(stats) {
   const input = createEmptyPlayerInput(1);

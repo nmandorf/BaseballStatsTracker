@@ -30,15 +30,7 @@ function getSavedActionCount(state: Pick<GameState, "defensiveEvents" | "plays">
 }
 
 function getSnapshotActionCount(snapshot?: unknown) {
-  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
-    return 0;
-  }
-
-  const plays = "plays" in snapshot && Array.isArray(snapshot.plays) ? snapshot.plays : [];
-  const defensiveEvents = "defensiveEvents" in snapshot && Array.isArray(snapshot.defensiveEvents)
-    ? snapshot.defensiveEvents
-    : [];
-
+  const { defensiveEvents, plays } = getSnapshotActions(snapshot);
   return plays.length + defensiveEvents.length;
 }
 
@@ -52,19 +44,25 @@ function getActionSignature(state: Pick<GameState, "defensiveEvents" | "plays">)
 }
 
 function getSnapshotActionSignature(snapshot?: unknown) {
-  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
-    return "";
-  }
-
-  const plays = "plays" in snapshot && Array.isArray(snapshot.plays) ? snapshot.plays : [];
-  const defensiveEvents = "defensiveEvents" in snapshot && Array.isArray(snapshot.defensiveEvents)
-    ? snapshot.defensiveEvents
-    : [];
+  const { defensiveEvents, plays } = getSnapshotActions(snapshot);
 
   return [
     ...plays.map((play) => `play:${getSnapshotActionId(play)}`),
     ...defensiveEvents.map((event) => `defense:${getSnapshotActionId(event)}`),
   ].join("|");
+}
+
+function getSnapshotActions(snapshot?: unknown) {
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return { plays: [], defensiveEvents: [] };
+  }
+
+  return {
+    plays: "plays" in snapshot && Array.isArray(snapshot.plays) ? snapshot.plays : [],
+    defensiveEvents: "defensiveEvents" in snapshot && Array.isArray(snapshot.defensiveEvents)
+      ? snapshot.defensiveEvents
+      : [],
+  };
 }
 
 function getSnapshotActionId(action: unknown) {

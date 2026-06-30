@@ -1,5 +1,5 @@
 import type { BasesState, RunnerMovement } from "@/types/runner";
-import type { DefensiveAlignment, DefensiveEvent } from "@/types/defense";
+import type { DefensiveEvent } from "@/types/defense";
 
 export type BatterResult = "1B" | "2B" | "3B" | "HR" | "BB" | "ROE" | "FC" | "SF" | "Out" | "DP";
 export type OutType =
@@ -55,9 +55,4 @@ export type DefensiveEventInput = {
   greatPlayImpact?: DefensiveEvent["greatPlayImpact"];
   involvedPlayerIds?: string[];
   notes?: string;
-};
-
-export type DefensiveGameState = {
-  defensiveAlignments: DefensiveAlignment[];
-  defensiveEvents: DefensiveEvent[];
 };

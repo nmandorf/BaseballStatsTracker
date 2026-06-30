@@ -37,6 +37,22 @@ function activeTeam(players = seedPlayers) {
   };
 }
 
+function getPlayersForLineup(team, lineupIds) {
+  const playersById = new Map(team.players.map((player) => [player.id, player]));
+  return lineupIds
+    .map((playerId) => playersById.get(playerId))
+    .filter(Boolean);
+}
+
+function resolveLineupForSetup(setup, team) {
+  const suggestedLineup = resolveSuggestedLineupIds(setup, team);
+
+  return {
+    suggestedLineup,
+    lineupPlayers: getPlayersForLineup(team, suggestedLineup.lineupIds),
+  };
+}
+
 test("normalizeGameRules falls back to safe defaults", () => {
   const rules = normalizeGameRules({
     homeRunLimitEnabled: false,
@@ -184,11 +200,7 @@ test("resolveSuggestedLineupIds keeps a male wraparound hitter when trimming a l
     ...createDefaultPregameSetup(team),
     lineupSize: "9",
   };
-  const suggestedLineup = resolveSuggestedLineupIds(setup, team);
-  const playersById = new Map(team.players.map((player) => [player.id, player]));
-  const lineupPlayers = suggestedLineup.lineupIds
-    .map((playerId) => playersById.get(playerId))
-    .filter(Boolean);
+  const { lineupPlayers, suggestedLineup } = resolveLineupForSetup(setup, team);
 
   assert.equal(suggestedLineup.lineupIds.length, 9);
   assert.equal(suggestedLineup.lineupIds.includes("only-male"), true);
@@ -239,11 +251,7 @@ test("resolveSuggestedLineupIds regenerates unaccepted lineups with avoidable ba
       "noa-cohen",
     ],
   };
-  const suggestedLineup = resolveSuggestedLineupIds(setup, team);
-  const playersById = new Map(team.players.map((player) => [player.id, player]));
-  const lineupPlayers = suggestedLineup.lineupIds
-    .map((playerId) => playersById.get(playerId))
-    .filter(Boolean);
+  const { lineupPlayers, suggestedLineup } = resolveLineupForSetup(setup, team);
 
   assert.notDeepEqual(suggestedLineup.lineupIds, setup.generatedLineupIds);
   assert.equal(validateLineupGenderRules(lineupPlayers).warnings.some((warning) => warning.includes("back-to-back")), false);
@@ -268,11 +276,7 @@ test("resolveSuggestedLineupIds regenerates accepted lineups with avoidable fema
     generatedLineupIds: clusteredLineupIds,
     acceptedLineupIds: clusteredLineupIds,
   };
-  const suggestedLineup = resolveSuggestedLineupIds(setup, team);
-  const playersById = new Map(team.players.map((player) => [player.id, player]));
-  const lineupPlayers = suggestedLineup.lineupIds
-    .map((playerId) => playersById.get(playerId))
-    .filter(Boolean);
+  const { lineupPlayers, suggestedLineup } = resolveLineupForSetup(setup, team);
 
   assert.notDeepEqual(suggestedLineup.lineupIds, clusteredLineupIds);
   assert.equal(validateLineupGenderRules(lineupPlayers).warnings.some((warning) => warning.includes("back-to-back")), false);
@@ -297,11 +301,7 @@ test("resolveSuggestedLineupIds regenerates accepted lineups that miss the male 
     generatedLineupIds: acceptedLineupIds,
     acceptedLineupIds,
   };
-  const suggestedLineup = resolveSuggestedLineupIds(setup, team);
-  const playersById = new Map(team.players.map((player) => [player.id, player]));
-  const lineupPlayers = suggestedLineup.lineupIds
-    .map((playerId) => playersById.get(playerId))
-    .filter(Boolean);
+  const { lineupPlayers, suggestedLineup } = resolveLineupForSetup(setup, team);
 
   assert.notDeepEqual(suggestedLineup.lineupIds, acceptedLineupIds);
   assert.equal(lineupPlayers.at(-1).gender, "Male");

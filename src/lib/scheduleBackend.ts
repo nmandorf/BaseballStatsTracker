@@ -302,11 +302,9 @@ export async function loadGamePreparation(gameId: string, account: TeamAccount) 
   const startingAlignment = game.defensiveAlignments.find((alignment) => (
     alignment.inning === 1 && alignment.half === firstDefensiveHalf
   ));
-  const orderedIds = game.lineup.filter((row) => row.battingOrderPosition !== null).map((row) => row.playerId);
   const selectedPlayerIds = game.lineup.map((row) => row.playerId);
-  const lineupSize = selectedPlayerIds.length === 9 || selectedPlayerIds.length === 10 || selectedPlayerIds.length === 11
-    ? String(selectedPlayerIds.length) as "9" | "10" | "11"
-    : "Everyone" as const;
+  const orderedIds = getOrderedLineupIds(game.lineup);
+  const lineupSize = getLineupSize(selectedPlayerIds);
   const status = game.preparationStatus === PrismaGamePreparationStatus.ACCEPTED || game.preparationStatus === PrismaGamePreparationStatus.STARTED
     ? "ACCEPTED" as const
     : game.preparationStatus === PrismaGamePreparationStatus.GENERATED
@@ -412,9 +410,7 @@ function buildStartedGamePreparation(
     .sort((left, right) => (left.battingOrderPosition ?? 0) - (right.battingOrderPosition ?? 0))
     .map((row) => row.playerId);
   const selectedPlayerIds = game.lineup.map((row) => row.playerId);
-  const lineupSize = selectedPlayerIds.length === 9 || selectedPlayerIds.length === 10 || selectedPlayerIds.length === 11
-    ? String(selectedPlayerIds.length) as "9" | "10" | "11"
-    : "Everyone" as const;
+  const lineupSize = getLineupSize(selectedPlayerIds);
 
   return {
     gameId: game.id,
@@ -429,6 +425,16 @@ function buildStartedGamePreparation(
     status: "ACCEPTED" as const,
     updatedAt: startedAt.toISOString(),
   };
+}
+
+function getOrderedLineupIds(lineup: Array<{ playerId: string; battingOrderPosition: number | null }>) {
+  return lineup.filter((row) => row.battingOrderPosition !== null).map((row) => row.playerId);
+}
+
+function getLineupSize(selectedPlayerIds: string[]) {
+  return selectedPlayerIds.length === 9 || selectedPlayerIds.length === 10 || selectedPlayerIds.length === 11
+    ? String(selectedPlayerIds.length) as "9" | "10" | "11"
+    : "Everyone" as const;
 }
 
 function validatePreparedLineup(

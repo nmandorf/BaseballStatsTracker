@@ -3,6 +3,7 @@ import { createInitialGameState, getPlayerSeasonStats, upsertCompletedGame } fro
 import { defensivePositions, normalizeDefensiveAlignment } from "./defenseEngine.ts";
 import { normalizeGameRules } from "./gameRules.ts";
 import { getVerifiedTeamAccountHeaders, isSameTeamWorkspace, loadActiveTeam, saveActiveTeam, syncActiveTeamToBackend } from "./teamStorage.ts";
+import { subscribeBrowserStore } from "./browserStoreSubscription.ts";
 import type { ActiveTeam } from "@/types/player";
 
 const storageKey = "baseball-tracker:first-game-state:v1";
@@ -112,17 +113,7 @@ export function prepareFirstGameStateForTeam(
 }
 
 export function subscribeFirstGameState(onStoreChange: () => void) {
-  if (typeof window === "undefined") {
-    return () => {};
-  }
-
-  window.addEventListener("storage", onStoreChange);
-  window.addEventListener(storageEventName, onStoreChange);
-
-  return () => {
-    window.removeEventListener("storage", onStoreChange);
-    window.removeEventListener(storageEventName, onStoreChange);
-  };
+  return subscribeBrowserStore(storageEventName, onStoreChange);
 }
 
 export function getFirstGameServerSnapshot() {
@@ -183,7 +174,7 @@ export function loadCompletedGameStates(): GameState[] {
   }
 }
 
-export function upsertCompletedGameHistory(state: GameState) {
+function upsertCompletedGameHistory(state: GameState) {
   if (typeof window === "undefined" || state.status !== "FINAL") {
     return;
   }

@@ -60,16 +60,34 @@ function player(id) {
   };
 }
 
-test("away offensive third out advances to defensive bottom half", () => {
-  const players = Array.from({ length: 10 }, (_, index) => ({
-    ...player(`away-${index + 1}`),
-    gender: index < 3 ? "Female" : "Male",
+function playersWithGenderPattern(prefix, length, genderForIndex) {
+  return Array.from({ length }, (_, index) => ({
+    ...player(`${prefix}-${index + 1}`),
+    gender: genderForIndex(index),
     seedOrder: index + 1,
   }));
+}
+
+function recordThreeOffensiveOuts(state) {
+  return ["GROUNDOUT", "FLYOUT", "LINEOUT"].reduce(
+    (nextState, outType) => savePlay(nextState, "Out", {}, {}, false, outType),
+    state,
+  );
+}
+
+function gameWithDefensiveStart(playerRecord, status, updatedAt) {
+  return {
+    ...createInitialGameState([playerRecord], { status }),
+    defensiveAlignments: [
+      createDefaultDefensiveAlignment([playerRecord], 1, "Top", { updatedAt }),
+    ],
+  };
+}
+
+test("away offensive third out advances to defensive bottom half", () => {
+  const players = playersWithGenderPattern("away", 10, (index) => index < 3 ? "Female" : "Male");
   const initialState = createInitialGameState(players, { status: "IN_PROGRESS", isHome: false });
-  const firstOut = savePlay(initialState, "Out", {}, {}, false, "GROUNDOUT");
-  const secondOut = savePlay(firstOut, "Out", {}, {}, false, "FLYOUT");
-  const thirdOut = savePlay(secondOut, "Out", {}, {}, false, "LINEOUT");
+  const thirdOut = recordThreeOffensiveOuts(initialState);
 
   assert.equal(thirdOut.inning, 1);
   assert.equal(thirdOut.half, "Bottom");
@@ -81,11 +99,7 @@ test("away offensive third out advances to defensive bottom half", () => {
 });
 
 test("each new defensive inning receives a fresh fair alignment with the same pitcher", () => {
-  const players = Array.from({ length: 12 }, (_, index) => ({
-    ...player(`inning-${index + 1}`),
-    seedOrder: index + 1,
-    gender: index >= 1 && index <= 3 ? "Female" : "Male",
-  }));
+  const players = playersWithGenderPattern("inning", 12, (index) => index >= 1 && index <= 3 ? "Female" : "Male");
   players[0].defensiveProfile.notes.bestPosition = "P";
   let state = createInitialGameState(players, { status: "IN_PROGRESS", isHome: true });
   state = initializeStartingDefense(state);
@@ -93,9 +107,7 @@ test("each new defensive inning receives a fresh fair alignment with the same pi
 
   state = saveDefensiveEvent(state, { type: "DOUBLE_PLAY", fielderId: firstPitcherId, position: "P", outsRecorded: 2 });
   state = saveDefensiveEvent(state, { type: "ROUTINE_OUT", fielderId: firstPitcherId, position: "P", outsRecorded: 1 });
-  state = savePlay(state, "Out", {}, {}, false, "GROUNDOUT");
-  state = savePlay(state, "Out", {}, {}, false, "FLYOUT");
-  state = savePlay(state, "Out", {}, {}, false, "LINEOUT");
+  state = recordThreeOffensiveOuts(state);
 
   assert.equal(state.inning, 2);
   assert.equal(state.half, "Top");
@@ -108,11 +120,7 @@ test("each new defensive inning receives a fresh fair alignment with the same pi
 });
 
 test("saving defense rejects moving the locked pitcher or dropping below three female defenders", () => {
-  const players = Array.from({ length: 12 }, (_, index) => ({
-    ...player(`manual-${index + 1}`),
-    seedOrder: index + 1,
-    gender: index >= 1 && index <= 3 ? "Female" : "Male",
-  }));
+  const players = playersWithGenderPattern("manual", 12, (index) => index >= 1 && index <= 3 ? "Female" : "Male");
   const initialState = initializeStartingDefense(
     createInitialGameState(players, { status: "IN_PROGRESS", isHome: true }),
   );
@@ -131,11 +139,7 @@ test("saving defense rejects moving the locked pitcher or dropping below three f
 });
 
 test("starting defense keeps the game in pregame when three female defenders are impossible", () => {
-  const players = Array.from({ length: 10 }, (_, index) => ({
-    ...player(`invalid-start-${index + 1}`),
-    gender: index < 2 ? "Female" : "Male",
-    seedOrder: index + 1,
-  }));
+  const players = playersWithGenderPattern("invalid-start", 10, (index) => index < 2 ? "Female" : "Male");
   const state = initializeStartingDefense(
     createInitialGameState(players, { status: "IN_PROGRESS", isHome: true }),
   );
@@ -145,16 +149,8 @@ test("starting defense keeps the game in pregame when three female defenders are
 });
 
 test("legacy games do not persist a new defense that cannot field three female players", () => {
-  const players = Array.from({ length: 10 }, (_, index) => ({
-    ...player(`legacy-${index + 1}`),
-    gender: index < 2 ? "Female" : "Male",
-    seedOrder: index + 1,
-  }));
-  let state = createInitialGameState(players, { status: "IN_PROGRESS", isHome: false });
-
-  state = savePlay(state, "Out", {}, {}, false, "GROUNDOUT");
-  state = savePlay(state, "Out", {}, {}, false, "FLYOUT");
-  state = savePlay(state, "Out", {}, {}, false, "LINEOUT");
+  const players = playersWithGenderPattern("legacy", 10, (index) => index < 2 ? "Female" : "Male");
+  const state = recordThreeOffensiveOuts(createInitialGameState(players, { status: "IN_PROGRESS", isHome: false }));
 
   assert.equal(state.half, "Bottom");
   assert.equal(state.defensiveAlignments.length, 0);
@@ -202,12 +198,7 @@ test("defensive event updates opponent score and undo restores previous state", 
 
 test("a stale final sync cannot overwrite a newly started local game", () => {
   const localPlayer = player("local-player");
-  const localGame = {
-    ...createInitialGameState([localPlayer], { status: "IN_PROGRESS" }),
-    defensiveAlignments: [
-      createDefaultDefensiveAlignment([localPlayer], 1, "Top", { updatedAt: "2026-06-17T18:00:00.000Z" }),
-    ],
-  };
+  const localGame = gameWithDefensiveStart(localPlayer, "IN_PROGRESS", "2026-06-17T18:00:00.000Z");
   const staleRemoteGame = {
     ...createInitialGameState([player("remote-player")], { status: "FINAL" }),
     endedAt: "2026-06-17T17:00:00.000Z",
@@ -228,12 +219,7 @@ test("an equal-count remote snapshot cannot overwrite a local play correction", 
 
 test("a newer remote final can close the same local in-progress game", () => {
   const localPlayer = player("local-player");
-  const localGame = {
-    ...createInitialGameState([localPlayer], { status: "IN_PROGRESS" }),
-    defensiveAlignments: [
-      createDefaultDefensiveAlignment([localPlayer], 1, "Top", { updatedAt: "2026-06-17T18:00:00.000Z" }),
-    ],
-  };
+  const localGame = gameWithDefensiveStart(localPlayer, "IN_PROGRESS", "2026-06-17T18:00:00.000Z");
   const newerRemoteFinal = {
     ...createInitialGameState([localPlayer], { status: "FINAL" }),
     endedAt: "2026-06-17T19:00:00.000Z",

@@ -44,6 +44,12 @@ export const destinationLabel: Record<UiRunnerDestination, string> = {
 export type MovementSelections = Partial<Record<BaseLabel, UiRunnerDestination>>;
 export type PinchRunnerSelections = Partial<Record<BaseLabel, RunnerSlot>>;
 
+type OccupiedBaseFlags = {
+  hasFirst: boolean;
+  hasSecond: boolean;
+  hasThird: boolean;
+};
+
 export type GameState = {
   gameId: string | null;
   status: LocalGameStatus;
@@ -131,7 +137,7 @@ export type TeamGameTotals = {
   ops: number;
 };
 
-export class InvalidPlayError extends Error {
+class InvalidPlayError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "InvalidPlayError";
@@ -185,7 +191,7 @@ export function createInitialGameState(lineup: Player[], options: CreateInitialG
   };
 }
 
-export function createEmptyBases(): BasesState {
+function createEmptyBases(): BasesState {
   return {
     first: null,
     second: null,
@@ -203,18 +209,6 @@ export function getCurrentTeamPhase(state: GameState): TeamPhase {
 
 export function getLiveGameHref(state: Pick<GameState, "isHome" | "half">) {
   return getTeamPhase(state.isHome, state.half) === "BATTING" ? "/stats-entry" : "/defense";
-}
-
-export function isTeamBatting(state: GameState) {
-  return getCurrentTeamPhase(state) === "BATTING";
-}
-
-export function getCurrentDefensiveAlignment(state: GameState) {
-  return getDefensiveAlignmentForHalf(state, state.inning, state.half);
-}
-
-export function getOrCreateCurrentDefensiveAlignment(state: GameState): DefensiveAlignment {
-  return getOrCreateDefensiveAlignmentForHalf(state, state.inning, state.half);
 }
 
 export function getDefensiveAlignmentForHalf(
@@ -317,10 +311,6 @@ export function getPlayerSeasonStats(player: Player, state?: GameState) {
   return addStats(lineupPlayer.seasonStats, playerGameStats);
 }
 
-export function getPlayerStats(state: GameState, playerId: string) {
-  return getPlayerGameStats(state, playerId);
-}
-
 export function updatePlayerSeasonStatsBaseline(
   state: GameState,
   playerId: string,
@@ -366,7 +356,7 @@ export function upsertCompletedGame(games: GameState[], game: GameState): GameSt
   return [game, ...games.filter((item) => getCompletedGameId(item) !== getCompletedGameId(game))];
 }
 
-export function getCompletedGameSummary(state: GameState): CompletedGameSummary {
+function getCompletedGameSummary(state: GameState): CompletedGameSummary {
   return {
     id: getCompletedGameId(state),
     opponent: state.opponent,
@@ -413,54 +403,140 @@ export function getResultLockReason(result: BatterResult, bases: BasesState, out
 }
 
 export function createDefaultMovements(result: BatterResult, bases: BasesState): MovementSelections {
-  const hasFirst = Boolean(bases.first);
-  const hasSecond = Boolean(bases.second);
-  const hasThird = Boolean(bases.third);
-  const next: MovementSelections = {};
+  const occupiedBases = getOccupiedBaseFlags(bases);
+  const movements = createStationaryMovements(occupiedBases);
 
-  if (hasFirst) next["1B"] = "1B";
-  if (hasSecond) next["2B"] = "2B";
-  if (hasThird) next["3B"] = "3B";
+  applyDefaultMovementForResult(result, occupiedBases, movements);
 
+  return movements;
+}
+
+function getOccupiedBaseFlags(bases: BasesState): OccupiedBaseFlags {
+  return {
+    hasFirst: Boolean(bases.first),
+    hasSecond: Boolean(bases.second),
+    hasThird: Boolean(bases.third),
+  };
+}
+
+function createStationaryMovements(occupiedBases: OccupiedBaseFlags): MovementSelections {
+  const movements: MovementSelections = {};
+
+  if (occupiedBases.hasFirst) movements["1B"] = "1B";
+  if (occupiedBases.hasSecond) movements["2B"] = "2B";
+  if (occupiedBases.hasThird) movements["3B"] = "3B";
+
+  return movements;
+}
+
+function applyDefaultMovementForResult(
+  result: BatterResult,
+  occupiedBases: OccupiedBaseFlags,
+  movements: MovementSelections,
+) {
   if (result === "1B") {
-    if (hasFirst) next["1B"] = "2B";
-    if (hasSecond) next["2B"] = "Scores";
-    if (hasThird) next["3B"] = "Scores";
-  } else if (result === "2B") {
-    if (hasFirst) next["1B"] = "3B";
-    if (hasSecond) next["2B"] = "Scores";
-    if (hasThird) next["3B"] = "Scores";
-  } else if (result === "3B" || result === "HR") {
-    if (hasFirst) next["1B"] = "Scores";
-    if (hasSecond) next["2B"] = "Scores";
-    if (hasThird) next["3B"] = "Scores";
-  } else if (result === "BB") {
-    if (hasFirst) next["1B"] = "2B";
-    if (hasFirst && hasSecond) next["2B"] = "3B";
-    if (hasFirst && hasSecond && hasThird) next["3B"] = "Scores";
-  } else if (result === "ROE") {
-    if (hasFirst) next["1B"] = "2B";
-    if (hasSecond) next["2B"] = "3B";
-    if (hasThird) next["3B"] = "Scores";
-  } else if (result === "FC") {
-    if (hasThird && hasSecond && hasFirst) {
-      next["3B"] = "Out";
-      next["2B"] = "3B";
-      next["1B"] = "2B";
-    } else if (hasFirst) {
-      next["1B"] = "Out";
-      if (hasSecond) next["2B"] = "3B";
-      if (hasThird) next["3B"] = "3B";
-    }
-  } else if (result === "SF" && hasThird) {
-    next["3B"] = "Scores";
-  } else if (result === "DP") {
-    if (hasFirst) next["1B"] = "Out";
-    else if (hasSecond) next["2B"] = "Out";
-    else if (hasThird) next["3B"] = "Out";
+    applySingleMovement(occupiedBases, movements);
+    return;
   }
 
-  return next;
+  if (result === "2B") {
+    applyDoubleMovement(occupiedBases, movements);
+    return;
+  }
+
+  if (result === "3B" || result === "HR") {
+    scoreAllOccupiedRunners(occupiedBases, movements);
+    return;
+  }
+
+  if (result === "BB") {
+    applyWalkMovement(occupiedBases, movements);
+    return;
+  }
+
+  if (result === "ROE") {
+    applyReachedOnErrorMovement(occupiedBases, movements);
+    return;
+  }
+
+  if (result === "FC") {
+    applyFieldersChoiceMovement(occupiedBases, movements);
+    return;
+  }
+
+  if (result === "SF") {
+    applySacFlyMovement(occupiedBases, movements);
+    return;
+  }
+
+  if (result === "DP") {
+    applyDoublePlayMovement(occupiedBases, movements);
+  }
+}
+
+function applySingleMovement(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
+  if (occupiedBases.hasFirst) movements["1B"] = "2B";
+  if (occupiedBases.hasSecond) movements["2B"] = "Scores";
+  if (occupiedBases.hasThird) movements["3B"] = "Scores";
+}
+
+function applyDoubleMovement(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
+  if (occupiedBases.hasFirst) movements["1B"] = "3B";
+  if (occupiedBases.hasSecond) movements["2B"] = "Scores";
+  if (occupiedBases.hasThird) movements["3B"] = "Scores";
+}
+
+function scoreAllOccupiedRunners(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
+  if (occupiedBases.hasFirst) movements["1B"] = "Scores";
+  if (occupiedBases.hasSecond) movements["2B"] = "Scores";
+  if (occupiedBases.hasThird) movements["3B"] = "Scores";
+}
+
+function applyWalkMovement(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
+  if (occupiedBases.hasFirst) movements["1B"] = "2B";
+  if (occupiedBases.hasFirst && occupiedBases.hasSecond) movements["2B"] = "3B";
+  if (occupiedBases.hasFirst && occupiedBases.hasSecond && occupiedBases.hasThird) movements["3B"] = "Scores";
+}
+
+function applyReachedOnErrorMovement(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
+  if (occupiedBases.hasFirst) movements["1B"] = "2B";
+  if (occupiedBases.hasSecond) movements["2B"] = "3B";
+  if (occupiedBases.hasThird) movements["3B"] = "Scores";
+}
+
+function applyFieldersChoiceMovement(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
+  if (occupiedBases.hasThird && occupiedBases.hasSecond && occupiedBases.hasFirst) {
+    movements["3B"] = "Out";
+    movements["2B"] = "3B";
+    movements["1B"] = "2B";
+    return;
+  }
+
+  if (!occupiedBases.hasFirst) {
+    return;
+  }
+
+  movements["1B"] = "Out";
+  if (occupiedBases.hasSecond) movements["2B"] = "3B";
+  if (occupiedBases.hasThird) movements["3B"] = "3B";
+}
+
+function applySacFlyMovement(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
+  if (occupiedBases.hasThird) movements["3B"] = "Scores";
+}
+
+function applyDoublePlayMovement(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
+  if (occupiedBases.hasFirst) {
+    movements["1B"] = "Out";
+    return;
+  }
+
+  if (occupiedBases.hasSecond) {
+    movements["2B"] = "Out";
+    return;
+  }
+
+  if (occupiedBases.hasThird) movements["3B"] = "Out";
 }
 
 export function defaultRbiCredit(result: BatterResult, bases: BasesState, runsScored: number) {
@@ -869,13 +945,6 @@ function getTeamTotalsFromStats(statsList: PlayerStats[]): TeamGameTotals {
     sluggingPercentage: divide(totals.totalBases, totals.atBats),
     ops: divide(onBaseTimes, totals.plateAppearances) + divide(totals.totalBases, totals.atBats),
   };
-}
-
-export function syncLineupStats(state: GameState): Player[] {
-  return state.lineup.map((player) => ({
-    ...player,
-    seasonStats: getPlayerSeasonStats(player, state),
-  }));
 }
 
 export function runnerSlotFromPlayer(player: Player): RunnerSlot {

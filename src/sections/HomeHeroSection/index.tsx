@@ -5,6 +5,7 @@ import Link from "next/link";
 import { CalendarClock, ClipboardList, MapPin, ShieldCheck } from "lucide-react";
 import { AccountTeamsCard } from "@/components/AccountTeamsCard";
 import { StatusPill } from "@/components/StatusPill";
+import { formatCountdown } from "@/lib/countdownFormatting";
 import { getNextScheduleWeeks, gameStartLeadTimeMs } from "@/lib/scheduleRules";
 import { saveSelectedScheduledGameId } from "@/lib/scheduleClient";
 import type { TeamSchedule } from "@/types/schedule";
@@ -69,4 +70,3 @@ function GameDetail({ icon: Icon, label, value }: { icon: typeof CalendarClock; 
 function formatDate(date: string) { return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(new Date(`${date}T00:00:00Z`)); }
 function formatTime(time: string) { return `${Number(time.slice(0, 2)) - 12}:00 PM`; }
 function formatPreparation(status: string) { return status === "ACCEPTED" ? "Lineup accepted" : status === "GENERATED" ? "Lineup generated" : "Lineup not ready"; }
-function formatCountdown(milliseconds: number) { const totalMinutes = Math.max(0, Math.ceil(milliseconds / 60_000)); const hours = Math.floor(totalMinutes / 60); const minutes = totalMinutes % 60; return hours ? `${hours}h ${minutes}m` : `${minutes}m`; }
