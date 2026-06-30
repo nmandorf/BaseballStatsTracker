@@ -8,5 +8,3 @@ export function HomePage() {
     </AppShell>
   );
 }
-
-export default HomePage;

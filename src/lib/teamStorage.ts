@@ -7,10 +7,20 @@ import {
   normalizeDefensivePositionPreference,
   normalizeDefensiveProfile,
 } from "./defenseEngine.ts";
+import { subscribeBrowserStore } from "./browserStoreSubscription.ts";
 import { getFirebaseAuth, isFirebaseConfigured } from "./firebase.ts";
+import {
+  createPlayerFromProfileInput,
+  createSlug,
+  normalizeBattingSide,
+  normalizePlayerGender,
+  normalizePlayerStats,
+  normalizeSpeedRating,
+  normalizeThrowingSide,
+} from "./playerProfileInput.ts";
 import { getSeasonStatsProgress } from "./seasonStatRules.ts";
 import { canUseStoredTeam, normalizeTeamAccount, type TeamAccount } from "./teamAccount.ts";
-import type { ActiveTeam, BattingSide, Player, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
+import type { ActiveTeam, Player, PlayerProfileInput } from "@/types/player";
 import type { PlayerStats } from "@/types/stats";
 
 const storageKey = "baseball-tracker:active-team:v1";
@@ -45,25 +55,8 @@ export function createEmptyPlayerInput(seedOrder = 1): PlayerProfileInput {
 
 export function createPlayerFromInput(input: PlayerProfileInput, seedOrder: number): Player {
   const name = input.name.trim();
-  const notes = input.notes.trim();
   const roleHint = input.roleHint.trim() || defaultRoleHint(seedOrder);
-
-  return {
-    id: createPlayerId(name, seedOrder),
-    name,
-    gender: normalizePlayerGender(input.gender),
-    bats: normalizeBattingSide(input.bats),
-    throws: normalizeThrowingSide(input.throws),
-    primaryPosition: normalizeDefensivePositionPreference(input.primaryPosition),
-    speedRating: normalizeSpeedRating(input.speedRating),
-    notes: notes || "Player profile ready for game-day tracking.",
-    contactNotes: splitContactNotes(input.contactNotes),
-    defensiveProfile: normalizeDefensiveProfile(input.defensiveProfile),
-    roleHint,
-    isActive: input.isActive,
-    seedOrder,
-    seasonStats: normalizeStats(input.startingStats),
-  };
+  return createPlayerFromProfileInput({ ...input, roleHint }, seedOrder, createPlayerId(name, seedOrder));
 }
 
 export function createActiveTeam(name: string, players: Player[]): ActiveTeam {
@@ -136,25 +129,6 @@ export function syncActiveTeamToBackend(team: ActiveTeam) {
   queueActiveTeamBackendSync(team);
 }
 
-export function addPlayerToActiveTeam(input: PlayerProfileInput) {
-  const team = loadActiveTeam();
-
-  if (!team) {
-    return null;
-  }
-
-  const nextPlayer = createPlayerFromInput(input, team.players.length + 1);
-  const nextTeam = {
-    ...team,
-    players: [...team.players, nextPlayer],
-    updatedAt: new Date().toISOString(),
-  };
-
-  saveActiveTeam(nextTeam);
-  queueActiveTeamBackendSync(nextTeam);
-  return nextTeam;
-}
-
 export function updateActiveTeamPlayers(players: Player[]) {
   const team = loadActiveTeam();
 
@@ -185,21 +159,11 @@ export function resetActiveTeam() {
   window.dispatchEvent(new Event(storageEventName));
 }
 
-export function subscribeActiveTeam(onStoreChange: () => void) {
-  if (typeof window === "undefined") {
-    return () => {};
-  }
-
-  window.addEventListener("storage", onStoreChange);
-  window.addEventListener(storageEventName, onStoreChange);
-
-  return () => {
-    window.removeEventListener("storage", onStoreChange);
-    window.removeEventListener(storageEventName, onStoreChange);
-  };
+function subscribeActiveTeam(onStoreChange: () => void) {
+  return subscribeBrowserStore(storageEventName, onStoreChange);
 }
 
-export function getActiveTeamServerSnapshot() {
+function getActiveTeamServerSnapshot() {
   return null;
 }
 
@@ -605,38 +569,8 @@ function normalizePlayer(player: Partial<Player>, seedOrder: number): Player | n
     roleHint: typeof player.roleHint === "string" && player.roleHint.trim() ? player.roleHint.trim() : defaultRoleHint(seedOrder),
     isActive: typeof player.isActive === "boolean" ? player.isActive : true,
     seedOrder,
-    seasonStats: normalizeStats(player.seasonStats),
+    seasonStats: normalizePlayerStats(player.seasonStats),
   };
-}
-
-function normalizeStats(stats: Partial<PlayerStats> | undefined): PlayerStats {
-  const fallback = createZeroPlayerStats();
-
-  if (!stats) {
-    return fallback;
-  }
-
-  return Object.fromEntries(
-    Object.entries(fallback).map(([key, value]) => [
-      key,
-      normalizeStatValue(stats[key as keyof PlayerStats], value),
-    ]),
-  ) as PlayerStats;
-}
-
-function normalizeStatValue(value: unknown, fallback: number) {
-  if (typeof value !== "number" || Number.isNaN(value) || value < 0) {
-    return fallback;
-  }
-
-  return Math.floor(value);
-}
-
-function splitContactNotes(value: string) {
-  return value
-    .split(",")
-    .map((note) => note.trim())
-    .filter(Boolean);
 }
 
 function createPlayerId(name: string, seedOrder: number) {
@@ -646,32 +580,9 @@ function createPlayerId(name: string, seedOrder: number) {
   return `${slug}-${suffix}`;
 }
 
-function createSlug(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
 function defaultRoleHint(seedOrder: number) {
   if (seedOrder === 1) return "High OBP table-setter";
   if (seedOrder <= 3) return "Contact hitter";
   if (seedOrder <= 5) return "Power hitter";
   return "Roster hitter";
-}
-
-function normalizeBattingSide(value: unknown): BattingSide {
-  return value === "Right" || value === "Left" || value === "Switch" || value === "Unknown" ? value : "Unknown";
-}
-
-function normalizeThrowingSide(value: unknown): ThrowingSide {
-  return value === "Right" || value === "Left" || value === "Unknown" ? value : "Unknown";
-}
-
-function normalizeSpeedRating(value: unknown): SpeedRating {
-  return value === "Fast" || value === "Slow" || value === "Average" ? value : "Average";
-}
-
-function normalizePlayerGender(value: unknown): PlayerGender {
-  return value === "Female" || value === "Male" ? value : "Unknown";
 }

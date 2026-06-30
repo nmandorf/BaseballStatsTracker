@@ -21,6 +21,8 @@ import { defaultGameRules, seedPlayers, testTeamName } from "@/lib/seedTeam";
 import { legacyTeamAccount, type TeamAccount } from "@/lib/teamAccount";
 import { canSaveScheduledGameSnapshot } from "@/lib/gameSnapshotRules";
 import { getPlayerGameStats, getTeamGameTotals, occupiedBaseEntries, type GameState } from "@/lib/gameEngine";
+import { toPlayerPersistenceData } from "@/lib/playerPersistenceData";
+import { fromPersistedStatsData, toPersistedStatsData, toPersistedTeamStatsData } from "@/lib/playerStatsPersistence";
 import { addStats, createZeroStats } from "@/lib/statCalculations";
 import { replaceGameStatsInSeason, subtractStat, subtractStats } from "@/lib/seasonStatRules";
 import type { BatterResult, LocalGameStatus, OutType } from "@/types/game";
@@ -46,7 +48,7 @@ type SavedFirstGameSnapshot = {
 
 const defaultSeasonYear = new Date().getFullYear();
 
-export function getFirstGameId(seasonYear = defaultSeasonYear, teamId = testTeamName) {
+function getFirstGameId(seasonYear = defaultSeasonYear, teamId = testTeamName) {
   return `first-game-${teamId}-${seasonYear}`;
 }
 
@@ -293,7 +295,7 @@ export async function saveFirstGameSnapshotToPrisma(
         gameId: game.id,
         playerId: player.id,
         gamesPlayed: state.status === "PREGAME" ? 0 : 1,
-        ...toStatsData(getPlayerGameStats(state, player.id)),
+        ...toPersistedStatsData(getPlayerGameStats(state, player.id)),
       })),
     });
 
@@ -322,12 +324,12 @@ export async function saveFirstGameSnapshotToPrisma(
           seasonId: season.id,
           season: seasonYear,
           gamesPlayed: playerSeasonStats.gamesPlayed,
-          ...toStatsData(playerSeasonStats),
+          ...toPersistedStatsData(playerSeasonStats),
         },
         update: {
           seasonId: season.id,
           gamesPlayed: playerSeasonStats.gamesPlayed,
-          ...toStatsData(playerSeasonStats),
+          ...toPersistedStatsData(playerSeasonStats),
         },
       });
     }
@@ -360,13 +362,13 @@ export async function saveFirstGameSnapshotToPrisma(
       create: {
         teamId: team.id,
         gameId: game.id,
-        ...toTeamStatsData(teamTotals),
+        ...toPersistedTeamStatsData(teamTotals),
         runs: teamTotals.runs,
         opponentRuns: state.opponentScore,
         leftOnBase: occupiedBaseEntries(state.bases).length,
       },
       update: {
-        ...toTeamStatsData(teamTotals),
+        ...toPersistedTeamStatsData(teamTotals),
         runs: teamTotals.runs,
         opponentRuns: state.opponentScore,
         leftOnBase: occupiedBaseEntries(state.bases).length,
@@ -384,7 +386,7 @@ export async function saveFirstGameSnapshotToPrisma(
         ties: nextTeamSeasonStats.ties,
         runsFor: nextTeamSeasonStats.runsFor,
         runsAgainst: nextTeamSeasonStats.runsAgainst,
-        ...toTeamStatsData(nextTeamSeasonStats),
+        ...toPersistedTeamStatsData(nextTeamSeasonStats),
         runs: nextTeamSeasonStats.runs,
       },
       update: {
@@ -394,7 +396,7 @@ export async function saveFirstGameSnapshotToPrisma(
         ties: nextTeamSeasonStats.ties,
         runsFor: nextTeamSeasonStats.runsFor,
         runsAgainst: nextTeamSeasonStats.runsAgainst,
-        ...toTeamStatsData(nextTeamSeasonStats),
+        ...toPersistedTeamStatsData(nextTeamSeasonStats),
         runs: nextTeamSeasonStats.runs,
       },
     });
@@ -564,31 +566,13 @@ function toPlayerCreate(teamId: string, player: Player) {
 }
 
 function toPlayerUpdate(player: Player) {
-  return {
-    name: player.name,
-    gender: mapPlayerGender(player.gender),
-    bats: mapBattingSide(player.bats),
-    throws: mapThrowingSide(player.throws),
-    primaryPosition: player.primaryPosition || null,
-    speedRating: mapSpeedRating(player.speedRating),
-    notes: player.notes || null,
-    contactNotes: player.contactNotes,
-    armStrength: mapDefensiveRating(player.defensiveProfile.ratings.armStrength),
-    throwAccuracy: mapDefensiveRating(player.defensiveProfile.ratings.throwAccuracy),
-    gloveSkill: mapDefensiveRating(player.defensiveProfile.ratings.gloveSkill),
-    rangeRating: mapDefensiveRating(player.defensiveProfile.ratings.range),
-    positionConfidence: mapDefensiveRating(player.defensiveProfile.ratings.positionConfidence),
-    defenseStrengths: player.defensiveProfile.notes.strengths || null,
-    defenseWeaknesses: player.defensiveProfile.notes.weaknesses || null,
-    bestDefensePosition: player.defensiveProfile.notes.bestPosition || null,
-    avoidDefensePosition: player.defensiveProfile.notes.avoidPosition || null,
-    backupDefensePosition: player.defensiveProfile.notes.backupPosition || null,
-    defenseCommunicationNotes: player.defensiveProfile.notes.communication || null,
-    defenseHealthNotes: player.defensiveProfile.notes.health || null,
-    roleHint: player.roleHint,
-    seedOrder: player.seedOrder,
-    isActive: player.isActive,
-  };
+  return toPlayerPersistenceData(player, {
+    gender: mapPlayerGender,
+    bats: mapBattingSide,
+    throws: mapThrowingSide,
+    speedRating: mapSpeedRating,
+    defensiveRating: mapDefensiveRating,
+  });
 }
 
 function toRuleSettingsCreate(gameId: string, rules = defaultGameRules) {
@@ -613,65 +597,8 @@ function toRuleSettingsUpdate(rules = defaultGameRules) {
   };
 }
 
-function toStatsData(stats: Partial<PlayerStats> | undefined) {
-  return {
-    plateAppearances: stats?.plateAppearances ?? 0,
-    atBats: stats?.atBats ?? 0,
-    hits: stats?.hits ?? 0,
-    singles: stats?.singles ?? 0,
-    doubles: stats?.doubles ?? 0,
-    triples: stats?.triples ?? 0,
-    homeRuns: stats?.homeRuns ?? 0,
-    walks: stats?.walks ?? 0,
-    reachedOnError: stats?.reachedOnError ?? 0,
-    fieldersChoice: stats?.fieldersChoice ?? 0,
-    sacFlies: stats?.sacFlies ?? 0,
-    outs: stats?.outs ?? 0,
-    groundouts: stats?.groundouts ?? 0,
-    flyouts: stats?.flyouts ?? 0,
-    lineouts: stats?.lineouts ?? 0,
-    strikeoutsLooking: stats?.strikeoutsLooking ?? 0,
-    strikeoutsSwinging: stats?.strikeoutsSwinging ?? 0,
-    otherOuts: stats?.otherOuts ?? 0,
-    doublePlays: stats?.doublePlays ?? 0,
-    productiveOuts: stats?.productiveOuts ?? 0,
-    runs: stats?.runs ?? 0,
-    rbis: stats?.rbis ?? 0,
-  };
-}
-
 function fromPlayerStatsRecord(stats: PlayerStats): PlayerStats {
-  return {
-    gamesPlayed: stats.gamesPlayed,
-    ...toStatsData(stats),
-  };
-}
-
-function toTeamStatsData(stats: Omit<PlayerStats, "gamesPlayed">) {
-  return {
-    plateAppearances: stats.plateAppearances,
-    atBats: stats.atBats,
-    hits: stats.hits,
-    singles: stats.singles,
-    doubles: stats.doubles,
-    triples: stats.triples,
-    homeRuns: stats.homeRuns,
-    walks: stats.walks,
-    reachedOnError: stats.reachedOnError,
-    fieldersChoice: stats.fieldersChoice,
-    sacFlies: stats.sacFlies,
-    outs: stats.outs,
-    groundouts: stats.groundouts,
-    flyouts: stats.flyouts,
-    lineouts: stats.lineouts,
-    strikeoutsLooking: stats.strikeoutsLooking,
-    strikeoutsSwinging: stats.strikeoutsSwinging,
-    otherOuts: stats.otherOuts,
-    doublePlays: stats.doublePlays,
-    productiveOuts: stats.productiveOuts,
-    runs: stats.runs,
-    rbis: stats.rbis,
-  };
+  return fromPersistedStatsData(stats);
 }
 
 type PersistedTeamSeasonStats = ReturnType<typeof createZeroTeamSeasonStats>;
@@ -704,7 +631,7 @@ function fromTeamGameStatsRecord(
   return {
     ...createZeroTeamGameStats(),
     gamesPlayed,
-    ...toStatsData(stats),
+    ...toPersistedStatsData(stats),
     opponentRuns: stats.opponentRuns,
     leftOnBase: stats.leftOnBase,
   };
@@ -719,7 +646,7 @@ function fromTeamSeasonStatsRecord(stats: PersistedTeamSeasonStats): PersistedTe
     ties: stats.ties,
     runsFor: stats.runsFor,
     runsAgainst: stats.runsAgainst,
-    ...toStatsData(stats),
+    ...toPersistedStatsData(stats),
   };
 }
 
@@ -749,7 +676,7 @@ function addTeamGameToSeasonStats(
 ): PersistedTeamSeasonStats {
   const gameStatsWithGamesPlayed = {
     gamesPlayed,
-    ...toStatsData(gameStats),
+    ...toPersistedStatsData(gameStats),
   };
 
   return {

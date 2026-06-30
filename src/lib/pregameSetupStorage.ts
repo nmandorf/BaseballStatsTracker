@@ -82,7 +82,7 @@ export function createDefaultPregameSetup(activeTeam?: ActiveTeam | null): Prega
   };
 }
 
-export function loadPregameSetup(): PregameSetup {
+function loadPregameSetup(): PregameSetup {
   if (typeof window === "undefined") {
     return createDefaultPregameSetup();
   }
@@ -157,7 +157,7 @@ export function savePregameSetup(setup: PregameSetup, options: { sync?: boolean 
   }
 }
 
-export function subscribePregameSetup(onStoreChange: () => void) {
+function subscribePregameSetup(onStoreChange: () => void) {
   if (typeof window === "undefined") {
     return () => {};
   }
@@ -197,7 +197,7 @@ export function selectScheduledGameForPregame(teamId: string, game: Extract<Sche
   });
 }
 
-export function getPregameSetupServerSnapshot() {
+function getPregameSetupServerSnapshot() {
   return createDefaultPregameSetup();
 }
 

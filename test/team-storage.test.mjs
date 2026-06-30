@@ -13,6 +13,7 @@ import {
   saveActiveTeam,
 } from "../src/lib/teamStorage.ts";
 import { canUseStoredTeam, readVerifiedTeamAccountFromRequest } from "../src/lib/teamAccount.ts";
+import { installLocalStorage } from "./helpers/local-storage.mjs";
 
 test("server auth verification uses the same configured Firebase project as the client", async () => {
   const originalFetch = global.fetch;
@@ -110,32 +111,25 @@ test("createActiveTeam scopes players to the created team", () => {
 });
 
 test("active team persistence starts empty and round-trips saved teams", () => {
-  const store = new Map();
-  global.window = {
-    localStorage: {
-      getItem: (key) => store.get(key) ?? null,
-      removeItem: (key) => store.delete(key),
-      setItem: (key, value) => store.set(key, value),
-    },
-    addEventListener: () => {},
-    dispatchEvent: () => true,
-    removeEventListener: () => {},
-  };
+  const cleanup = installLocalStorage();
 
-  assert.equal(loadActiveTeam(), null);
+  try {
+    assert.equal(loadActiveTeam(), null);
 
-  const input = createEmptyPlayerInput(1);
-  input.name = "Alex Smith";
-  input.gender = "Male";
-  const team = createActiveTeam("Tuesday Crew", [createPlayerFromInput(input, 1)]);
+    const input = createEmptyPlayerInput(1);
+    input.name = "Alex Smith";
+    input.gender = "Male";
+    const team = createActiveTeam("Tuesday Crew", [createPlayerFromInput(input, 1)]);
 
-  saveActiveTeam(team);
-  assert.equal(loadActiveTeam()?.name, "Tuesday Crew");
-  assert.equal(loadActiveTeam()?.players[0].name, "Alex Smith");
+    saveActiveTeam(team);
+    assert.equal(loadActiveTeam()?.name, "Tuesday Crew");
+    assert.equal(loadActiveTeam()?.players[0].name, "Alex Smith");
 
-  resetActiveTeam();
-  assert.equal(loadActiveTeam(), null);
-  delete global.window;
+    resetActiveTeam();
+    assert.equal(loadActiveTeam(), null);
+  } finally {
+    cleanup();
+  }
 });
 
 test("createBackendTeam returns a usable local team when the backend is unavailable", async () => {

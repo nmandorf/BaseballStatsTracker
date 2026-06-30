@@ -13,7 +13,7 @@ export function isFirebaseConfigured() {
   return getMissingFirebaseConfig().length === 0;
 }
 
-export function getFirebaseApp() {
+function getFirebaseApp() {
   const missingConfig = getMissingFirebaseConfig();
 
   if (missingConfig.length > 0) {

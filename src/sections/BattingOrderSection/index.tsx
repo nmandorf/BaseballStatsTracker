@@ -21,6 +21,7 @@ import { DefensiveAlignmentEditor } from "@/components/DefensiveAlignmentEditor"
 import { StatTile } from "@/components/StatTile";
 import { StatusPill } from "@/components/StatusPill";
 import { TeamSetupGate } from "@/components/TeamSetupGate";
+import { formatCountdown } from "@/lib/countdownFormatting";
 import { createDefensiveLineupPdf } from "@/lib/defensiveLineupPdf";
 import { buildFullGameDefensiveLineupPlan } from "@/lib/defensiveLineupPlanner";
 import { createInitialGameState, getLiveGameHref, initializeStartingDefense } from "@/lib/gameEngine";
@@ -148,7 +149,7 @@ export function BattingOrderSection() {
   const startGameLabel = !selectedScheduledGame
     ? "Start Game"
     : now < startEligibleAt
-      ? `Locked · ${formatStartCountdown(startEligibleAt - now)}`
+      ? `Locked · ${formatCountdown(startEligibleAt - now)}`
       : "Start Game";
   const defenseStatusLabel = canStartGame
     ? "Ready"
@@ -674,12 +675,6 @@ function resolveStartingDefenseAlignment(
     : createDefaultDefensiveAlignment(lineupPlayers, firstDefensiveHalf.inning, firstDefensiveHalf.half);
 }
 
-function formatStartCountdown(milliseconds: number) {
-  const totalMinutes = Math.max(0, Math.ceil(milliseconds / 60_000));
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  return hours ? `${hours}h ${minutes}m` : `${minutes}m`;
-}
 
 async function readApiErrorMessage(response: Response, fallback: string) {
   try {

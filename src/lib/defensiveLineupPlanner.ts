@@ -2,6 +2,7 @@ import {
   defensivePositions,
   generateDefensiveAlignment,
   getAssignedPositionForPlayer,
+  getDefensiveBenchCounts,
   normalizeDefensiveAlignment,
 } from "./defenseEngine.ts";
 import type { DefensiveAlignment, InningHalf } from "@/types/defense";
@@ -167,7 +168,7 @@ function getRequiredPlayerIdsForInning(input: {
   }
 
   if (input.canBenchEachPlayerAtMostOnce) {
-    const benchCounts = getBenchCounts(input.players, input.priorAlignments);
+    const benchCounts = getDefensiveBenchCounts(input.players, input.priorAlignments);
 
     input.players.forEach((player) => {
       if ((benchCounts[player.id] ?? 0) > 0) {
@@ -226,18 +227,4 @@ function buildFullGameLineupWarnings(input: {
   }
 
   return warnings;
-}
-
-function getBenchCounts(players: Player[], alignments: DefensiveAlignment[]) {
-  const counts = Object.fromEntries(players.map((player) => [player.id, 0])) as Record<string, number>;
-
-  alignments.forEach((alignment) => {
-    alignment.benchPlayerIds.forEach((playerId) => {
-      if (playerId in counts) {
-        counts[playerId] += 1;
-      }
-    });
-  });
-
-  return counts;
 }

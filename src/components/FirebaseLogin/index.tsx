@@ -451,15 +451,19 @@ function SignedInTeamSelector({
     };
   }, []);
 
-  async function chooseTeam(team: ActiveTeam) {
-    setIsSelectingTeamId(team.id);
-    setTeamError(null);
+  async function activateTeamForLogin(team: ActiveTeam) {
     const previousTeam = loadActiveTeam();
     saveActiveTeam(team);
     prepareFirstGameStateForTeam(previousTeam, team);
     savePregameSetup(createDefaultPregameSetup(team));
     await hydrateFirstGameStateFromPrisma({ force: true });
     onTeamSelected?.(team);
+  }
+
+  async function chooseTeam(team: ActiveTeam) {
+    setIsSelectingTeamId(team.id);
+    setTeamError(null);
+    await activateTeamForLogin(team);
     router.replace(redirectTo);
   }
 
@@ -477,12 +481,7 @@ function SignedInTeamSelector({
 
     try {
       const team = await createBackendTeam(nextTeamName);
-      const previousTeam = loadActiveTeam();
-      saveActiveTeam(team);
-      prepareFirstGameStateForTeam(previousTeam, team);
-      savePregameSetup(createDefaultPregameSetup(team));
-      await hydrateFirstGameStateFromPrisma({ force: true });
-      onTeamSelected?.(team);
+      await activateTeamForLogin(team);
       setTeams((currentTeams) => [
         team,
         ...currentTeams.filter((currentTeam) => currentTeam.id !== team.id),

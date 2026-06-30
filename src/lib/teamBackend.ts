@@ -7,6 +7,9 @@ import {
 } from "@/generated/prisma/enums";
 import { notFoundError, validationError } from "@/lib/appErrors";
 import { normalizeDefensivePositionPreference, normalizeDefensiveProfile } from "@/lib/defenseEngine";
+import { toPlayerPersistenceData } from "@/lib/playerPersistenceData";
+import { createPlayerFromProfileInput, createSlug } from "@/lib/playerProfileInput";
+import { fromPersistedStatsData, toPersistedStatsData } from "@/lib/playerStatsPersistence";
 import { getPrisma } from "@/lib/prisma";
 import { getSeasonStatsProgress } from "@/lib/seasonStatRules";
 import { legacyTeamAccount, type TeamAccount } from "@/lib/teamAccount";
@@ -208,12 +211,12 @@ export async function upsertActiveTeamInBackend(
           seasonId: season.id,
           season: seasonYear,
           gamesPlayed: player.seasonStats.gamesPlayed,
-          ...toStatsData(player.seasonStats),
+          ...toPersistedStatsData(player.seasonStats),
         },
         update: {
           seasonId: season.id,
           gamesPlayed: player.seasonStats.gamesPlayed,
-          ...toStatsData(player.seasonStats),
+          ...toPersistedStatsData(player.seasonStats),
         },
       });
     }
@@ -301,12 +304,12 @@ export async function addPlayerToTeamInBackend(
         seasonId: season.id,
         season: seasonYear,
         gamesPlayed: player.seasonStats.gamesPlayed,
-        ...toStatsData(player.seasonStats),
+        ...toPersistedStatsData(player.seasonStats),
       },
       update: {
         seasonId: season.id,
         gamesPlayed: player.seasonStats.gamesPlayed,
-        ...toStatsData(player.seasonStats),
+        ...toPersistedStatsData(player.seasonStats),
       },
     });
   });
@@ -314,25 +317,10 @@ export async function addPlayerToTeamInBackend(
   return loadTeamFromBackend(teamId, account);
 }
 
-export function createBackendPlayerFromInput(input: PlayerProfileInput, seedOrder: number): Player {
+function createBackendPlayerFromInput(input: PlayerProfileInput, seedOrder: number): Player {
   const name = input.name.trim();
-
-  return {
-    id: createPlayerId(name, seedOrder),
-    name,
-    gender: normalizePlayerGender(input.gender),
-    bats: normalizeBattingSide(input.bats),
-    throws: normalizeThrowingSide(input.throws),
-    primaryPosition: normalizeDefensivePositionPreference(input.primaryPosition),
-    speedRating: normalizeSpeedRating(input.speedRating),
-    notes: input.notes.trim() || "Player profile ready for game-day tracking.",
-    contactNotes: splitContactNotes(input.contactNotes),
-    defensiveProfile: normalizeDefensiveProfile(input.defensiveProfile),
-    roleHint: input.roleHint.trim() || defaultRoleHint(seedOrder),
-    isActive: input.isActive,
-    seedOrder,
-    seasonStats: normalizeStats(input.startingStats),
-  };
+  const roleHint = input.roleHint.trim() || defaultRoleHint(seedOrder);
+  return createPlayerFromProfileInput({ ...input, roleHint }, seedOrder, createPlayerId(name, seedOrder));
 }
 
 async function fetchTeamById(
@@ -419,130 +407,17 @@ function toPlayerCreate(teamId: string, player: Player) {
 }
 
 function toPlayerUpdate(player: Player) {
-  return {
-    name: player.name,
-    gender: toPrismaPlayerGender(player.gender),
-    bats: toPrismaBattingSide(player.bats),
-    throws: toPrismaThrowingSide(player.throws),
-    primaryPosition: player.primaryPosition || null,
-    speedRating: toPrismaSpeedRating(player.speedRating),
-    notes: player.notes || null,
-    contactNotes: player.contactNotes,
-    armStrength: toPrismaDefensiveRating(player.defensiveProfile.ratings.armStrength),
-    throwAccuracy: toPrismaDefensiveRating(player.defensiveProfile.ratings.throwAccuracy),
-    gloveSkill: toPrismaDefensiveRating(player.defensiveProfile.ratings.gloveSkill),
-    rangeRating: toPrismaDefensiveRating(player.defensiveProfile.ratings.range),
-    positionConfidence: toPrismaDefensiveRating(player.defensiveProfile.ratings.positionConfidence),
-    defenseStrengths: player.defensiveProfile.notes.strengths || null,
-    defenseWeaknesses: player.defensiveProfile.notes.weaknesses || null,
-    bestDefensePosition: player.defensiveProfile.notes.bestPosition || null,
-    avoidDefensePosition: player.defensiveProfile.notes.avoidPosition || null,
-    backupDefensePosition: player.defensiveProfile.notes.backupPosition || null,
-    defenseCommunicationNotes: player.defensiveProfile.notes.communication || null,
-    defenseHealthNotes: player.defensiveProfile.notes.health || null,
-    roleHint: player.roleHint,
-    seedOrder: player.seedOrder,
-    isActive: player.isActive,
-  };
-}
-
-function toStatsData(stats: PlayerStats) {
-  return {
-    plateAppearances: stats.plateAppearances,
-    atBats: stats.atBats,
-    hits: stats.hits,
-    singles: stats.singles,
-    doubles: stats.doubles,
-    triples: stats.triples,
-    homeRuns: stats.homeRuns,
-    walks: stats.walks,
-    reachedOnError: stats.reachedOnError,
-    fieldersChoice: stats.fieldersChoice,
-    sacFlies: stats.sacFlies,
-    outs: stats.outs,
-    groundouts: stats.groundouts,
-    flyouts: stats.flyouts,
-    lineouts: stats.lineouts,
-    strikeoutsLooking: stats.strikeoutsLooking,
-    strikeoutsSwinging: stats.strikeoutsSwinging,
-    otherOuts: stats.otherOuts,
-    doublePlays: stats.doublePlays,
-    productiveOuts: stats.productiveOuts,
-    runs: stats.runs,
-    rbis: stats.rbis,
-  };
+  return toPlayerPersistenceData(player, {
+    gender: toPrismaPlayerGender,
+    bats: toPrismaBattingSide,
+    throws: toPrismaThrowingSide,
+    speedRating: toPrismaSpeedRating,
+    defensiveRating: toPrismaDefensiveRating,
+  });
 }
 
 function fromStatsData(stats: Partial<PlayerStats> | null | undefined): PlayerStats {
-  const fallback = createZeroStats();
-
-  if (!stats) {
-    return fallback;
-  }
-
-  return {
-    gamesPlayed: normalizeNumber(stats.gamesPlayed, 0),
-    plateAppearances: normalizeNumber(stats.plateAppearances, 0),
-    atBats: normalizeNumber(stats.atBats, 0),
-    hits: normalizeNumber(stats.hits, 0),
-    singles: normalizeNumber(stats.singles, 0),
-    doubles: normalizeNumber(stats.doubles, 0),
-    triples: normalizeNumber(stats.triples, 0),
-    homeRuns: normalizeNumber(stats.homeRuns, 0),
-    walks: normalizeNumber(stats.walks, 0),
-    reachedOnError: normalizeNumber(stats.reachedOnError, 0),
-    fieldersChoice: normalizeNumber(stats.fieldersChoice, 0),
-    sacFlies: normalizeNumber(stats.sacFlies, 0),
-    outs: normalizeNumber(stats.outs, 0),
-    groundouts: normalizeNumber(stats.groundouts, 0),
-    flyouts: normalizeNumber(stats.flyouts, 0),
-    lineouts: normalizeNumber(stats.lineouts, 0),
-    strikeoutsLooking: normalizeNumber(stats.strikeoutsLooking, 0),
-    strikeoutsSwinging: normalizeNumber(stats.strikeoutsSwinging, 0),
-    otherOuts: normalizeNumber(stats.otherOuts, 0),
-    doublePlays: normalizeNumber(stats.doublePlays, 0),
-    productiveOuts: normalizeNumber(stats.productiveOuts, 0),
-    runs: normalizeNumber(stats.runs, 0),
-    rbis: normalizeNumber(stats.rbis, 0),
-  };
-}
-
-function normalizeStats(stats: Partial<PlayerStats> | undefined): PlayerStats {
-  return fromStatsData(stats);
-}
-
-function createZeroStats(): PlayerStats {
-  return {
-    gamesPlayed: 0,
-    plateAppearances: 0,
-    atBats: 0,
-    hits: 0,
-    singles: 0,
-    doubles: 0,
-    triples: 0,
-    homeRuns: 0,
-    walks: 0,
-    reachedOnError: 0,
-    fieldersChoice: 0,
-    sacFlies: 0,
-    outs: 0,
-    groundouts: 0,
-    flyouts: 0,
-    lineouts: 0,
-    strikeoutsLooking: 0,
-    strikeoutsSwinging: 0,
-    otherOuts: 0,
-    doublePlays: 0,
-    productiveOuts: 0,
-    runs: 0,
-    rbis: 0,
-  };
-}
-
-function normalizeNumber(value: unknown, fallback: number) {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? Math.floor(value)
-    : fallback;
+  return fromPersistedStatsData(stats);
 }
 
 function toPrismaBattingSide(value: BattingSide) {
@@ -609,40 +484,10 @@ function fromPrismaDefensiveRating(value: PrismaDefensiveRating | null): Defensi
   return "Unknown";
 }
 
-function normalizeBattingSide(value: unknown): BattingSide {
-  return value === "Right" || value === "Left" || value === "Switch" ? value : "Unknown";
-}
-
-function normalizeThrowingSide(value: unknown): ThrowingSide {
-  return value === "Right" || value === "Left" ? value : "Unknown";
-}
-
-function normalizeSpeedRating(value: unknown): SpeedRating {
-  return value === "Fast" || value === "Slow" ? value : "Average";
-}
-
-function normalizePlayerGender(value: unknown): PlayerGender {
-  return value === "Female" || value === "Male" ? value : "Unknown";
-}
-
-function splitContactNotes(value: string) {
-  return value
-    .split(",")
-    .map((note) => note.trim())
-    .filter(Boolean);
-}
-
 function createPlayerId(name: string, seedOrder: number) {
   const slug = createSlug(name);
 
   return slug ? `${slug}-${seedOrder}` : `player-${seedOrder}`;
-}
-
-function createSlug(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
 }
 
 function defaultRoleHint(seedOrder: number) {

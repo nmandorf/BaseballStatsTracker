@@ -17,6 +17,8 @@ export type LineupRecommendationOptions = {
   rankingPriority?: LineupRankingPriority;
 };
 
+type CalculatedPlayerStats = ReturnType<typeof calculateStats>;
+
 export type LineupGenderValidation = {
   isLeagueCompliant: boolean;
   hasFemaleLeadoff: boolean;
@@ -38,6 +40,15 @@ const roleOrder = new Map([
 ]);
 
 const defaultRankingPriority: LineupRankingPriority = "OBP";
+
+const signalBuilders: Record<LineupRankingPriority, (player: Player, stats: CalculatedPlayerStats) => string> = {
+  OBP: (_player, stats) => `${formatInlineRate(stats.onBasePercentage)} OBP / ${formatInlineRate(stats.sluggingPercentage)} SLG`,
+  "Out rate": (_player, stats) => `${formatInlineRate(stats.outRate)} Out rate`,
+  SLG: (_player, stats) => `${formatInlineRate(stats.sluggingPercentage)} SLG`,
+  OPS: (_player, stats) => `${formatInlineRate(stats.ops)} OPS`,
+  "XBH%": (_player, stats) => `${formatPercent(stats.extraBaseHitPercentage)} XBH`,
+  "Speed bonus": (player, stats) => `${player.speedRating} speed / ${formatInlineRate(stats.onBasePercentage)} OBP`,
+};
 
 const rankingPriorityWeights: Record<LineupRankingPriority, {
   average: number;
@@ -168,16 +179,38 @@ export function validateLineupPlayerPool(players: Player[]): LineupGenderValidat
 }
 
 export function validateLineupGenderRules(lineup: Player[]): LineupGenderValidation {
+  const genderFacts = getLineupGenderFacts(lineup);
+  const warnings = buildLineupGenderWarnings(lineup, genderFacts);
+
+  return {
+    isLeagueCompliant: genderFacts.missingGenderPlayerNames.length === 0 && genderFacts.hasFemaleLeadoff,
+    hasFemaleLeadoff: genderFacts.hasFemaleLeadoff,
+    warnings,
+    missingGenderPlayerNames: genderFacts.missingGenderPlayerNames,
+  };
+}
+
+function getLineupGenderFacts(lineup: Player[]) {
   const missingGenderPlayerNames = lineup
     .filter((player) => player.gender === "Unknown")
     .map((player) => player.name);
-  const hasFemale = lineup.some((player) => player.gender === "Female");
-  const hasFemaleLeadoff = lineup[0]?.gender === "Female";
-  const warnings = buildMissingGenderWarnings(missingGenderPlayerNames);
 
-  if (!hasFemale) {
+  return {
+    hasFemale: lineup.some((player) => player.gender === "Female"),
+    hasFemaleLeadoff: lineup[0]?.gender === "Female",
+    missingGenderPlayerNames,
+  };
+}
+
+function buildLineupGenderWarnings(
+  lineup: Player[],
+  genderFacts: ReturnType<typeof getLineupGenderFacts>,
+) {
+  const warnings = buildMissingGenderWarnings(genderFacts.missingGenderPlayerNames);
+
+  if (!genderFacts.hasFemale) {
     warnings.push("Select at least one female player; league rules require a female leadoff hitter.");
-  } else if (!hasFemaleLeadoff) {
+  } else if (!genderFacts.hasFemaleLeadoff) {
     warnings.push("Move a female player into the leadoff spot before accepting this lineup.");
   }
 
@@ -189,12 +222,7 @@ export function validateLineupGenderRules(lineup: Player[]): LineupGenderValidat
     warnings.push("Place a male hitter in the final lineup spot before the female leadoff hitter to maximize the two-base walk rule.");
   }
 
-  return {
-    isLeagueCompliant: missingGenderPlayerNames.length === 0 && hasFemaleLeadoff,
-    hasFemaleLeadoff,
-    warnings,
-    missingGenderPlayerNames,
-  };
+  return warnings;
 }
 
 function rankLineupPlayers(players: Player[], rankingPriority: LineupRankingPriority) {
@@ -259,23 +287,40 @@ function arrangeLineupByGender(players: Player[], rankingPriority: LineupRanking
 }
 
 function chooseNextGenderBalancedIndex(remaining: Player[], lastPlayer?: Player) {
-  const firstNonFemaleIndex = remaining.findIndex((player) => player.gender !== "Female");
-
   if (lastPlayer?.gender === "Female") {
-    return firstNonFemaleIndex >= 0 ? firstNonFemaleIndex : 0;
+    return chooseSeparatorAfterFemaleHitter(remaining);
   }
 
-  const firstFemaleIndex = remaining.findIndex((player) => player.gender === "Female");
-
-  if (firstFemaleIndex < 0) {
+  if (!hasFemaleHitter(remaining) || !shouldUseFemaleBeforeSavingSeparator(remaining)) {
     return 0;
   }
 
+  return findFirstFemaleIndex(remaining);
+}
+
+function chooseSeparatorAfterFemaleHitter(remaining: Player[]) {
+  const firstNonFemaleIndex = findFirstNonFemaleIndex(remaining);
+
+  return firstNonFemaleIndex >= 0 ? firstNonFemaleIndex : 0;
+}
+
+function hasFemaleHitter(players: Player[]) {
+  return players.some((player) => player.gender === "Female");
+}
+
+function findFirstFemaleIndex(players: Player[]) {
+  return players.findIndex((player) => player.gender === "Female");
+}
+
+function findFirstNonFemaleIndex(players: Player[]) {
+  return players.findIndex((player) => player.gender !== "Female");
+}
+
+function shouldUseFemaleBeforeSavingSeparator(remaining: Player[]) {
   const femaleCount = remaining.filter((player) => player.gender === "Female").length;
   const nonFemaleCount = remaining.length - femaleCount;
-  const needsSavedSeparator = remaining[0]?.gender !== "Female" && nonFemaleCount <= femaleCount - 1;
 
-  return needsSavedSeparator ? firstFemaleIndex : 0;
+  return remaining[0]?.gender !== "Female" && nonFemaleCount <= femaleCount - 1;
 }
 
 function preferMaleWraparoundLeadoffProtection(players: Player[]) {
@@ -294,11 +339,22 @@ function preferMaleWraparoundLeadoffProtection(players: Player[]) {
 
 function needsMaleWraparoundHitter(players: Player[]) {
   return (
-    players.length > 1 &&
-    players[0]?.gender === "Female" &&
-    players[players.length - 1]?.gender !== "Male" &&
-    players.some((player, index) => index > 0 && player.gender === "Male")
+    hasFemaleLeadoff(players) &&
+    !hasMaleFinalHitter(players) &&
+    hasMaleHitterAfterLeadoff(players)
   );
+}
+
+function hasFemaleLeadoff(players: Player[]) {
+  return players.length > 1 && players[0]?.gender === "Female";
+}
+
+function hasMaleFinalHitter(players: Player[]) {
+  return players[players.length - 1]?.gender === "Male";
+}
+
+function hasMaleHitterAfterLeadoff(players: Player[]) {
+  return players.some((player, index) => index > 0 && player.gender === "Male");
 }
 
 function chooseMaleWraparoundHitterIndex(players: Player[]) {
@@ -380,27 +436,7 @@ function buildSignal(player: Player, rankingPriority: LineupRankingPriority) {
     return player.roleHint;
   }
 
-  if (rankingPriority === "Out rate") {
-    return `${formatInlineRate(stats.outRate)} Out rate`;
-  }
-
-  if (rankingPriority === "SLG") {
-    return `${formatInlineRate(stats.sluggingPercentage)} SLG`;
-  }
-
-  if (rankingPriority === "OPS") {
-    return `${formatInlineRate(stats.ops)} OPS`;
-  }
-
-  if (rankingPriority === "XBH%") {
-    return `${formatPercent(stats.extraBaseHitPercentage)} XBH`;
-  }
-
-  if (rankingPriority === "Speed bonus") {
-    return `${player.speedRating} speed / ${formatInlineRate(stats.onBasePercentage)} OBP`;
-  }
-
-  return `${formatInlineRate(stats.onBasePercentage)} OBP / ${formatInlineRate(stats.sluggingPercentage)} SLG`;
+  return signalBuilders[rankingPriority](player, stats);
 }
 
 function formatInlineRate(value: number) {
@@ -467,20 +503,32 @@ function getOutQualityAdjustment(player: Player) {
     return 0;
   }
 
-  const stats = calculateStats(player.seasonStats);
-  const lineoutRate = divide(player.seasonStats.lineouts ?? 0, plateAppearances);
-  const strikeoutLookingRate = divide(player.seasonStats.strikeoutsLooking ?? 0, plateAppearances);
-  const strikeoutSwingingRate = divide(player.seasonStats.strikeoutsSwinging ?? 0, plateAppearances);
-  const doublePlayRate = divide(player.seasonStats.doublePlays ?? 0, plateAppearances);
+  return calculateOutQualityAdjustment(getOutQualityRates(player, plateAppearances));
+}
 
+function getOutQualityRates(player: Player, plateAppearances: number) {
+  const stats = calculateStats(player.seasonStats);
+
+  return {
+    ballInPlayRate: stats.ballInPlayRate,
+    doublePlayRate: divide(player.seasonStats.doublePlays ?? 0, plateAppearances),
+    lineoutRate: divide(player.seasonStats.lineouts ?? 0, plateAppearances),
+    productiveOutRate: stats.productiveOutRate,
+    strikeoutLookingRate: divide(player.seasonStats.strikeoutsLooking ?? 0, plateAppearances),
+    strikeoutRate: stats.strikeoutRate,
+    strikeoutSwingingRate: divide(player.seasonStats.strikeoutsSwinging ?? 0, plateAppearances),
+  };
+}
+
+function calculateOutQualityAdjustment(rates: ReturnType<typeof getOutQualityRates>) {
   return (
-    stats.ballInPlayRate * 0.18 +
-    lineoutRate * 0.05 +
-    stats.productiveOutRate * 0.04 -
-    stats.strikeoutRate * 0.22 -
-    strikeoutLookingRate * 0.08 -
-    strikeoutSwingingRate * 0.04 -
-    doublePlayRate * 0.35
+    rates.ballInPlayRate * 0.18 +
+    rates.lineoutRate * 0.05 +
+    rates.productiveOutRate * 0.04 -
+    rates.strikeoutRate * 0.22 -
+    rates.strikeoutLookingRate * 0.08 -
+    rates.strikeoutSwingingRate * 0.04 -
+    rates.doublePlayRate * 0.35
   );
 }
 
@@ -507,21 +555,35 @@ function balanceLowerLineupContact(players: Player[]) {
   const lowerStart = Math.min(6, lineup.length - 1);
 
   for (let index = lowerStart; index < lineup.length - 1; index += 1) {
-    if (!isHighStrikeoutProfile(lineup[index]) || !isHighStrikeoutProfile(lineup[index + 1])) {
+    if (!hasAdjacentHighStrikeoutProfiles(lineup, index)) {
       continue;
     }
 
-    const bufferIndex = lineup.findIndex((player, playerIndex) => (
-      playerIndex > index + 1 && isContactBufferProfile(player)
-    ));
+    const bufferIndex = findContactBufferIndex(lineup, index);
 
-    if (bufferIndex > -1) {
-      const [buffer] = lineup.splice(bufferIndex, 1);
-      lineup.splice(index + 1, 0, buffer);
-    }
+    moveContactBufferBehindCurrentHitter(lineup, index, bufferIndex);
   }
 
   return lineup;
+}
+
+function hasAdjacentHighStrikeoutProfiles(lineup: Player[], index: number) {
+  return isHighStrikeoutProfile(lineup[index]) && isHighStrikeoutProfile(lineup[index + 1]);
+}
+
+function findContactBufferIndex(lineup: Player[], currentIndex: number) {
+  return lineup.findIndex((player, playerIndex) => (
+    playerIndex > currentIndex + 1 && isContactBufferProfile(player)
+  ));
+}
+
+function moveContactBufferBehindCurrentHitter(lineup: Player[], currentIndex: number, bufferIndex: number) {
+  if (bufferIndex < 0) {
+    return;
+  }
+
+  const [buffer] = lineup.splice(bufferIndex, 1);
+  lineup.splice(currentIndex + 1, 0, buffer);
 }
 
 function isHighStrikeoutProfile(player: Player) {

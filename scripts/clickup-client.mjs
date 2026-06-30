@@ -1,6 +1,6 @@
 const CLICKUP_API_BASE_URL = "https://api.clickup.com/api/v2";
 
-export class ClickUpApiError extends Error {
+class ClickUpApiError extends Error {
   constructor(message, { status, body } = {}) {
     super(message);
     this.name = "ClickUpApiError";
@@ -56,23 +56,7 @@ export class ClickUpClient {
   }
 
   async createTask({ name, description, markdownContent, status, priority }) {
-    const body = {
-      name
-    };
-
-    if (description) {
-      body.description = description;
-    } else if (markdownContent) {
-      body.markdown_content = markdownContent;
-    }
-
-    if (status) {
-      body.status = status;
-    }
-
-    if (priority) {
-      body.priority = priority;
-    }
+    const body = buildTaskMutationBody({ name, description, markdownContent, status, priority });
 
     return this.request(`/list/${this.listId}/task`, {
       method: "POST",
@@ -81,25 +65,7 @@ export class ClickUpClient {
   }
 
   async updateTask(taskId, { name, description, markdownContent, status, priority }) {
-    const body = {};
-
-    if (name) {
-      body.name = name;
-    }
-
-    if (description) {
-      body.description = description;
-    } else if (markdownContent) {
-      body.markdown_content = markdownContent;
-    }
-
-    if (status) {
-      body.status = status;
-    }
-
-    if (priority) {
-      body.priority = priority;
-    }
+    const body = buildTaskMutationBody({ name, description, markdownContent, status, priority });
 
     return this.request(`/task/${taskId}`, {
       method: "PUT",
@@ -129,6 +95,30 @@ export class ClickUpClient {
 
     return data;
   }
+}
+
+function buildTaskMutationBody({ name, description, markdownContent, status, priority }) {
+  const body = {};
+
+  if (name) {
+    body.name = name;
+  }
+
+  if (description) {
+    body.description = description;
+  } else if (markdownContent) {
+    body.markdown_content = markdownContent;
+  }
+
+  if (status) {
+    body.status = status;
+  }
+
+  if (priority) {
+    body.priority = priority;
+  }
+
+  return body;
 }
 
 function parseJsonResponse(text) {

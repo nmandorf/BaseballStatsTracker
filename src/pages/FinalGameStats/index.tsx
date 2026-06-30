@@ -6,10 +6,7 @@ import { ArrowRight, Trophy } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { TeamSetupGate } from "@/components/TeamSetupGate";
-import {
-  firstGameHistoryId,
-  getCompletedGameById,
-} from "@/lib/gameEngine";
+import { getCompletedGameById } from "@/lib/gameEngine";
 import { useActiveTeam } from "@/lib/teamStorage";
 import { getVerifiedTeamAccountHeaders } from "@/lib/teamStorage";
 import { useCompletedGameStates } from "@/lib/useCompletedGameStates";
@@ -95,7 +92,5 @@ export function FinalGameStatsPage({ gameId }: { gameId: string }) {
     </AppShell>
   );
 }
-
-export { firstGameHistoryId };
 
 export default FinalGameStatsPage;

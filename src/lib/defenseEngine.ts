@@ -178,13 +178,7 @@ export function getDefensiveAlignmentIssues(
   }
 
   if (!lockedPitcherPlayerId) {
-    if (players.length >= defensivePositions.length && vacantRequiredPositions.length > 0) {
-      issues.push({
-        code: "REQUIRED_POSITION_VACANT",
-        message: `Assign a player at ${vacantRequiredPositions.map((position) => defensivePositionLabels[position]).join(", ")}.`,
-      });
-    }
-
+    addVacantRequiredPositionIssue(issues, players, vacantRequiredPositions);
     return issues;
   }
 
@@ -203,14 +197,22 @@ export function getDefensiveAlignmentIssues(
     });
   }
 
+  addVacantRequiredPositionIssue(issues, players, vacantRequiredPositions);
+
+  return issues;
+}
+
+function addVacantRequiredPositionIssue(
+  issues: DefensiveAlignmentIssue[],
+  players: Player[],
+  vacantRequiredPositions: DefensivePosition[],
+) {
   if (players.length >= defensivePositions.length && vacantRequiredPositions.length > 0) {
     issues.push({
       code: "REQUIRED_POSITION_VACANT",
       message: `Assign a player at ${vacantRequiredPositions.map((position) => defensivePositionLabels[position]).join(", ")}.`,
     });
   }
-
-  return issues;
 }
 
 export function getAssignedFemaleDefenderCount(alignment: DefensiveAlignment, players: Player[]) {
@@ -275,25 +277,6 @@ export function normalizeDefensivePosition(value: string | null | undefined): De
   };
 
   return aliases[normalizedValue] ?? null;
-}
-
-export function copyAlignmentForHalf(
-  source: DefensiveAlignment | null | undefined,
-  players: Player[],
-  inning: number,
-  half: InningHalf,
-): DefensiveAlignment {
-  if (!source) {
-    return createDefaultDefensiveAlignment(players, inning, half);
-  }
-
-  return buildAlignment({
-    id: createAlignmentId(inning, half),
-    inning,
-    half,
-    slots: { ...source.slots },
-    players,
-  });
 }
 
 export function normalizeDefensiveAlignment(
@@ -588,70 +571,17 @@ function optimizeDefensiveAssignments(
   lockedPitcherPlayerId?: string | null,
   requiredPlayerIds = new Set<string>(),
 ): DefensiveAlignment["slots"] {
-  let assignmentStates = new Map<string, AssignmentState>([
-    ["0:0", {
-      assignedPositionMask: 0,
-      femaleDefenderCount: 0,
-      avoidPositionAssignments: 0,
-      score: 0,
-      slots: {},
-    }],
-  ]);
+  let assignmentStates = createInitialAssignmentStates();
 
   players.forEach((player) => {
-    const nextStates = requiredPlayerIds.has(player.id)
-      ? new Map<string, AssignmentState>()
-      : new Map(assignmentStates);
-
-    assignmentStates.forEach((state) => {
-      positions.forEach((position, positionIndex) => {
-        const positionMask = 1 << positionIndex;
-
-        if ((state.assignedPositionMask & positionMask) !== 0) {
-          return;
-        }
-
-        if (lockedPitcherPlayerId && player.id === lockedPitcherPlayerId && position !== "P") {
-          return;
-        }
-
-        if (lockedPitcherPlayerId && player.id !== lockedPitcherPlayerId && position === "P") {
-          return;
-        }
-
-        const assignedPositionMask = state.assignedPositionMask | positionMask;
-        const femaleDefenderCount = Math.min(
-          minimumFemaleDefenders,
-          state.femaleDefenderCount + (player.gender === "Female" ? 1 : 0),
-        );
-        const candidateState: AssignmentState = {
-          assignedPositionMask,
-          femaleDefenderCount,
-          avoidPositionAssignments: state.avoidPositionAssignments
-            + (normalizeDefensivePosition(player.defensiveProfile.notes.avoidPosition) === position ? 1 : 0),
-          score: state.score + getPositionFitScore(player, position, benchCounts),
-          slots: {
-            ...state.slots,
-            [position]: assignedSlot(player),
-          },
-        };
-        const stateKey = `${assignedPositionMask}:${femaleDefenderCount}`;
-        const existingState = nextStates.get(stateKey);
-
-        if (
-          !existingState
-          || candidateState.avoidPositionAssignments < existingState.avoidPositionAssignments
-          || (
-            candidateState.avoidPositionAssignments === existingState.avoidPositionAssignments
-            && candidateState.score > existingState.score
-          )
-        ) {
-          nextStates.set(stateKey, candidateState);
-        }
-      });
+    assignmentStates = advanceAssignmentStatesForPlayer({
+      player,
+      assignmentStates,
+      positions,
+      benchCounts,
+      lockedPitcherPlayerId,
+      isRequiredPlayer: requiredPlayerIds.has(player.id),
     });
-
-    assignmentStates = nextStates;
   });
 
   const availableFemaleCount = players.filter((player) => player.gender === "Female").length;
@@ -661,26 +591,176 @@ function optimizeDefensiveAssignments(
     availableFemaleCount,
     maximumAssignedPlayers,
   );
-  const bestState = [...assignmentStates.values()].sort((firstState, secondState) => {
-    const assignedDifference = countAssignedPositions(secondState.assignedPositionMask)
-      - countAssignedPositions(firstState.assignedPositionMask);
+  const bestState = selectBestAssignmentState(assignmentStates, requiredFemaleCount);
+  const slots = fillVacantDefensiveSlots(bestState.slots, positions);
 
-    if (assignedDifference !== 0) return assignedDifference;
+  return slots;
+}
 
-    const firstMeetsFemaleMinimum = firstState.femaleDefenderCount >= requiredFemaleCount;
-    const secondMeetsFemaleMinimum = secondState.femaleDefenderCount >= requiredFemaleCount;
+function createInitialAssignmentStates() {
+  return new Map<string, AssignmentState>([
+    ["0:0", {
+      assignedPositionMask: 0,
+      femaleDefenderCount: 0,
+      avoidPositionAssignments: 0,
+      score: 0,
+      slots: {},
+    }],
+  ]);
+}
 
-    if (firstMeetsFemaleMinimum !== secondMeetsFemaleMinimum) {
-      return secondMeetsFemaleMinimum ? 1 : -1;
-    }
+function advanceAssignmentStatesForPlayer({
+  player,
+  assignmentStates,
+  positions,
+  benchCounts,
+  lockedPitcherPlayerId,
+  isRequiredPlayer,
+}: {
+  player: Player;
+  assignmentStates: Map<string, AssignmentState>;
+  positions: DefensivePosition[];
+  benchCounts: Record<string, number>;
+  lockedPitcherPlayerId?: string | null;
+  isRequiredPlayer: boolean;
+}) {
+  const nextStates = isRequiredPlayer
+    ? new Map<string, AssignmentState>()
+    : new Map(assignmentStates);
 
-    if (firstState.avoidPositionAssignments !== secondState.avoidPositionAssignments) {
-      return firstState.avoidPositionAssignments - secondState.avoidPositionAssignments;
-    }
+  assignmentStates.forEach((state) => {
+    positions.forEach((position, positionIndex) => {
+      if (!canAssignPlayerToPosition(state, player, position, positionIndex, lockedPitcherPlayerId)) {
+        return;
+      }
 
-    return secondState.score - firstState.score;
-  })[0];
-  const slots = { ...bestState.slots };
+      const candidateState = createCandidateAssignmentState(state, player, position, positionIndex, benchCounts);
+      const stateKey = getAssignmentStateKey(candidateState);
+      const existingState = nextStates.get(stateKey);
+
+      if (isPreferredAssignmentState(candidateState, existingState)) {
+        nextStates.set(stateKey, candidateState);
+      }
+    });
+  });
+
+  return nextStates;
+}
+
+function canAssignPlayerToPosition(
+  state: AssignmentState,
+  player: Player,
+  position: DefensivePosition,
+  positionIndex: number,
+  lockedPitcherPlayerId?: string | null,
+) {
+  const positionMask = getPositionMask(positionIndex);
+
+  if ((state.assignedPositionMask & positionMask) !== 0) {
+    return false;
+  }
+
+  if (lockedPitcherPlayerId && player.id === lockedPitcherPlayerId && position !== "P") {
+    return false;
+  }
+
+  if (lockedPitcherPlayerId && player.id !== lockedPitcherPlayerId && position === "P") {
+    return false;
+  }
+
+  return true;
+}
+
+function createCandidateAssignmentState(
+  state: AssignmentState,
+  player: Player,
+  position: DefensivePosition,
+  positionIndex: number,
+  benchCounts: Record<string, number>,
+): AssignmentState {
+  const assignedPositionMask = state.assignedPositionMask | getPositionMask(positionIndex);
+
+  return {
+    assignedPositionMask,
+    femaleDefenderCount: Math.min(
+      minimumFemaleDefenders,
+      state.femaleDefenderCount + (player.gender === "Female" ? 1 : 0),
+    ),
+    avoidPositionAssignments: state.avoidPositionAssignments + getAvoidPositionAssignmentCount(player, position),
+    score: state.score + getPositionFitScore(player, position, benchCounts),
+    slots: {
+      ...state.slots,
+      [position]: assignedSlot(player),
+    },
+  };
+}
+
+function getPositionMask(positionIndex: number) {
+  return 1 << positionIndex;
+}
+
+function getAvoidPositionAssignmentCount(player: Player, position: DefensivePosition) {
+  return normalizeDefensivePosition(player.defensiveProfile.notes.avoidPosition) === position ? 1 : 0;
+}
+
+function getAssignmentStateKey(state: AssignmentState) {
+  return `${state.assignedPositionMask}:${state.femaleDefenderCount}`;
+}
+
+function isPreferredAssignmentState(candidateState: AssignmentState, existingState?: AssignmentState) {
+  if (!existingState) {
+    return true;
+  }
+
+  if (candidateState.avoidPositionAssignments !== existingState.avoidPositionAssignments) {
+    return candidateState.avoidPositionAssignments < existingState.avoidPositionAssignments;
+  }
+
+  return candidateState.score > existingState.score;
+}
+
+function selectBestAssignmentState(
+  assignmentStates: Map<string, AssignmentState>,
+  requiredFemaleCount: number,
+): AssignmentState {
+  return [...assignmentStates.values()].sort((firstState, secondState) => (
+    compareAssignmentStates(firstState, secondState, requiredFemaleCount)
+  ))[0];
+}
+
+function compareAssignmentStates(
+  firstState: AssignmentState,
+  secondState: AssignmentState,
+  requiredFemaleCount: number,
+) {
+  const assignedDifference = countAssignedPositions(secondState.assignedPositionMask)
+    - countAssignedPositions(firstState.assignedPositionMask);
+
+  if (assignedDifference !== 0) return assignedDifference;
+
+  const firstMeetsFemaleMinimum = meetsFemaleMinimum(firstState, requiredFemaleCount);
+  const secondMeetsFemaleMinimum = meetsFemaleMinimum(secondState, requiredFemaleCount);
+
+  if (firstMeetsFemaleMinimum !== secondMeetsFemaleMinimum) {
+    return secondMeetsFemaleMinimum ? 1 : -1;
+  }
+
+  if (firstState.avoidPositionAssignments !== secondState.avoidPositionAssignments) {
+    return firstState.avoidPositionAssignments - secondState.avoidPositionAssignments;
+  }
+
+  return secondState.score - firstState.score;
+}
+
+function meetsFemaleMinimum(state: AssignmentState, requiredFemaleCount: number) {
+  return state.femaleDefenderCount >= requiredFemaleCount;
+}
+
+function fillVacantDefensiveSlots(
+  assignedSlots: DefensiveAlignment["slots"],
+  positions: DefensivePosition[],
+) {
+  const slots = { ...assignedSlots };
 
   positions.forEach((position) => {
     slots[position] ??= { status: "VACANT" };

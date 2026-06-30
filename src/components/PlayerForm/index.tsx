@@ -69,6 +69,9 @@ export function PlayerForm({
   const strongestPosition = normalizeDefensivePosition(input.defensiveProfile.notes.bestPosition);
   const avoidPosition = normalizeDefensivePosition(input.defensiveProfile.notes.avoidPosition);
   const backupPosition = normalizeDefensivePosition(input.defensiveProfile.notes.backupPosition);
+  const defensivePositionOptionElements = defensivePositions.map((position) => (
+    <option key={position} value={position}>{defensivePositionLabels[position]}</option>
+  ));
 
   function updateField<Key extends keyof PlayerProfileInput>(key: Key, value: PlayerProfileInput[Key]) {
     setInput((current) => ({
@@ -308,9 +311,7 @@ export function PlayerForm({
                     Current: {input.defensiveProfile.notes.bestPosition}
                   </option>
                 ) : null}
-                {defensivePositions.map((position) => (
-                  <option key={position} value={position}>{defensivePositionLabels[position]}</option>
-                ))}
+                {defensivePositionOptionElements}
               </select>
             </label>
             <label className={fieldLabelClass}>
@@ -326,9 +327,7 @@ export function PlayerForm({
                     Current: {input.defensiveProfile.notes.avoidPosition}
                   </option>
                 ) : null}
-                {defensivePositions.map((position) => (
-                  <option key={position} value={position}>{defensivePositionLabels[position]}</option>
-                ))}
+                {defensivePositionOptionElements}
               </select>
             </label>
             <label className={fieldLabelClass}>
@@ -344,9 +343,7 @@ export function PlayerForm({
                     Current: {input.defensiveProfile.notes.backupPosition}
                   </option>
                 ) : null}
-                {defensivePositions.map((position) => (
-                  <option key={position} value={position}>{defensivePositionLabels[position]}</option>
-                ))}
+                {defensivePositionOptionElements}
               </select>
             </label>
           </div>
