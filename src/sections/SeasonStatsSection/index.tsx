@@ -82,6 +82,7 @@ function getBackendGameHistoryItem(
     id: week.gameId,
     opponent: week.opponent,
     opponentScore: week.opponentScore,
+    hasBoxScore: week.hasBoxScore,
     playCount: week.playCount,
     result: getGameHistoryResult(week.result),
     teamScore: week.teamScore,

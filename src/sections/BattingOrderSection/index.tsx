@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Play } from "lucide-react";
 import { BattingOrderSummaryTiles } from "@/components/BattingOrderSummaryTiles";
 import { FullGameDefenseCard } from "@/components/FullGameDefenseCard";
 import { RankingPriorityCard } from "@/components/RankingPriorityCard";
@@ -24,11 +26,13 @@ import {
   type RecommendedLineupRow,
 } from "@/lib/lineupRules";
 import {
+  buildDefenseAcceptedPregameSetup,
   buildPregamePlayerPool,
   generateLineupIds,
   isStartingDefenseSavedForFirstFieldingHalf,
   resolveSuggestedLineupIds,
   savePregameSetup,
+  savePregameSetupWithBackendConfirmation,
   type PregameSetup,
   usePregameSetup,
 } from "@/lib/pregameSetupStorage";
@@ -48,6 +52,10 @@ export function BattingOrderSection() {
   const [now, setNow] = useState(() => Date.now());
   const [startError, setStartError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
+  const [lineupSaveError, setLineupSaveError] = useState<string | null>(null);
+  const [isSavingLineup, setIsSavingLineup] = useState(false);
+  const [defenseSaveError, setDefenseSaveError] = useState<string | null>(null);
+  const [isSavingStartingDefense, setIsSavingStartingDefense] = useState(false);
   const [manualOrderIds, setManualOrderIds] = useState<string[] | null>(null);
   const [selectedPriority, setSelectedPriority] = useState<LineupRankingPriority>("OBP");
   const [priorityOverrideActive, setPriorityOverrideActive] = useState(false);
@@ -70,7 +78,9 @@ export function BattingOrderSection() {
     rankingOptions,
   });
   const lineupPlayers = lineup.map((row) => row.player);
-  const firstDefensiveHalf = getFirstDefensiveHalf(setup.isHome);
+  const selectedScheduledGame = getSelectedScheduledGame(schedule, setup.gameId);
+  const scheduledGameIsHome = selectedScheduledGame?.kind === "GAME" ? selectedScheduledGame.isHome : setup.isHome;
+  const firstDefensiveHalf = getFirstDefensiveHalf(scheduledGameIsHome);
   const defenseDraftKey = getDefenseDraftKey(setup, firstDefensiveHalf, lineupPlayers);
   const currentDraftStartingDefense = getCurrentDraftStartingDefense(draftStartingDefense, defenseDraftKey);
   const savedDefenseAlignment = resolveStartingDefenseAlignment(lineupPlayers, setup.startingDefense, firstDefensiveHalf);
@@ -85,7 +95,6 @@ export function BattingOrderSection() {
   const lineupValidation = validateLineupGenderRules(lineup.map((row) => row.player));
   const lineupGenderOptimized = isLineupGenderOptimized(lineup.map((row) => row.player));
   const acceptedMatchesLineup = doesAcceptedLineupMatch(setup, lineup);
-  const selectedScheduledGame = getSelectedScheduledGame(schedule, setup.gameId);
   const startEligibleAt = getStartEligibleAt(selectedScheduledGame);
   const lineupReady = isLineupReady({
     acceptedMatchesLineup,
@@ -109,9 +118,9 @@ export function BattingOrderSection() {
     suggestedWarnings: suggestedLineup.warnings,
   });
   const acceptIsPrimaryAction = !acceptedMatchesLineup;
-  const startIsPrimaryAction = acceptedMatchesLineup;
   const startGameLabel = getStartGameLabel(selectedScheduledGame, now, startEligibleAt);
   const defenseStatusLabel = getDefenseStatusLabel(canStartGame, defenseIssues, startingDefenseSaved);
+  const preparationActionsDisabled = isSavingLineup || isSavingStartingDefense;
 
   useEffect(() => {
     const clientBase = Date.now();
@@ -125,6 +134,10 @@ export function BattingOrderSection() {
   }
 
   function movePlayer(index: number, direction: -1 | 1) {
+    if (preparationActionsDisabled) {
+      return;
+    }
+
     const nextIndex = index + direction;
 
     if (nextIndex < 0 || nextIndex >= lineup.length) {
@@ -136,9 +149,14 @@ export function BattingOrderSection() {
       [copy[index], copy[nextIndex]] = [copy[nextIndex], copy[index]];
       return copy;
     });
+    setLineupSaveError(null);
   }
 
   function generateLatestLineup() {
+    if (preparationActionsDisabled) {
+      return;
+    }
+
     if (!playerPoolValidation.isLeagueCompliant) {
       return;
     }
@@ -147,6 +165,8 @@ export function BattingOrderSection() {
 
     setManualOrderIds(null);
     setPriorityOverrideActive(false);
+    setLineupSaveError(null);
+    setDefenseSaveError(null);
     savePregameSetup({
       ...setup,
       generatedLineupIds: nextGeneratedLineupIds,
@@ -157,39 +177,111 @@ export function BattingOrderSection() {
   }
 
   function selectRankingPriority(priority: LineupRankingPriority) {
+    if (preparationActionsDisabled) {
+      return;
+    }
+
     setSelectedPriority(priority);
     setPriorityOverrideActive(true);
     setManualOrderIds(null);
+    setLineupSaveError(null);
   }
 
-  function acceptLineup() {
+  function resetLineup() {
+    if (preparationActionsDisabled) {
+      return;
+    }
+
+    setLineupSaveError(null);
+    setManualOrderIds(null);
+  }
+
+  async function acceptLineup() {
+    if (preparationActionsDisabled) {
+      return;
+    }
+
     if (!lineup.length || !lineupGenderOptimized) {
       return;
     }
 
-    savePregameSetup({
-      ...setup,
-      generatedLineupIds: lineup.map((row) => row.player.id),
-      acceptedLineupIds: lineup.map((row) => row.player.id),
-      startingDefense: startingDefenseSaved ? defenseAlignment : null,
-      status: "ACCEPTED",
+    const acceptedLineupIds = lineup.map((row) => row.player.id);
+
+    setIsSavingLineup(true);
+    setLineupSaveError(null);
+
+    try {
+      await savePregameSetupWithBackendConfirmation({
+        ...setup,
+        isHome: scheduledGameIsHome,
+        generatedLineupIds: acceptedLineupIds,
+        acceptedLineupIds,
+        startingDefense: startingDefenseSaved ? setup.startingDefense : null,
+        status: "ACCEPTED",
+      });
+      setManualOrderIds(null);
+    } catch (caught) {
+      setLineupSaveError(getPreparationSaveErrorMessage(caught));
+    } finally {
+      setIsSavingLineup(false);
+    }
+  }
+
+  function generateStartingDefense() {
+    if (preparationActionsDisabled || !lineupPlayers.length) {
+      return;
+    }
+
+    setDefenseSaveError(null);
+    setDraftStartingDefense({
+      key: defenseDraftKey,
+      alignment: createDefaultDefensiveAlignment(lineupPlayers, firstDefensiveHalf.inning, firstDefensiveHalf.half),
     });
   }
 
-  function saveStartingDefense() {
+  function resetStartingDefense() {
+    if (preparationActionsDisabled) {
+      return;
+    }
+
+    setDefenseSaveError(null);
+    setDraftStartingDefense(null);
+  }
+
+  async function acceptStartingDefense() {
     if (!defenseAlignment || defenseIssues.length) {
       return;
     }
 
-    savePregameSetup({
-      ...setup,
-      startingDefense: defenseAlignment,
-    });
-    setDraftStartingDefense(null);
+    if (preparationActionsDisabled) {
+      return;
+    }
+
+    setIsSavingStartingDefense(true);
+    setDefenseSaveError(null);
+
+    try {
+      await savePregameSetupWithBackendConfirmation(buildDefenseAcceptedPregameSetup(
+        { ...setup, isHome: scheduledGameIsHome },
+        lineup.map((row) => row.player.id),
+        defenseAlignment,
+        acceptedMatchesLineup,
+      ));
+      setDraftStartingDefense(null);
+      setManualOrderIds(null);
+    } catch (caught) {
+      setDefenseSaveError(getPreparationSaveErrorMessage(caught));
+    } finally {
+      setIsSavingStartingDefense(false);
+    }
   }
 
   async function startGame() {
     if (!activeTeam) {
+      return;
+    }
+
+    if (preparationActionsDisabled) {
       return;
     }
 
@@ -244,32 +336,44 @@ export function BattingOrderSection() {
             acceptedMatchesLineup={acceptedMatchesLineup}
             acceptIsPrimaryAction={acceptIsPrimaryAction}
             canGenerateLineup={playerPoolValidation.isLeagueCompliant}
-            canStartGame={canStartGame}
-            isStarting={isStarting}
+            isSavingLineup={isSavingLineup}
+            lineupActionsDisabled={preparationActionsDisabled}
             lineupGenderOptimized={lineupGenderOptimized}
             lineup={lineup}
+            lineupSaveError={lineupSaveError}
             lineupWarnings={lineupWarnings}
             onAcceptLineup={acceptLineup}
             onGenerateLineup={generateLatestLineup}
             onMovePlayer={movePlayer}
-            onResetLineup={() => setManualOrderIds(null)}
+            onResetLineup={resetLineup}
+            suggestedLineupEmptyReason={suggestedLineup.emptyReason}
+          />
+          <StartingDefenseCard
+            acceptIsPrimaryAction={!startingDefenseSaved}
+            defenseAlignment={defenseAlignment}
+            defenseAccepted={startingDefenseSaved}
+            defenseActionsDisabled={preparationActionsDisabled}
+            defenseIssues={defenseIssues}
+            defenseSaveError={defenseSaveError}
+            defenseStatusLabel={defenseStatusLabel}
+            firstDefensiveHalf={firstDefensiveHalf}
+            isSavingStartingDefense={isSavingStartingDefense}
+            lineupPlayers={lineupPlayers}
+            onDefenseChange={(alignment) => {
+              setDefenseSaveError(null);
+              setDraftStartingDefense({ key: defenseDraftKey, alignment });
+            }}
+            onAcceptDefense={acceptStartingDefense}
+            onGenerateDefense={generateStartingDefense}
+            onResetDefense={resetStartingDefense}
+          />
+          <StartGameAction
+            canStartGame={canStartGame && !preparationActionsDisabled}
+            isStarting={isStarting}
             onStartGame={startGame}
             selectedScheduledGameExists={Boolean(selectedScheduledGame)}
             startError={startError}
             startGameLabel={startGameLabel}
-            startIsPrimaryAction={startIsPrimaryAction}
-            suggestedLineupEmptyReason={suggestedLineup.emptyReason}
-          />
-          <StartingDefenseCard
-            canStartGame={canStartGame}
-            defenseAlignment={defenseAlignment}
-            defenseIssues={defenseIssues}
-            defenseStatusLabel={defenseStatusLabel}
-            firstDefensiveHalf={firstDefensiveHalf}
-            lineupPlayers={lineupPlayers}
-            onDefenseChange={(alignment) => setDraftStartingDefense({ key: defenseDraftKey, alignment })}
-            onSaveStartingDefense={saveStartingDefense}
-            startingDefenseSaved={startingDefenseSaved}
           />
           <FullGameDefenseCard
             emptyReason={fullGameDefenseEmptyReason}
@@ -286,12 +390,68 @@ export function BattingOrderSection() {
   );
 }
 
+function StartGameAction({
+  canStartGame,
+  isStarting,
+  onStartGame,
+  selectedScheduledGameExists,
+  startError,
+  startGameLabel,
+}: {
+  canStartGame: boolean;
+  isStarting: boolean;
+  onStartGame: () => void;
+  selectedScheduledGameExists: boolean;
+  startError: string | null;
+  startGameLabel: string;
+}) {
+  return (
+    <div className="order-5 flex flex-col gap-3 rounded-lg bg-[var(--surface)] p-3 lg:col-span-2 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+          Game start
+        </p>
+        {startError ? (
+          <p className="mt-2 rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-sm font-bold text-[var(--danger)]" role="alert">
+            {startError}
+          </p>
+        ) : null}
+        {selectedScheduledGameExists ? null : (
+          <Link
+            className="btn-base btn-secondary mt-2 min-h-11 px-4 text-sm sm:w-fit"
+            href="/game-setup"
+          >
+            Select Scheduled Game
+          </Link>
+        )}
+      </div>
+      <button
+        className="btn-base btn-primary min-h-12 px-5 text-sm sm:w-fit"
+        disabled={!canStartGame}
+        onClick={onStartGame}
+        type="button"
+      >
+        <Play className="size-4" aria-hidden="true" />
+        {isStarting ? "Starting..." : startGameLabel}
+      </button>
+    </div>
+  );
+}
+
 function getStartGameErrorMessage(caught: unknown) {
   if (caught instanceof Error) {
     return caught.message;
   }
 
   return "Unable to start this game.";
+}
+
+function getPreparationSaveErrorMessage(caught: unknown) {
+  if (caught instanceof Error) {
+    return caught.message;
+  }
+
+  return "Unable to save game preparation.";
 }
 
 function getActiveTeamId(activeTeam: ActiveTeam | null) {
@@ -555,5 +715,5 @@ function getDefenseStatusLabel(
     return "Fix defense";
   }
 
-  return startingDefenseSaved ? "Saved" : "Save defense";
+  return startingDefenseSaved ? "Accepted" : "Needs accept";
 }

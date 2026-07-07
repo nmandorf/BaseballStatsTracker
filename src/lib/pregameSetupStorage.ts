@@ -117,7 +117,7 @@ function getPregameSetupFromStorage(raw: string | null, context: PregameSetupCon
 
 export function savePregameSetup(setup: PregameSetup, options: { sync?: boolean } = {}) {
   if (typeof window === "undefined") {
-    return;
+    return setup;
   }
 
   const nextSetup = createSavedPregameSetup(setup);
@@ -127,6 +127,26 @@ export function savePregameSetup(setup: PregameSetup, options: { sync?: boolean 
   if (shouldSyncPregameSetup(nextSetup, options)) {
     queuePregameSetupSync(nextSetup);
   }
+
+  return nextSetup;
+}
+
+export async function savePregameSetupWithBackendConfirmation(setup: PregameSetup) {
+  if (typeof window === "undefined") {
+    return setup;
+  }
+
+  const nextSetup = createSavedPregameSetup(setup);
+
+  await flushPregameSetupSync();
+
+  if (shouldSyncPregameSetup(nextSetup, {})) {
+    await savePregameSetupToBackend(nextSetup);
+  }
+
+  writePregameSetupToBrowser(nextSetup);
+
+  return nextSetup;
 }
 
 function createSavedPregameSetup(setup: PregameSetup) {
@@ -292,11 +312,24 @@ async function savePregameSetupToBackend(setup: PregameSetup) {
     return;
   }
 
-  await fetch(`/api/games/${encodeURIComponent(setup.gameId)}/preparation`, {
+  const response = await fetch(`/api/games/${encodeURIComponent(setup.gameId)}/preparation`, {
     method: "PUT",
     headers: await getVerifiedTeamAccountHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify(setup),
   });
+
+  if (!response.ok) {
+    throw new Error(await readApiErrorMessage(response, "Unable to save game preparation."));
+  }
+}
+
+async function readApiErrorMessage(response: Response, fallback: string) {
+  try {
+    const payload = await response.json() as { error?: { message?: string } };
+    return payload.error?.message ?? `${fallback} (${response.status})`;
+  } catch {
+    return `${fallback} (${response.status})`;
+  }
 }
 
 function getSetupStatusFromScheduledGame(game: ScheduledGame) {
@@ -362,6 +395,21 @@ export function buildAcceptedPregameSetup(
     acceptedLineupIds: [...acceptedLineupIds],
     startingDefense,
     status: "ACCEPTED",
+  };
+}
+
+export function buildDefenseAcceptedPregameSetup(
+  setup: PregameSetup,
+  displayedLineupIds: string[],
+  startingDefense: DefensiveAlignment,
+  offenseAccepted: boolean,
+): PregameSetup {
+  return {
+    ...setup,
+    generatedLineupIds: [...displayedLineupIds],
+    acceptedLineupIds: offenseAccepted ? [...displayedLineupIds] : [],
+    startingDefense,
+    status: offenseAccepted ? "ACCEPTED" : "GENERATED",
   };
 }
 

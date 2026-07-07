@@ -1390,7 +1390,7 @@ export function GameHistoryCard({
                   Us {game.teamScore} - Them {game.opponentScore}
                 </p>
                 <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">
-                  {game.playCount} play{game.playCount === 1 ? "" : "s"} saved
+                  {getGameHistorySavedLabel(game)}
                 </p>
               </Link>
             );
@@ -1403,6 +1403,14 @@ export function GameHistoryCard({
       </div>
     </article>
   );
+}
+
+function getGameHistorySavedLabel(game: CompletedGameSummary) {
+  if (game.playCount > 0) {
+    return `${game.playCount} play${game.playCount === 1 ? "" : "s"} saved`;
+  }
+
+  return game.hasBoxScore ? "Box score saved" : "No plays saved";
 }
 
 function PregameStatsEntryPrompt({ teamName, eligibleAt }: { teamName: string; eligibleAt: string | null }) {

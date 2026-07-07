@@ -28,7 +28,10 @@ export async function loadTeamSchedule(teamId: string, account: TeamAccount): Pr
         orderBy: { position: "asc" },
         include: {
           game: {
-            include: { _count: { select: { lineup: true, atBats: true } } },
+            include: {
+              _count: { select: { lineup: true, atBats: true } },
+              teamStats: { select: { plateAppearances: true } },
+            },
           },
         },
       },
@@ -71,6 +74,7 @@ export async function loadTeamSchedule(teamId: string, account: TeamAccount): Pr
         opponentScore: week.game.opponentScore,
         result: week.game.result,
         playCount: week.game._count.atBats,
+        hasBoxScore: Boolean(week.game.teamStats?.plateAppearances),
       };
     }),
   };
