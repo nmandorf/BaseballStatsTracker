@@ -1,3 +1,4 @@
+import { Prisma } from "@/generated/prisma/client";
 import {
   BattingSide as PrismaBattingSide,
   DefensiveRating as PrismaDefensiveRating,
@@ -20,6 +21,7 @@ import type { PlayerStats } from "@/types/stats";
 const defaultSeasonYear = new Date().getFullYear();
 
 type TeamWithPlayers = Awaited<ReturnType<typeof fetchTeamById>>;
+type TeamPlayerRecord = NonNullable<TeamWithPlayers>["players"][number];
 
 export async function listTeamsFromBackend(account: TeamAccount = legacyTeamAccount) {
   const prisma = getPrisma();
@@ -128,101 +130,154 @@ export async function upsertActiveTeamInBackend(
   seasonYear = defaultSeasonYear,
 ) {
   const prisma = getPrisma();
-  let savedTeamId = team.id;
-
-  await prisma.$transaction(async (tx) => {
-    const existingTeam = await tx.team.findFirst({
-      where: {
-        ownerUid: account.uid,
-        OR: [{ id: team.id }, { name: team.name }],
-      },
-    });
-    const savedTeam = existingTeam
-      ? await tx.team.update({
-          where: { id: existingTeam.id },
-          data: {
-            name: team.name,
-            ownerEmail: account.email,
-          },
-        })
-      : await tx.team.create({
-          data: {
-            id: team.id,
-            name: team.name,
-            ownerUid: account.uid,
-            ownerEmail: account.email,
-          },
-        });
-
-    savedTeamId = savedTeam.id;
-    const season = await tx.season.upsert({
-      where: {
-        teamId_year: {
-          teamId: savedTeam.id,
-          year: seasonYear,
-        },
-      },
-      create: {
-        teamId: savedTeam.id,
-        year: seasonYear,
-        label: `${seasonYear} Season`,
-      },
-      update: {
-        label: `${seasonYear} Season`,
-      },
-    });
-
-    for (const player of team.players) {
-      const savedPlayer = await tx.player.upsert({
-        where: {
-          teamId_name: {
-            teamId: savedTeam.id,
-            name: player.name,
-          },
-        },
-        create: toPlayerCreate(savedTeam.id, player),
-        update: toPlayerUpdate(player),
-      });
-      const existingPlayerSeasonStats = await tx.playerSeasonStats.findUnique({
-        where: {
-          playerId_season: {
-            playerId: savedPlayer.id,
-            season: seasonYear,
-          },
-        },
-      });
-
-      if (!shouldPersistIncomingSeasonStats(
-        existingPlayerSeasonStats ? fromStatsData(existingPlayerSeasonStats) : null,
-        player.seasonStats,
-      )) {
-        continue;
-      }
-
-      await tx.playerSeasonStats.upsert({
-        where: {
-          playerId_season: {
-            playerId: savedPlayer.id,
-            season: seasonYear,
-          },
-        },
-        create: {
-          playerId: savedPlayer.id,
-          seasonId: season.id,
-          season: seasonYear,
-          gamesPlayed: player.seasonStats.gamesPlayed,
-          ...toPersistedStatsData(player.seasonStats),
-        },
-        update: {
-          seasonId: season.id,
-          gamesPlayed: player.seasonStats.gamesPlayed,
-          ...toPersistedStatsData(player.seasonStats),
-        },
-      });
-    }
-  });
+  const savedTeamId = await prisma.$transaction((tx) =>
+    upsertActiveTeamInTransaction(tx, team, account, seasonYear),
+  );
 
   return loadTeamFromBackend(savedTeamId, account);
+}
+
+async function upsertActiveTeamInTransaction(
+  tx: Prisma.TransactionClient,
+  team: ActiveTeam,
+  account: TeamAccount,
+  seasonYear: number,
+) {
+  const savedTeam = await upsertTeamRecord(tx, team, account);
+  const season = await upsertTeamSeason(tx, savedTeam.id, seasonYear);
+
+  for (const player of team.players) {
+    await upsertActiveTeamPlayer(tx, savedTeam.id, season.id, player, seasonYear);
+  }
+
+  return savedTeam.id;
+}
+
+async function upsertTeamRecord(
+  tx: Prisma.TransactionClient,
+  team: ActiveTeam,
+  account: TeamAccount,
+) {
+  const existingTeam = await tx.team.findFirst({
+    where: {
+      ownerUid: account.uid,
+      OR: [{ id: team.id }, { name: team.name }],
+    },
+  });
+
+  return existingTeam
+    ? tx.team.update({
+        where: { id: existingTeam.id },
+        data: {
+          name: team.name,
+          ownerEmail: account.email,
+        },
+      })
+    : tx.team.create({
+        data: {
+          id: team.id,
+          name: team.name,
+          ownerUid: account.uid,
+          ownerEmail: account.email,
+        },
+      });
+}
+
+async function upsertTeamSeason(
+  tx: Prisma.TransactionClient,
+  teamId: string,
+  seasonYear: number,
+) {
+  return tx.season.upsert({
+    where: {
+      teamId_year: {
+        teamId,
+        year: seasonYear,
+      },
+    },
+    create: {
+      teamId,
+      year: seasonYear,
+      label: `${seasonYear} Season`,
+    },
+    update: {
+      label: `${seasonYear} Season`,
+    },
+  });
+}
+
+async function upsertActiveTeamPlayer(
+  tx: Prisma.TransactionClient,
+  teamId: string,
+  seasonId: string,
+  player: Player,
+  seasonYear: number,
+) {
+  const savedPlayer = await tx.player.upsert({
+    where: {
+      teamId_name: {
+        teamId,
+        name: player.name,
+      },
+    },
+    create: toPlayerCreate(teamId, player),
+    update: toPlayerUpdate(player),
+  });
+  const existingPlayerSeasonStats = await findPlayerSeasonStats(tx, savedPlayer.id, seasonYear);
+
+  if (!shouldPersistIncomingSeasonStats(toExistingPlayerSeasonStats(existingPlayerSeasonStats), player.seasonStats)) {
+    return;
+  }
+
+  await upsertPlayerSeasonStats(tx, savedPlayer.id, seasonId, seasonYear, player.seasonStats);
+}
+
+function findPlayerSeasonStats(
+  tx: Prisma.TransactionClient,
+  playerId: string,
+  seasonYear: number,
+) {
+  return tx.playerSeasonStats.findUnique({
+    where: {
+      playerId_season: {
+        playerId,
+        season: seasonYear,
+      },
+    },
+  });
+}
+
+function toExistingPlayerSeasonStats(existingPlayerSeasonStats: Partial<PlayerStats> | null) {
+  return existingPlayerSeasonStats ? fromStatsData(existingPlayerSeasonStats) : null;
+}
+
+async function upsertPlayerSeasonStats(
+  tx: Prisma.TransactionClient,
+  playerId: string,
+  seasonId: string,
+  seasonYear: number,
+  seasonStats: PlayerStats,
+) {
+  await tx.playerSeasonStats.upsert({
+    where: {
+      playerId_season: {
+        playerId,
+        season: seasonYear,
+      },
+    },
+    create: {
+      playerId,
+      seasonId,
+      season: seasonYear,
+      gamesPlayed: seasonStats.gamesPlayed,
+      ...toPersistedStatsData(seasonStats),
+    },
+    update: {
+      seasonId,
+      gamesPlayed: seasonStats.gamesPlayed,
+      ...toPersistedStatsData(seasonStats),
+    },
+  });
 }
 
 function shouldPersistIncomingSeasonStats(
@@ -360,42 +415,64 @@ function serializeTeam(team: NonNullable<TeamWithPlayers>): ActiveTeam {
     name: team.name,
     timeZone: team.timeZone,
     scheduleSetupCompleted: team.scheduleSetupCompleted,
-    players: team.players.map((player, index) => ({
-      id: player.id,
-      name: player.name,
-      gender: fromPrismaPlayerGender(player.gender),
-      bats: fromPrismaBattingSide(player.bats),
-      throws: fromPrismaThrowingSide(player.throws),
-      primaryPosition: normalizeDefensivePositionPreference(player.primaryPosition),
-      speedRating: fromPrismaSpeedRating(player.speedRating),
-      notes: player.notes ?? "Player profile ready for game-day tracking.",
-      contactNotes: player.contactNotes,
-      defensiveProfile: normalizeDefensiveProfile({
-        ratings: {
-          armStrength: fromPrismaDefensiveRating(player.armStrength),
-          throwAccuracy: fromPrismaDefensiveRating(player.throwAccuracy),
-          gloveSkill: fromPrismaDefensiveRating(player.gloveSkill),
-          range: fromPrismaDefensiveRating(player.rangeRating),
-          positionConfidence: fromPrismaDefensiveRating(player.positionConfidence),
-        },
-        notes: {
-          strengths: player.defenseStrengths ?? "",
-          weaknesses: player.defenseWeaknesses ?? "",
-          bestPosition: player.bestDefensePosition ?? "",
-          avoidPosition: player.avoidDefensePosition ?? "",
-          backupPosition: player.backupDefensePosition ?? "",
-          communication: player.defenseCommunicationNotes ?? "",
-          health: player.defenseHealthNotes ?? "",
-        },
-      }),
-      roleHint: player.roleHint ?? defaultRoleHint(index + 1),
-      isActive: player.isActive,
-      seedOrder: player.seedOrder ?? index + 1,
-      seasonStats: fromStatsData(player.seasonStats[0]),
-    })),
+    players: team.players.map(serializeTeamPlayer),
     createdAt: team.createdAt.toISOString(),
     updatedAt: team.updatedAt.toISOString(),
   };
+}
+
+function serializeTeamPlayer(player: TeamPlayerRecord, index: number): Player {
+  const seedOrder = getSerializedPlayerSeedOrder(player, index);
+
+  return {
+    id: player.id,
+    name: player.name,
+    gender: fromPrismaPlayerGender(player.gender),
+    bats: fromPrismaBattingSide(player.bats),
+    throws: fromPrismaThrowingSide(player.throws),
+    primaryPosition: normalizeDefensivePositionPreference(player.primaryPosition),
+    speedRating: fromPrismaSpeedRating(player.speedRating),
+    notes: player.notes ?? "Player profile ready for game-day tracking.",
+    contactNotes: player.contactNotes,
+    defensiveProfile: normalizeDefensiveProfile({
+      ratings: getSerializedDefensiveRatings(player),
+      notes: getSerializedDefensiveNotes(player),
+    }),
+    roleHint: player.roleHint ?? defaultRoleHint(seedOrder),
+    isActive: player.isActive,
+    seedOrder,
+    seasonStats: fromStatsData(player.seasonStats[0]),
+  };
+}
+
+function getSerializedPlayerSeedOrder(player: TeamPlayerRecord, index: number) {
+  return player.seedOrder ?? index + 1;
+}
+
+function getSerializedDefensiveRatings(player: TeamPlayerRecord) {
+  return {
+    armStrength: fromPrismaDefensiveRating(player.armStrength),
+    throwAccuracy: fromPrismaDefensiveRating(player.throwAccuracy),
+    gloveSkill: fromPrismaDefensiveRating(player.gloveSkill),
+    range: fromPrismaDefensiveRating(player.rangeRating),
+    positionConfidence: fromPrismaDefensiveRating(player.positionConfidence),
+  };
+}
+
+function getSerializedDefensiveNotes(player: TeamPlayerRecord) {
+  return {
+    strengths: emptyString(player.defenseStrengths),
+    weaknesses: emptyString(player.defenseWeaknesses),
+    bestPosition: emptyString(player.bestDefensePosition),
+    avoidPosition: emptyString(player.avoidDefensePosition),
+    backupPosition: emptyString(player.backupDefensePosition),
+    communication: emptyString(player.defenseCommunicationNotes),
+    health: emptyString(player.defenseHealthNotes),
+  };
+}
+
+function emptyString(value: string | null) {
+  return value ?? "";
 }
 
 function toPlayerCreate(teamId: string, player: Player) {

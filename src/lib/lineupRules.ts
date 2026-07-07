@@ -206,23 +206,40 @@ function buildLineupGenderWarnings(
   lineup: Player[],
   genderFacts: ReturnType<typeof getLineupGenderFacts>,
 ) {
-  const warnings = buildMissingGenderWarnings(genderFacts.missingGenderPlayerNames);
+  return [
+    ...buildMissingGenderWarnings(genderFacts.missingGenderPlayerNames),
+    ...buildFemaleLeadoffWarnings(genderFacts),
+    ...buildLineupSpacingWarnings(lineup),
+  ];
+}
 
+function buildFemaleLeadoffWarnings(genderFacts: ReturnType<typeof getLineupGenderFacts>) {
   if (!genderFacts.hasFemale) {
-    warnings.push("Select at least one female player; league rules require a female leadoff hitter.");
-  } else if (!genderFacts.hasFemaleLeadoff) {
-    warnings.push("Move a female player into the leadoff spot before accepting this lineup.");
+    return ["Select at least one female player; league rules require a female leadoff hitter."];
   }
 
-  if (hasAvoidableBackToBackFemales(lineup)) {
-    warnings.push("Female hitters are back-to-back; spread them out when enough male hitters are available.");
-  }
+  return genderFacts.hasFemaleLeadoff
+    ? []
+    : ["Move a female player into the leadoff spot before accepting this lineup."];
+}
 
-  if (needsMaleWraparoundHitter(lineup)) {
-    warnings.push("Place a male hitter in the final lineup spot before the female leadoff hitter to maximize the two-base walk rule.");
-  }
+function buildLineupSpacingWarnings(lineup: Player[]) {
+  return [
+    ...getBackToBackFemaleWarning(lineup),
+    ...getMaleWraparoundWarning(lineup),
+  ];
+}
 
-  return warnings;
+function getBackToBackFemaleWarning(lineup: Player[]) {
+  return hasAvoidableBackToBackFemales(lineup)
+    ? ["Female hitters are back-to-back; spread them out when enough male hitters are available."]
+    : [];
+}
+
+function getMaleWraparoundWarning(lineup: Player[]) {
+  return needsMaleWraparoundHitter(lineup)
+    ? ["Place a male hitter in the final lineup spot before the female leadoff hitter to maximize the two-base walk rule."]
+    : [];
 }
 
 function rankLineupPlayers(players: Player[], rankingPriority: LineupRankingPriority) {
@@ -287,15 +304,19 @@ function arrangeLineupByGender(players: Player[], rankingPriority: LineupRanking
 }
 
 function chooseNextGenderBalancedIndex(remaining: Player[], lastPlayer?: Player) {
-  if (lastPlayer?.gender === "Female") {
+  if (isFemalePlayer(lastPlayer)) {
     return chooseSeparatorAfterFemaleHitter(remaining);
   }
 
-  if (!hasFemaleHitter(remaining) || !shouldUseFemaleBeforeSavingSeparator(remaining)) {
-    return 0;
-  }
+  return shouldUseNextFemaleHitter(remaining) ? findFirstFemaleIndex(remaining) : 0;
+}
 
-  return findFirstFemaleIndex(remaining);
+function isFemalePlayer(player: Player | undefined) {
+  return player?.gender === "Female";
+}
+
+function shouldUseNextFemaleHitter(remaining: Player[]) {
+  return hasFemaleHitter(remaining) && shouldUseFemaleBeforeSavingSeparator(remaining);
 }
 
 function chooseSeparatorAfterFemaleHitter(remaining: Player[]) {
@@ -511,13 +532,17 @@ function getOutQualityRates(player: Player, plateAppearances: number) {
 
   return {
     ballInPlayRate: stats.ballInPlayRate,
-    doublePlayRate: divide(player.seasonStats.doublePlays ?? 0, plateAppearances),
-    lineoutRate: divide(player.seasonStats.lineouts ?? 0, plateAppearances),
+    doublePlayRate: divide(optionalStat(player.seasonStats.doublePlays), plateAppearances),
+    lineoutRate: divide(optionalStat(player.seasonStats.lineouts), plateAppearances),
     productiveOutRate: stats.productiveOutRate,
-    strikeoutLookingRate: divide(player.seasonStats.strikeoutsLooking ?? 0, plateAppearances),
+    strikeoutLookingRate: divide(optionalStat(player.seasonStats.strikeoutsLooking), plateAppearances),
     strikeoutRate: stats.strikeoutRate,
-    strikeoutSwingingRate: divide(player.seasonStats.strikeoutsSwinging ?? 0, plateAppearances),
+    strikeoutSwingingRate: divide(optionalStat(player.seasonStats.strikeoutsSwinging), plateAppearances),
   };
+}
+
+function optionalStat(value: number | undefined) {
+  return value ?? 0;
 }
 
 function calculateOutQualityAdjustment(rates: ReturnType<typeof getOutQualityRates>) {

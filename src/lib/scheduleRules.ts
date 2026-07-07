@@ -38,34 +38,16 @@ export function getDetectedTimeZone() {
 }
 
 export function zonedGameStart(localDate: string, startTime: AllowedGameStartTime, timeZone: string) {
-  if (!isCalendarDate(localDate) || !allowedGameStartTimes.includes(startTime) || !isValidTimeZone(timeZone)) {
+  if (!isValidGameStartInput(localDate, startTime, timeZone)) {
     return null;
   }
 
-  const [year, month, day] = localDate.split("-").map(Number);
-  const hour = Number(startTime.slice(0, 2));
-  const intendedUtcShape = Date.UTC(year, month - 1, day, hour, 0, 0);
-  let candidate = intendedUtcShape;
-
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const parts = getZonedParts(new Date(candidate), timeZone);
-    const representedAsUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, 0);
-    candidate -= representedAsUtc - intendedUtcShape;
-  }
-
+  const start = parseGameStartInput(localDate, startTime);
+  const intendedUtcShape = Date.UTC(start.year, start.month - 1, start.day, start.hour, 0, 0);
+  const candidate = resolveZonedUtcCandidate(intendedUtcShape, timeZone);
   const resolved = getZonedParts(new Date(candidate), timeZone);
 
-  if (
-    resolved.year !== year ||
-    resolved.month !== month ||
-    resolved.day !== day ||
-    resolved.hour !== hour ||
-    resolved.minute !== 0
-  ) {
-    return null;
-  }
-
-  return new Date(candidate);
+  return representsRequestedGameStart(resolved, start) ? new Date(candidate) : null;
 }
 
 export function validateScheduleInput(weeks: ScheduleWeekInput[], timeZone: string) {
@@ -84,23 +66,7 @@ export function validateScheduleInput(weeks: ScheduleWeekInput[], timeZone: stri
   }
 
   weeks.forEach((week, index) => {
-    if (!isCalendarDate(week.localDate)) {
-      errors.push(`Week ${index + 1} needs a valid date.`);
-    }
-
-    if (week.kind === "GAME") {
-      if (!week.opponent.trim()) {
-        errors.push(`Week ${index + 1} needs an opponent.`);
-      }
-
-      if (!allowedGameStartTimes.includes(week.startTime)) {
-        errors.push(`Week ${index + 1} needs a supported start time.`);
-      }
-
-      if (!zonedGameStart(week.localDate, week.startTime, timeZone)) {
-        errors.push(`Week ${index + 1} could not be scheduled in ${timeZone}.`);
-      }
-    }
+    errors.push(...getScheduleWeekErrors(week, index, timeZone));
   });
 
   return errors;
@@ -113,44 +79,138 @@ export function getGameStartEligibility(input: {
   hasAnotherActiveGame: boolean;
 }): GameStartEligibility {
   const eligibleAt = new Date(input.scheduledStartAt.getTime() - gameStartLeadTimeMs).toISOString();
+  const failures = [
+    getUnverifiedGameStartFailure(input, eligibleAt),
+    getGameStatusStartFailure(input),
+    getActiveGameStartFailure(input, eligibleAt),
+    getEarlyGameStartFailure(input, eligibleAt),
+  ];
+  const failure = failures.find(Boolean);
 
-  if (!input.trustedNow) {
-    return {
-      allowed: false,
-      code: "GAME_START_TIME_UNVERIFIED",
-      message: "Connect to the internet so game time can be verified.",
-      eligibleAt,
-    };
+  return failure ?? { allowed: true, eligibleAt };
+}
+
+function isValidGameStartInput(localDate: string, startTime: AllowedGameStartTime, timeZone: string) {
+  return isCalendarDate(localDate)
+    && allowedGameStartTimes.includes(startTime)
+    && isValidTimeZone(timeZone);
+}
+
+function parseGameStartInput(localDate: string, startTime: AllowedGameStartTime) {
+  const [year, month, day] = localDate.split("-").map(Number);
+
+  return {
+    year,
+    month,
+    day,
+    hour: Number(startTime.slice(0, 2)),
+  };
+}
+
+function resolveZonedUtcCandidate(intendedUtcShape: number, timeZone: string) {
+  let candidate = intendedUtcShape;
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = getZonedParts(new Date(candidate), timeZone);
+    const representedAsUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, 0);
+    candidate -= representedAsUtc - intendedUtcShape;
   }
 
-  if (input.status !== "SCHEDULED") {
-    return {
-      allowed: false,
-      code: "GAME_NOT_STARTABLE",
-      message: "This game cannot be started from its current status.",
-      eligibleAt: null,
-    };
+  return candidate;
+}
+
+function representsRequestedGameStart(
+  resolved: { year: number; month: number; day: number; hour: number; minute: number },
+  requested: { year: number; month: number; day: number; hour: number },
+) {
+  return [
+    resolved.year === requested.year,
+    resolved.month === requested.month,
+    resolved.day === requested.day,
+    resolved.hour === requested.hour,
+    resolved.minute === 0,
+  ].every(Boolean);
+}
+
+function getScheduleWeekErrors(week: ScheduleWeekInput, index: number, timeZone: string) {
+  const label = `Week ${index + 1}`;
+  const errors = getBaseScheduleWeekErrors(week, label);
+
+  if (week.kind === "GAME") {
+    errors.push(...getScheduleGameErrors(week, label, timeZone));
   }
 
-  if (input.hasAnotherActiveGame) {
-    return {
-      allowed: false,
-      code: "TEAM_GAME_ALREADY_IN_PROGRESS",
-      message: "Finish the active game before starting another one.",
-      eligibleAt,
-    };
-  }
+  return errors;
+}
 
-  if (input.trustedNow.getTime() < Date.parse(eligibleAt)) {
-    return {
-      allowed: false,
-      code: "GAME_START_TOO_EARLY",
-      message: "This game unlocks five minutes before its scheduled start.",
-      eligibleAt,
-    };
-  }
+function getBaseScheduleWeekErrors(week: ScheduleWeekInput, label: string) {
+  return isCalendarDate(week.localDate) ? [] : [`${label} needs a valid date.`];
+}
 
-  return { allowed: true, eligibleAt };
+function getScheduleGameErrors(
+  week: Extract<ScheduleWeekInput, { kind: "GAME" }>,
+  label: string,
+  timeZone: string,
+) {
+  return [
+    ...getOpponentErrors(week, label),
+    ...getStartTimeErrors(week, label),
+    ...getZonedStartErrors(week, label, timeZone),
+  ];
+}
+
+function getOpponentErrors(week: Extract<ScheduleWeekInput, { kind: "GAME" }>, label: string) {
+  return week.opponent.trim() ? [] : [`${label} needs an opponent.`];
+}
+
+function getStartTimeErrors(week: Extract<ScheduleWeekInput, { kind: "GAME" }>, label: string) {
+  return allowedGameStartTimes.includes(week.startTime) ? [] : [`${label} needs a supported start time.`];
+}
+
+function getZonedStartErrors(
+  week: Extract<ScheduleWeekInput, { kind: "GAME" }>,
+  label: string,
+  timeZone: string,
+) {
+  return zonedGameStart(week.localDate, week.startTime, timeZone) ? [] : [`${label} could not be scheduled in ${timeZone}.`];
+}
+
+type GameStartInput = Parameters<typeof getGameStartEligibility>[0];
+
+function getUnverifiedGameStartFailure(input: GameStartInput, eligibleAt: string): GameStartEligibility | null {
+  return input.trustedNow ? null : {
+    allowed: false,
+    code: "GAME_START_TIME_UNVERIFIED",
+    message: "Connect to the internet so game time can be verified.",
+    eligibleAt,
+  };
+}
+
+function getGameStatusStartFailure(input: GameStartInput): GameStartEligibility | null {
+  return input.status === "SCHEDULED" ? null : {
+    allowed: false,
+    code: "GAME_NOT_STARTABLE",
+    message: "This game cannot be started from its current status.",
+    eligibleAt: null,
+  };
+}
+
+function getActiveGameStartFailure(input: GameStartInput, eligibleAt: string): GameStartEligibility | null {
+  return input.hasAnotherActiveGame ? {
+    allowed: false,
+    code: "TEAM_GAME_ALREADY_IN_PROGRESS",
+    message: "Finish the active game before starting another one.",
+    eligibleAt,
+  } : null;
+}
+
+function getEarlyGameStartFailure(input: GameStartInput, eligibleAt: string): GameStartEligibility | null {
+  return input.trustedNow && input.trustedNow.getTime() < Date.parse(eligibleAt) ? {
+    allowed: false,
+    code: "GAME_START_TOO_EARLY",
+    message: "This game unlocks five minutes before its scheduled start.",
+    eligibleAt,
+  } : null;
 }
 
 export function getNextScheduleWeeks(weeks: ScheduleWeek[], now: Date, timeZone = "UTC") {

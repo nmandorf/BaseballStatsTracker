@@ -165,6 +165,18 @@ export function getDefensiveAlignmentIssues(
   );
   const issues: DefensiveAlignmentIssue[] = [];
 
+  addFemaleDefenderIssues(issues, femalePlayerCount, assignedFemaleCount);
+  addLockedPitcherIssue(issues, alignment, players, lockedPitcherPlayerId);
+  addVacantRequiredPositionIssue(issues, players, vacantRequiredPositions);
+
+  return issues;
+}
+
+function addFemaleDefenderIssues(
+  issues: DefensiveAlignmentIssue[],
+  femalePlayerCount: number,
+  assignedFemaleCount: number,
+) {
   if (femalePlayerCount < minimumFemaleDefenders) {
     issues.push({
       code: "NOT_ENOUGH_FEMALE_PLAYERS",
@@ -176,10 +188,16 @@ export function getDefensiveAlignmentIssues(
       message: `Assign at least ${minimumFemaleDefenders} female players on defense.`,
     });
   }
+}
 
+function addLockedPitcherIssue(
+  issues: DefensiveAlignmentIssue[],
+  alignment: DefensiveAlignment,
+  players: Player[],
+  lockedPitcherPlayerId?: string | null,
+) {
   if (!lockedPitcherPlayerId) {
-    addVacantRequiredPositionIssue(issues, players, vacantRequiredPositions);
-    return issues;
+    return;
   }
 
   const lockedPitcher = players.find((player) => player.id === lockedPitcherPlayerId);
@@ -196,10 +214,6 @@ export function getDefensiveAlignmentIssues(
       message: `${lockedPitcher.name} must remain at Pitcher for the full game.`,
     });
   }
-
-  addVacantRequiredPositionIssue(issues, players, vacantRequiredPositions);
-
-  return issues;
 }
 
 function addVacantRequiredPositionIssue(
@@ -299,24 +313,25 @@ export function assignPlayerToPosition(
   position: DefensivePosition,
   playerId: string | "VACANT",
 ): DefensiveAlignment {
-  const sourcePosition = playerId === "VACANT"
-    ? null
-    : getAssignedPositionForPlayer(alignment, playerId);
-  const destinationSlot = alignment.slots[position];
+  const swappedAlignment = getSwappedAssignment(alignment, players, position, playerId);
 
-  if (sourcePosition && sourcePosition !== position && destinationSlot?.status === "ASSIGNED") {
-    return swapDefensivePlayers(alignment, players, sourcePosition, position);
+  if (swappedAlignment) {
+    return swappedAlignment;
   }
 
+  return assignPlayerToOpenPosition(alignment, players, position, playerId);
+}
+
+function assignPlayerToOpenPosition(
+  alignment: DefensiveAlignment,
+  players: Player[],
+  position: DefensivePosition,
+  playerId: string | "VACANT",
+) {
   const nextSlots = removePlayerFromSlots(alignment.slots, playerId);
 
   if (playerId === "VACANT") {
-    nextSlots[position] = { status: "VACANT" };
-    return buildAlignment({
-      ...alignment,
-      slots: nextSlots,
-      players,
-    });
+    return buildAlignmentWithSlot(alignment, players, nextSlots, position, { status: "VACANT" });
   }
 
   const player = players.find((candidate) => candidate.id === playerId);
@@ -325,10 +340,54 @@ export function assignPlayerToPosition(
     return alignment;
   }
 
-  nextSlots[position] = assignedSlot(player);
+  return buildAlignmentWithSlot(alignment, players, nextSlots, position, assignedSlot(player));
+}
+
+function getSwappedAssignment(
+  alignment: DefensiveAlignment,
+  players: Player[],
+  position: DefensivePosition,
+  playerId: string | "VACANT",
+) {
+  const sourcePosition = getAssignmentSourcePosition(alignment, playerId);
+
+  if (!sourcePosition || !shouldSwapAssignedPlayers(alignment, sourcePosition, position)) {
+    return null;
+  }
+
+  return swapDefensivePlayers(alignment, players, sourcePosition, position);
+}
+
+function getAssignmentSourcePosition(
+  alignment: DefensiveAlignment,
+  playerId: string | "VACANT",
+) {
+  return playerId === "VACANT" ? null : getAssignedPositionForPlayer(alignment, playerId);
+}
+
+function shouldSwapAssignedPlayers(
+  alignment: DefensiveAlignment,
+  sourcePosition: DefensivePosition,
+  destinationPosition: DefensivePosition,
+) {
+  return [
+    sourcePosition !== destinationPosition,
+    alignment.slots[destinationPosition]?.status === "ASSIGNED",
+  ].every(Boolean);
+}
+
+function buildAlignmentWithSlot(
+  alignment: DefensiveAlignment,
+  players: Player[],
+  slots: DefensiveAlignment["slots"],
+  position: DefensivePosition,
+  slot: DefensiveSlot,
+) {
+  slots[position] = slot;
+
   return buildAlignment({
     ...alignment,
-    slots: nextSlots,
+    slots,
     players,
   });
 }
@@ -405,7 +464,7 @@ export function upsertDefensiveAlignment(
   return alignments.map((candidate, index) => (index === existingIndex ? nextAlignment : candidate));
 }
 
-export function createDefensiveEvent(input: {
+type DefensiveEventInput = {
   id: string;
   inning: number;
   half: InningHalf;
@@ -422,26 +481,54 @@ export function createDefensiveEvent(input: {
   involvedPlayerIds?: string[];
   notes?: string;
   createdAt?: string;
-}): DefensiveEvent {
+};
+
+export function createDefensiveEvent(input: DefensiveEventInput): DefensiveEvent {
   return {
     id: input.id,
     inning: input.inning,
     half: input.half,
     type: input.type,
-    fielderId: input.fielder?.id,
-    fielderName: input.fielder?.name,
+    ...getDefensiveEventFielder(input.fielder),
     position: input.position,
     ballType: input.ballType,
     misplayType: input.misplayType,
     misplayResult: input.misplayResult,
     greatPlayImpact: input.greatPlayImpact,
-    involvedPlayerIds: input.involvedPlayerIds ?? (input.fielder ? [input.fielder.id] : []),
-    outsRecorded: Math.max(0, Math.min(3, Math.floor(input.outsRecorded ?? defaultOutsForEvent(input.type)))),
-    runsAllowed: Math.max(0, Math.floor(input.runsAllowed ?? 0)),
-    basesAllowed: Math.max(0, Math.floor(input.basesAllowed ?? 0)),
-    notes: input.notes?.trim() ?? "",
-    createdAt: input.createdAt ?? new Date().toISOString(),
+    involvedPlayerIds: getDefensiveEventPlayerIds(input),
+    outsRecorded: normalizeOutsRecorded(input.outsRecorded, input.type),
+    runsAllowed: normalizeNonNegativeInteger(input.runsAllowed),
+    basesAllowed: normalizeNonNegativeInteger(input.basesAllowed),
+    notes: normalizeEventNotes(input.notes),
+    createdAt: getEventCreatedAt(input.createdAt),
   };
+}
+
+function getDefensiveEventFielder(fielder: Player | null | undefined) {
+  return {
+    fielderId: fielder?.id,
+    fielderName: fielder?.name,
+  };
+}
+
+function getDefensiveEventPlayerIds(input: DefensiveEventInput) {
+  return input.involvedPlayerIds ?? (input.fielder ? [input.fielder.id] : []);
+}
+
+function normalizeOutsRecorded(outsRecorded: number | undefined, eventType: DefensiveEventType) {
+  return Math.max(0, Math.min(3, Math.floor(outsRecorded ?? defaultOutsForEvent(eventType))));
+}
+
+function normalizeNonNegativeInteger(value: number | undefined) {
+  return Math.max(0, Math.floor(value ?? 0));
+}
+
+function normalizeEventNotes(notes: string | undefined) {
+  return notes?.trim() ?? "";
+}
+
+function getEventCreatedAt(createdAt: string | undefined) {
+  return createdAt ?? new Date().toISOString();
 }
 
 export function getDefensiveSummary(
@@ -484,22 +571,34 @@ export function normalizeDefensiveProfile(profile: Partial<DefensiveProfile> | u
   }
 
   return {
-    ratings: {
-      armStrength: normalizeRating(profile.ratings?.armStrength),
-      throwAccuracy: normalizeRating(profile.ratings?.throwAccuracy),
-      gloveSkill: normalizeRating(profile.ratings?.gloveSkill),
-      range: normalizeRating(profile.ratings?.range),
-      positionConfidence: normalizeRating(profile.ratings?.positionConfidence),
-    },
-    notes: {
-      strengths: normalizeText(profile.notes?.strengths),
-      weaknesses: normalizeText(profile.notes?.weaknesses),
-      bestPosition: normalizeDefensivePositionPreference(profile.notes?.bestPosition),
-      avoidPosition: normalizeDefensivePositionPreference(profile.notes?.avoidPosition),
-      backupPosition: normalizeDefensivePositionPreference(profile.notes?.backupPosition),
-      communication: normalizeText(profile.notes?.communication),
-      health: normalizeText(profile.notes?.health),
-    },
+    ratings: normalizeDefensiveRatings(profile.ratings),
+    notes: normalizeDefensiveNotes(profile.notes),
+  };
+}
+
+function normalizeDefensiveRatings(ratings: Partial<DefensiveProfile["ratings"]> | undefined) {
+  const source = ratings ?? {};
+
+  return {
+    armStrength: normalizeRating(source.armStrength),
+    throwAccuracy: normalizeRating(source.throwAccuracy),
+    gloveSkill: normalizeRating(source.gloveSkill),
+    range: normalizeRating(source.range),
+    positionConfidence: normalizeRating(source.positionConfidence),
+  };
+}
+
+function normalizeDefensiveNotes(notes: Partial<DefensiveProfile["notes"]> | undefined) {
+  const source = notes ?? {};
+
+  return {
+    strengths: normalizeText(source.strengths),
+    weaknesses: normalizeText(source.weaknesses),
+    bestPosition: normalizeDefensivePositionPreference(source.bestPosition),
+    avoidPosition: normalizeDefensivePositionPreference(source.avoidPosition),
+    backupPosition: normalizeDefensivePositionPreference(source.backupPosition),
+    communication: normalizeText(source.communication),
+    health: normalizeText(source.health),
   };
 }
 
@@ -523,15 +622,7 @@ function buildAlignment(input: {
   const normalizedSlots: DefensiveAlignment["slots"] = {};
 
   defensivePositions.forEach((position) => {
-    const slot = input.slots[position];
-
-    if (!slot || slot.status === "VACANT" || !activePlayerIds.has(slot.playerId) || assignedPlayerIds.has(slot.playerId)) {
-      normalizedSlots[position] = { status: "VACANT" };
-      return;
-    }
-
-    assignedPlayerIds.add(slot.playerId);
-    normalizedSlots[position] = slot;
+    normalizeAlignmentSlot(position, input.slots, normalizedSlots, activePlayerIds, assignedPlayerIds);
   });
 
   const benchPlayerIds = input.players
@@ -546,6 +637,36 @@ function buildAlignment(input: {
     benchPlayerIds,
     updatedAt: input.updatedAt ?? new Date().toISOString(),
   };
+}
+
+function normalizeAlignmentSlot(
+  position: DefensivePosition,
+  sourceSlots: DefensiveAlignment["slots"],
+  normalizedSlots: DefensiveAlignment["slots"],
+  activePlayerIds: Set<string>,
+  assignedPlayerIds: Set<string>,
+) {
+  const slot = sourceSlots[position];
+
+  if (!isUsableAssignedSlot(slot, activePlayerIds, assignedPlayerIds)) {
+    normalizedSlots[position] = { status: "VACANT" };
+    return;
+  }
+
+  assignedPlayerIds.add(slot.playerId);
+  normalizedSlots[position] = slot;
+}
+
+function isUsableAssignedSlot(
+  slot: DefensiveSlot | undefined,
+  activePlayerIds: Set<string>,
+  assignedPlayerIds: Set<string>,
+) : slot is Extract<DefensiveSlot, { status: "ASSIGNED" }> {
+  if (!slot || slot.status !== "ASSIGNED") {
+    return false;
+  }
+
+  return activePlayerIds.has(slot.playerId) && !assignedPlayerIds.has(slot.playerId);
 }
 
 function assignedSlot(player: Player): DefensiveSlot {
@@ -656,19 +777,31 @@ function canAssignPlayerToPosition(
 ) {
   const positionMask = getPositionMask(positionIndex);
 
-  if ((state.assignedPositionMask & positionMask) !== 0) {
-    return false;
-  }
+  return [
+    isPositionAvailable(state, positionMask),
+    canPlaceLockedPitcher(player, position, lockedPitcherPlayerId),
+    canPlacePitcher(player, position, lockedPitcherPlayerId),
+  ].every(Boolean);
+}
 
-  if (lockedPitcherPlayerId && player.id === lockedPitcherPlayerId && position !== "P") {
-    return false;
-  }
+function isPositionAvailable(state: AssignmentState, positionMask: number) {
+  return (state.assignedPositionMask & positionMask) === 0;
+}
 
-  if (lockedPitcherPlayerId && player.id !== lockedPitcherPlayerId && position === "P") {
-    return false;
-  }
+function canPlaceLockedPitcher(
+  player: Player,
+  position: DefensivePosition,
+  lockedPitcherPlayerId?: string | null,
+) {
+  return !lockedPitcherPlayerId || player.id !== lockedPitcherPlayerId || position === "P";
+}
 
-  return true;
+function canPlacePitcher(
+  player: Player,
+  position: DefensivePosition,
+  lockedPitcherPlayerId?: string | null,
+) {
+  return !lockedPitcherPlayerId || player.id === lockedPitcherPlayerId || position !== "P";
 }
 
 function createCandidateAssignmentState(
@@ -733,22 +866,55 @@ function compareAssignmentStates(
   secondState: AssignmentState,
   requiredFemaleCount: number,
 ) {
-  const assignedDifference = countAssignedPositions(secondState.assignedPositionMask)
+  for (const comparer of assignmentStateComparers) {
+    const difference = comparer(firstState, secondState, requiredFemaleCount);
+
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+
+  return 0;
+}
+
+type AssignmentStateComparer = (
+  firstState: AssignmentState,
+  secondState: AssignmentState,
+  requiredFemaleCount: number,
+) => number;
+
+const assignmentStateComparers: AssignmentStateComparer[] = [
+  compareAssignedPositionCount,
+  compareFemaleMinimum,
+  compareAvoidPositionAssignments,
+  compareAssignmentScore,
+];
+
+function compareAssignedPositionCount(firstState: AssignmentState, secondState: AssignmentState) {
+  return countAssignedPositions(secondState.assignedPositionMask)
     - countAssignedPositions(firstState.assignedPositionMask);
+}
 
-  if (assignedDifference !== 0) return assignedDifference;
-
+function compareFemaleMinimum(
+  firstState: AssignmentState,
+  secondState: AssignmentState,
+  requiredFemaleCount: number,
+) {
   const firstMeetsFemaleMinimum = meetsFemaleMinimum(firstState, requiredFemaleCount);
   const secondMeetsFemaleMinimum = meetsFemaleMinimum(secondState, requiredFemaleCount);
 
-  if (firstMeetsFemaleMinimum !== secondMeetsFemaleMinimum) {
-    return secondMeetsFemaleMinimum ? 1 : -1;
+  if (firstMeetsFemaleMinimum === secondMeetsFemaleMinimum) {
+    return 0;
   }
 
-  if (firstState.avoidPositionAssignments !== secondState.avoidPositionAssignments) {
-    return firstState.avoidPositionAssignments - secondState.avoidPositionAssignments;
-  }
+  return secondMeetsFemaleMinimum ? 1 : -1;
+}
 
+function compareAvoidPositionAssignments(firstState: AssignmentState, secondState: AssignmentState) {
+  return firstState.avoidPositionAssignments - secondState.avoidPositionAssignments;
+}
+
+function compareAssignmentScore(firstState: AssignmentState, secondState: AssignmentState) {
   return secondState.score - firstState.score;
 }
 
@@ -786,44 +952,138 @@ function getPositionFitScore(
   position: DefensivePosition,
   benchCounts: Record<string, number>,
 ) {
-  const bestPosition = normalizeDefensivePosition(player.defensiveProfile.notes.bestPosition);
-  const primaryPosition = normalizeDefensivePosition(player.primaryPosition);
-  const backupPosition = normalizeDefensivePosition(player.defensiveProfile.notes.backupPosition);
-  const avoidPosition = normalizeDefensivePosition(player.defensiveProfile.notes.avoidPosition);
+  const preferences = getDefensivePositionPreferences(player);
   let score = (benchCounts[player.id] ?? 0) * 1_000;
 
-  if (position === avoidPosition) score -= 10_000;
-  if (position === primaryPosition) score += 420;
-  if (position === bestPosition) score += 300;
-  if (position === backupPosition) score += 160;
-  if (
-    (bestPosition || primaryPosition || backupPosition)
-    && position !== bestPosition
-    && position !== primaryPosition
-    && position !== backupPosition
-  ) {
-    score -= 80;
-  }
-
+  score += getPositionPreferenceScore(position, preferences);
   score += getRatingScore(player.defensiveProfile.ratings.positionConfidence) * 4;
   score += getPositionRatingScore(player, position);
 
   return score;
 }
 
+type DefensivePositionPreference = DefensivePosition | null;
+
+type DefensivePositionPreferences = {
+  avoidPosition: DefensivePositionPreference;
+  backupPosition: DefensivePositionPreference;
+  bestPosition: DefensivePositionPreference;
+  primaryPosition: DefensivePositionPreference;
+};
+
+function getDefensivePositionPreferences(player: Player): DefensivePositionPreferences {
+  return {
+    avoidPosition: normalizeDefensivePosition(player.defensiveProfile.notes.avoidPosition),
+    backupPosition: normalizeDefensivePosition(player.defensiveProfile.notes.backupPosition),
+    bestPosition: normalizeDefensivePosition(player.defensiveProfile.notes.bestPosition),
+    primaryPosition: normalizeDefensivePosition(player.primaryPosition),
+  };
+}
+
+function getPositionPreferenceScore(
+  position: DefensivePosition,
+  preferences: DefensivePositionPreferences,
+) {
+  if (position === preferences.avoidPosition) {
+    return -10_000;
+  }
+
+  return getPreferredPositionScore(position, preferences)
+    + getUnmatchedPreferredPositionPenalty(position, preferences);
+}
+
+type PositionPreferenceScoreRule = {
+  key: Exclude<keyof DefensivePositionPreferences, "avoidPosition">;
+  score: number;
+};
+
+const positionPreferenceScoreRules: PositionPreferenceScoreRule[] = [
+  { key: "primaryPosition", score: 420 },
+  { key: "bestPosition", score: 300 },
+  { key: "backupPosition", score: 160 },
+];
+
+function getPreferredPositionScore(
+  position: DefensivePosition,
+  preferences: DefensivePositionPreferences,
+) {
+  return positionPreferenceScoreRules.reduce((score, rule) => (
+    preferences[rule.key] === position ? score + rule.score : score
+  ), 0);
+}
+
+function getUnmatchedPreferredPositionPenalty(
+  position: DefensivePosition,
+  preferences: DefensivePositionPreferences,
+) {
+  if (!hasPreferredPosition(preferences)) {
+    return 0;
+  }
+
+  return isPreferredPosition(position, preferences) ? 0 : -80;
+}
+
+function hasPreferredPosition(preferences: DefensivePositionPreferences) {
+  return positionPreferenceScoreRules.some((rule) => Boolean(preferences[rule.key]));
+}
+
+function isPreferredPosition(
+  position: DefensivePosition,
+  preferences: DefensivePositionPreferences,
+) {
+  return positionPreferenceScoreRules.some((rule) => preferences[rule.key] === position);
+}
+
 function getPositionRatingScore(player: Player, position: DefensivePosition) {
   const ratings = player.defensiveProfile.ratings;
-  const gloveScore = getRatingScore(ratings.gloveSkill);
-  const accuracyScore = getRatingScore(ratings.throwAccuracy);
-  const armScore = getRatingScore(ratings.armStrength);
-  const rangeScore = getRatingScore(ratings.range);
+  const ratingScores = {
+    accuracy: getRatingScore(ratings.throwAccuracy),
+    arm: getRatingScore(ratings.armStrength),
+    glove: getRatingScore(ratings.gloveSkill),
+    range: getRatingScore(ratings.range),
+  };
 
-  if (position === "P") return accuracyScore * 5 + gloveScore * 2;
-  if (position === "C") return gloveScore * 3 + accuracyScore * 2;
-  if (position === "1B") return gloveScore * 5 + rangeScore;
-  if (position === "2B") return gloveScore * 4 + rangeScore * 3 + accuracyScore * 2;
-  if (position === "SS" || position === "3B") return armScore * 4 + rangeScore * 4 + gloveScore * 3 + accuracyScore * 2;
-  return rangeScore * 5 + armScore * 4 + accuracyScore * 2;
+  return positionRatingScorers[position]?.(ratingScores) ?? getOutfieldRatingScore(ratingScores);
+}
+
+type DefensiveRatingScores = {
+  accuracy: number;
+  arm: number;
+  glove: number;
+  range: number;
+};
+
+const positionRatingScorers: Partial<Record<DefensivePosition, (scores: DefensiveRatingScores) => number>> = {
+  P: getPitcherRatingScore,
+  C: getCatcherRatingScore,
+  "1B": getFirstBaseRatingScore,
+  "2B": getSecondBaseRatingScore,
+  SS: getLeftSideInfieldRatingScore,
+  "3B": getLeftSideInfieldRatingScore,
+};
+
+function getPitcherRatingScore({ accuracy, glove }: DefensiveRatingScores) {
+  return accuracy * 5 + glove * 2;
+}
+
+function getCatcherRatingScore({ accuracy, glove }: DefensiveRatingScores) {
+  return glove * 3 + accuracy * 2;
+}
+
+function getFirstBaseRatingScore({ glove, range }: DefensiveRatingScores) {
+  return glove * 5 + range;
+}
+
+function getSecondBaseRatingScore({ accuracy, glove, range }: DefensiveRatingScores) {
+  return glove * 4 + range * 3 + accuracy * 2;
+}
+
+function getLeftSideInfieldRatingScore({ accuracy, arm, glove, range }: DefensiveRatingScores) {
+  return arm * 4 + range * 4 + glove * 3 + accuracy * 2;
+}
+
+function getOutfieldRatingScore({ accuracy, arm, range }: DefensiveRatingScores) {
+  return range * 5 + arm * 4 + accuracy * 2;
 }
 
 function getRatingScore(rating: DefensiveRatingValue) {
@@ -855,19 +1115,29 @@ function removePlayerFromSlots(
 }
 
 function getInningsByPosition(playerId: string, alignments: DefensiveAlignment[]) {
-  return alignments.reduce<Partial<Record<DefensivePosition, number>>>((inningsByPosition, alignment) => {
-    defensivePositions.forEach((position) => {
-      const slot = alignment.slots[position];
+  const inningsByPosition: Partial<Record<DefensivePosition, number>> = {};
 
-      if (slot?.status !== "ASSIGNED" || slot.playerId !== playerId) {
-        return;
-      }
+  alignments.forEach((alignment) => {
+    countAlignmentInningsForPlayer(inningsByPosition, alignment, playerId);
+  });
 
+  return inningsByPosition;
+}
+
+function countAlignmentInningsForPlayer(
+  inningsByPosition: Partial<Record<DefensivePosition, number>>,
+  alignment: DefensiveAlignment,
+  playerId: string,
+) {
+  defensivePositions.forEach((position) => {
+    if (isAssignedPlayerSlot(alignment.slots[position], playerId)) {
       inningsByPosition[position] = (inningsByPosition[position] ?? 0) + 1;
-    });
+    }
+  });
+}
 
-    return inningsByPosition;
-  }, {});
+function isAssignedPlayerSlot(slot: DefensiveSlot | undefined, playerId: string) {
+  return slot?.status === "ASSIGNED" && slot.playerId === playerId;
 }
 
 function getBestFitLabel(
@@ -888,38 +1158,75 @@ function getBestFitLabel(
     return defensivePositionLabels[mostPlayedPosition];
   }
 
-  if (isHigh(player.defensiveProfile.ratings.range) && isHigh(player.defensiveProfile.ratings.armStrength)) {
-    return "Outfield fit";
-  }
+  return getEvidenceBasedFitLabel(player, events);
+}
 
-  if (isHigh(player.defensiveProfile.ratings.gloveSkill) && isHigh(player.defensiveProfile.ratings.throwAccuracy)) {
-    return "Infield fit";
-  }
-
-  if (events.some((event) => event.type === "GREAT_PLAY")) {
-    return "Reliable defender";
+function getEvidenceBasedFitLabel(player: Player, events: DefensiveEvent[]) {
+  for (const rule of evidenceFitRules) {
+    if (rule.matches(player, events)) return rule.label;
   }
 
   return "Needs more defense data";
 }
 
+type EvidenceFitRule = {
+  label: string;
+  matches: (player: Player, events: DefensiveEvent[]) => boolean;
+};
+
+const evidenceFitRules: EvidenceFitRule[] = [
+  { label: "Outfield fit", matches: hasOutfieldFitProfile },
+  { label: "Infield fit", matches: hasInfieldFitProfile },
+  { label: "Reliable defender", matches: hasGreatPlayEvent },
+];
+
+function hasOutfieldFitProfile(player: Player) {
+  const ratings = player.defensiveProfile.ratings;
+  return isHigh(ratings.range) && isHigh(ratings.armStrength);
+}
+
+function hasInfieldFitProfile(player: Player) {
+  const ratings = player.defensiveProfile.ratings;
+  return isHigh(ratings.gloveSkill) && isHigh(ratings.throwAccuracy);
+}
+
+function hasGreatPlayEvent(_player: Player, events: DefensiveEvent[]) {
+  return events.some(isGreatPlayEvent);
+}
+
+function isGreatPlayEvent(event: DefensiveEvent) {
+  return event.type === "GREAT_PLAY";
+}
+
 function getEvidenceLabel(defensiveInnings: number, defensiveChances: number) {
-  if (defensiveInnings >= 6 && defensiveChances >= 5) {
+  if (hasEnoughDefenseEvidence(defensiveInnings, defensiveChances)) {
     return "Based on game data";
   }
 
-  if (defensiveInnings > 0 || defensiveChances > 0) {
+  if (hasAnyDefenseEvidence(defensiveInnings, defensiveChances)) {
     return "Small sample";
   }
 
   return "Based on profile";
 }
 
-function defaultOutsForEvent(type: DefensiveEventType) {
-  if (type === "ROUTINE_OUT" || type === "GREAT_PLAY") return 1;
-  if (type === "DOUBLE_PLAY") return 2;
-  return 0;
+function hasEnoughDefenseEvidence(defensiveInnings: number, defensiveChances: number) {
+  return defensiveInnings >= 6 && defensiveChances >= 5;
 }
+
+function hasAnyDefenseEvidence(defensiveInnings: number, defensiveChances: number) {
+  return defensiveInnings > 0 || defensiveChances > 0;
+}
+
+function defaultOutsForEvent(type: DefensiveEventType) {
+  return defaultOutsByEventType[type] ?? 0;
+}
+
+const defaultOutsByEventType: Partial<Record<DefensiveEventType, number>> = {
+  ROUTINE_OUT: 1,
+  GREAT_PLAY: 1,
+  DOUBLE_PLAY: 2,
+};
 
 function createAlignmentId(inning: number, half: InningHalf) {
   return `defense-${inning}-${half.toLowerCase()}`;

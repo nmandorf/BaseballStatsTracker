@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -40,14 +40,54 @@ export function HeaderSection({ activeNav = "home" }: HeaderSectionProps) {
   const router = useRouter();
   const isLiveGame = gameState.status === "IN_PROGRESS";
 
+  useLiveGameRedirect({ gameState, isLiveGame, pathname, router });
+  useActiveMobileNavScroll({ activeMobileNavItemRef, activeNav, isLiveGame });
+
+  return (
+    <header className="sticky top-0 z-20 border-b border-[var(--border)] bg-background/94 backdrop-blur-xl">
+      <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8 xl:grid xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+        <HeaderBrand />
+        <DesktopPrimaryNav activeNav={activeNav} isLiveGame={isLiveGame} />
+        <HeaderActions isLiveGame={isLiveGame} />
+      </div>
+      <MobilePrimaryNav activeMobileNavItemRef={activeMobileNavItemRef} activeNav={activeNav} isLiveGame={isLiveGame} />
+    </header>
+  );
+}
+
+function useLiveGameRedirect({
+  gameState,
+  isLiveGame,
+  pathname,
+  router,
+}: {
+  gameState: ReturnType<typeof useFirstGameState>;
+  isLiveGame: boolean;
+  pathname: string | null;
+  router: ReturnType<typeof useRouter>;
+}) {
   useEffect(() => {
-    if (!isLiveGame || (pathname && liveGamePaths.has(pathname))) {
+    if (shouldStayOnCurrentLiveGamePath(isLiveGame, pathname)) {
       return;
     }
 
     router.replace(getLiveGameHref(gameState));
   }, [gameState, isLiveGame, pathname, router]);
+}
 
+function shouldStayOnCurrentLiveGamePath(isLiveGame: boolean, pathname: string | null) {
+  return !isLiveGame || Boolean(pathname && liveGamePaths.has(pathname));
+}
+
+function useActiveMobileNavScroll({
+  activeMobileNavItemRef,
+  activeNav,
+  isLiveGame,
+}: {
+  activeMobileNavItemRef: RefObject<HTMLAnchorElement | null>;
+  activeNav: AppNavKey | null;
+  isLiveGame: boolean;
+}) {
   useEffect(() => {
     if (isLiveGame) {
       return;
@@ -57,82 +97,127 @@ export function HeaderSection({ activeNav = "home" }: HeaderSectionProps) {
       block: "nearest",
       inline: "nearest",
     });
-  }, [activeNav, isLiveGame]);
+  }, [activeMobileNavItemRef, activeNav, isLiveGame]);
+}
+
+function HeaderBrand() {
+  return (
+    <div className="flex min-w-0 items-center gap-3 xl:justify-self-start">
+      <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)] text-white shadow-sm shadow-[var(--accent)]/20">
+        <CircleDotDashed className="size-5" aria-hidden="true" />
+      </div>
+      <div className="min-w-0">
+        <p className="truncate text-sm font-semibold text-foreground">
+          Baseball Stat Tracker
+        </p>
+        <p className="text-xs text-[var(--muted-foreground)]">
+          Game day workspace
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function DesktopPrimaryNav({
+  activeNav,
+  isLiveGame,
+}: {
+  activeNav: AppNavKey | null;
+  isLiveGame: boolean;
+}) {
+  if (isLiveGame) {
+    return null;
+  }
 
   return (
-    <header className="sticky top-0 z-20 border-b border-[var(--border)] bg-background/94 backdrop-blur-xl">
-      <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6 lg:px-8 xl:grid xl:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
-        <div className="flex min-w-0 items-center gap-3 xl:justify-self-start">
-          <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-[var(--accent)] text-white shadow-sm shadow-[var(--accent)]/20">
-            <CircleDotDashed className="size-5" aria-hidden="true" />
-          </div>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold text-foreground">
-              Baseball Stat Tracker
-            </p>
-            <p className="text-xs text-[var(--muted-foreground)]">
-              Game day workspace
-            </p>
-          </div>
-        </div>
-        {!isLiveGame ? (
-          <nav
-            aria-label="Primary"
-            className="hidden items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 shadow-sm shadow-foreground/[0.025] xl:flex"
-          >
-            {navItems.map(({ key, label, href, icon: Icon }) => {
-              const isActive = activeNav === key;
-
-              return (
-                <Link
-                  className={cn(
-                    "inline-flex min-h-12 items-center gap-2 rounded-md px-3 text-sm font-bold transition",
-                    isActive
-                      ? "bg-[var(--accent)] text-white"
-                      : "text-[var(--muted-foreground)] hover:bg-[var(--surface)] hover:text-foreground",
-                  )}
-                  href={href}
-                  key={key}
-                >
-                  <Icon className="size-4" aria-hidden="true" />
-                  {label}
-                </Link>
-              );
-            })}
-          </nav>
-        ) : null}
-        <div className="flex items-center gap-2 xl:col-start-3 xl:justify-self-end">
-          {isLiveGame ? <StatusPill tone="ready">Game in progress</StatusPill> : null}
-          {!isLiveGame ? <AuthStatus /> : null}
-        </div>
-      </div>
-      {!isLiveGame ? (
-        <nav
-          aria-label="Mobile primary"
-          className="mx-auto flex w-full max-w-6xl gap-1 overflow-x-auto px-4 pb-3 sm:px-6 xl:hidden"
-        >
-          {navItems.map(({ key, label, href, icon: Icon }) => {
-            const isActive = activeNav === key;
-
-            return (
-              <Link
-                className={cn(
-                  "inline-flex min-h-12 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-bold",
-                  isActive
-                    ? "border-[var(--accent)] bg-[var(--accent)] text-white"
-                    : "border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)]",
-                )}
-                href={href}
-                key={key}
-                ref={isActive ? activeMobileNavItemRef : undefined}
-              >
-                <Icon className="size-4" aria-hidden="true" />
-                {label}
-              </Link>
-            );
-          })}
-        </nav>
-      ) : null}
-    </header>
+    <nav aria-label="Primary" className="hidden items-center gap-1 rounded-lg border border-[var(--border)] bg-[var(--card)] p-1 shadow-sm shadow-foreground/[0.025] xl:flex">
+      {navItems.map((item) => (
+        <DesktopPrimaryNavItem activeNav={activeNav} item={item} key={item.key} />
+      ))}
+    </nav>
   );
+}
+
+function DesktopPrimaryNavItem({
+  activeNav,
+  item,
+}: {
+  activeNav: AppNavKey | null;
+  item: (typeof navItems)[number];
+}) {
+  const Icon = item.icon;
+  const isActive = activeNav === item.key;
+
+  return (
+    <Link className={cn("inline-flex min-h-12 items-center gap-2 rounded-md px-3 text-sm font-bold transition", getDesktopNavItemClass(isActive))} href={item.href}>
+      <Icon className="size-4" aria-hidden="true" />
+      {item.label}
+    </Link>
+  );
+}
+
+function getDesktopNavItemClass(isActive: boolean) {
+  return isActive
+    ? "bg-[var(--accent)] text-white"
+    : "text-[var(--muted-foreground)] hover:bg-[var(--surface)] hover:text-foreground";
+}
+
+function HeaderActions({ isLiveGame }: { isLiveGame: boolean }) {
+  return (
+    <div className="flex items-center gap-2 xl:col-start-3 xl:justify-self-end">
+      {isLiveGame ? <StatusPill tone="ready">Game in progress</StatusPill> : <AuthStatus />}
+    </div>
+  );
+}
+
+function MobilePrimaryNav({
+  activeMobileNavItemRef,
+  activeNav,
+  isLiveGame,
+}: {
+  activeMobileNavItemRef: RefObject<HTMLAnchorElement | null>;
+  activeNav: AppNavKey | null;
+  isLiveGame: boolean;
+}) {
+  if (isLiveGame) {
+    return null;
+  }
+
+  return (
+    <nav aria-label="Mobile primary" className="mx-auto flex w-full max-w-6xl gap-1 overflow-x-auto px-4 pb-3 sm:px-6 xl:hidden">
+      {navItems.map((item) => (
+        <MobilePrimaryNavItem activeMobileNavItemRef={activeMobileNavItemRef} activeNav={activeNav} item={item} key={item.key} />
+      ))}
+    </nav>
+  );
+}
+
+function MobilePrimaryNavItem({
+  activeMobileNavItemRef,
+  activeNav,
+  item,
+}: {
+  activeMobileNavItemRef: RefObject<HTMLAnchorElement | null>;
+  activeNav: AppNavKey | null;
+  item: (typeof navItems)[number];
+}) {
+  const Icon = item.icon;
+  const isActive = activeNav === item.key;
+
+  return (
+    <Link
+      className={cn("inline-flex min-h-12 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-bold", getMobileNavItemClass(isActive))}
+      href={item.href}
+      ref={isActive ? activeMobileNavItemRef : undefined}
+    >
+      <Icon className="size-4" aria-hidden="true" />
+      {item.label}
+    </Link>
+  );
+}
+
+function getMobileNavItemClass(isActive: boolean) {
+  return isActive
+    ? "border-[var(--accent)] bg-[var(--accent)] text-white"
+    : "border-[var(--border)] bg-[var(--card)] text-[var(--muted-foreground)]";
 }

@@ -44,17 +44,38 @@ export function createSlug(value: string) {
 }
 
 export function normalizeBattingSide(value: unknown): BattingSide {
-  return value === "Right" || value === "Left" || value === "Switch" || value === "Unknown" ? value : "Unknown";
+  return isBattingSide(value) ? value : "Unknown";
 }
 
 export function normalizeThrowingSide(value: unknown): ThrowingSide {
-  return value === "Right" || value === "Left" || value === "Unknown" ? value : "Unknown";
+  return isThrowingSide(value) ? value : "Unknown";
 }
 
 export function normalizeSpeedRating(value: unknown): SpeedRating {
-  return value === "Fast" || value === "Slow" || value === "Average" ? value : "Average";
+  return isSpeedRating(value) ? value : "Average";
 }
 
 export function normalizePlayerGender(value: unknown): PlayerGender {
-  return value === "Female" || value === "Male" ? value : "Unknown";
+  return isPlayerGender(value) ? value : "Unknown";
+}
+
+const battingSides = new Set<BattingSide>(["Right", "Left", "Switch", "Unknown"]);
+const throwingSides = new Set<ThrowingSide>(["Right", "Left", "Unknown"]);
+const speedRatings = new Set<SpeedRating>(["Fast", "Slow", "Average"]);
+const playerGenders = new Set<PlayerGender>(["Female", "Male", "Unknown"]);
+
+function isBattingSide(value: unknown): value is BattingSide {
+  return typeof value === "string" && battingSides.has(value as BattingSide);
+}
+
+function isThrowingSide(value: unknown): value is ThrowingSide {
+  return typeof value === "string" && throwingSides.has(value as ThrowingSide);
+}
+
+function isSpeedRating(value: unknown): value is SpeedRating {
+  return typeof value === "string" && speedRatings.has(value as SpeedRating);
+}
+
+function isPlayerGender(value: unknown): value is PlayerGender {
+  return typeof value === "string" && playerGenders.has(value as PlayerGender);
 }

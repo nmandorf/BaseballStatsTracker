@@ -6,23 +6,51 @@ export function canSaveScheduledGameSnapshot(
   incomingState: Pick<GameState, "defensiveEvents" | "plays" | "status">,
   savedSnapshot?: unknown,
 ) {
-  if (savedGameStatus === "IN_PROGRESS") {
-    return incomingState.status === "IN_PROGRESS" || incomingState.status === "FINAL";
+  if (isActiveSavedGame(savedGameStatus)) {
+    return isLiveIncomingState(incomingState.status);
   }
 
-  if (savedGameStatus !== "FINAL" || incomingState.status !== "FINAL") {
+  if (!canCompareFinalSnapshots(savedGameStatus, incomingState.status)) {
     return false;
   }
 
   const incomingActionCount = getSavedActionCount(incomingState);
   const savedActionCount = getSnapshotActionCount(savedSnapshot);
 
-  if (incomingActionCount > savedActionCount) {
+  if (hasMoreSavedActions(incomingActionCount, savedActionCount)) {
     return true;
   }
 
-  return incomingActionCount === savedActionCount &&
-    getActionSignature(incomingState) === getSnapshotActionSignature(savedSnapshot);
+  return hasSameSavedActions(incomingActionCount, savedActionCount, incomingState, savedSnapshot);
+}
+
+function isActiveSavedGame(savedGameStatus: PrismaGameStatus) {
+  return savedGameStatus === "IN_PROGRESS";
+}
+
+function isLiveIncomingState(status: Pick<GameState, "status">["status"]) {
+  return status === "IN_PROGRESS" || status === "FINAL";
+}
+
+function canCompareFinalSnapshots(
+  savedGameStatus: PrismaGameStatus,
+  incomingStatus: Pick<GameState, "status">["status"],
+) {
+  return savedGameStatus === "FINAL" && incomingStatus === "FINAL";
+}
+
+function hasMoreSavedActions(incomingActionCount: number, savedActionCount: number) {
+  return incomingActionCount > savedActionCount;
+}
+
+function hasSameSavedActions(
+  incomingActionCount: number,
+  savedActionCount: number,
+  incomingState: Pick<GameState, "defensiveEvents" | "plays">,
+  savedSnapshot?: unknown,
+) {
+  return incomingActionCount === savedActionCount
+    && getActionSignature(incomingState) === getSnapshotActionSignature(savedSnapshot);
 }
 
 function getSavedActionCount(state: Pick<GameState, "defensiveEvents" | "plays">) {
@@ -53,20 +81,29 @@ function getSnapshotActionSignature(snapshot?: unknown) {
 }
 
 function getSnapshotActions(snapshot?: unknown) {
-  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+  if (!isSnapshotRecord(snapshot)) {
     return { plays: [], defensiveEvents: [] };
   }
 
   return {
-    plays: "plays" in snapshot && Array.isArray(snapshot.plays) ? snapshot.plays : [],
-    defensiveEvents: "defensiveEvents" in snapshot && Array.isArray(snapshot.defensiveEvents)
-      ? snapshot.defensiveEvents
-      : [],
+    plays: getSnapshotArray(snapshot, "plays"),
+    defensiveEvents: getSnapshotArray(snapshot, "defensiveEvents"),
   };
 }
 
 function getSnapshotActionId(action: unknown) {
-  return action && typeof action === "object" && "id" in action && typeof action.id === "string"
-    ? action.id
-    : "";
+  if (!isSnapshotRecord(action)) {
+    return "";
+  }
+
+  return typeof action.id === "string" ? action.id : "";
+}
+
+function isSnapshotRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function getSnapshotArray(snapshot: Record<string, unknown>, key: string) {
+  const value = snapshot[key];
+  return Array.isArray(value) ? value : [];
 }

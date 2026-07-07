@@ -100,25 +100,27 @@ export class ClickUpClient {
 function buildTaskMutationBody({ name, description, markdownContent, status, priority }) {
   const body = {};
 
-  if (name) {
-    body.name = name;
-  }
-
-  if (description) {
-    body.description = description;
-  } else if (markdownContent) {
-    body.markdown_content = markdownContent;
-  }
-
-  if (status) {
-    body.status = status;
-  }
-
-  if (priority) {
-    body.priority = priority;
-  }
+  assignIfPresent(body, "name", name);
+  assignDescription(body, description, markdownContent);
+  assignIfPresent(body, "status", status);
+  assignIfPresent(body, "priority", priority);
 
   return body;
+}
+
+function assignIfPresent(body, key, value) {
+  if (value) {
+    body[key] = value;
+  }
+}
+
+function assignDescription(body, description, markdownContent) {
+  if (description) {
+    body.description = description;
+    return;
+  }
+
+  assignIfPresent(body, "markdown_content", markdownContent);
 }
 
 function parseJsonResponse(text) {

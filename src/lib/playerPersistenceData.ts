@@ -18,24 +18,43 @@ export function toPlayerPersistenceData<TGender, TBattingSide, TThrowingSide, TS
     gender: mappers.gender(player.gender),
     bats: mappers.bats(player.bats),
     throws: mappers.throws(player.throws),
-    primaryPosition: player.primaryPosition || null,
+    primaryPosition: emptyToNull(player.primaryPosition),
     speedRating: mappers.speedRating(player.speedRating),
-    notes: player.notes || null,
+    notes: emptyToNull(player.notes),
     contactNotes: player.contactNotes,
+    ...toDefensiveRatingsData(player, mappers),
+    ...toDefensiveNotesData(player),
+    roleHint: player.roleHint,
+    seedOrder: player.seedOrder,
+    isActive: player.isActive,
+  };
+}
+
+function toDefensiveRatingsData<TGender, TBattingSide, TThrowingSide, TSpeedRating, TDefensiveRating>(
+  player: Player,
+  mappers: PlayerPersistenceMappers<TGender, TBattingSide, TThrowingSide, TSpeedRating, TDefensiveRating>,
+) {
+  return {
     armStrength: mappers.defensiveRating(player.defensiveProfile.ratings.armStrength),
     throwAccuracy: mappers.defensiveRating(player.defensiveProfile.ratings.throwAccuracy),
     gloveSkill: mappers.defensiveRating(player.defensiveProfile.ratings.gloveSkill),
     rangeRating: mappers.defensiveRating(player.defensiveProfile.ratings.range),
     positionConfidence: mappers.defensiveRating(player.defensiveProfile.ratings.positionConfidence),
-    defenseStrengths: player.defensiveProfile.notes.strengths || null,
-    defenseWeaknesses: player.defensiveProfile.notes.weaknesses || null,
-    bestDefensePosition: player.defensiveProfile.notes.bestPosition || null,
-    avoidDefensePosition: player.defensiveProfile.notes.avoidPosition || null,
-    backupDefensePosition: player.defensiveProfile.notes.backupPosition || null,
-    defenseCommunicationNotes: player.defensiveProfile.notes.communication || null,
-    defenseHealthNotes: player.defensiveProfile.notes.health || null,
-    roleHint: player.roleHint,
-    seedOrder: player.seedOrder,
-    isActive: player.isActive,
   };
+}
+
+function toDefensiveNotesData(player: Player) {
+  return {
+    defenseStrengths: emptyToNull(player.defensiveProfile.notes.strengths),
+    defenseWeaknesses: emptyToNull(player.defensiveProfile.notes.weaknesses),
+    bestDefensePosition: emptyToNull(player.defensiveProfile.notes.bestPosition),
+    avoidDefensePosition: emptyToNull(player.defensiveProfile.notes.avoidPosition),
+    backupDefensePosition: emptyToNull(player.defensiveProfile.notes.backupPosition),
+    defenseCommunicationNotes: emptyToNull(player.defensiveProfile.notes.communication),
+    defenseHealthNotes: emptyToNull(player.defensiveProfile.notes.health),
+  };
+}
+
+function emptyToNull(value: string) {
+  return value || null;
 }

@@ -27,16 +27,23 @@ function player(id, overrides = {}) {
 function rosterWithProtectedFemalePlayers(count) {
   const preferredPositions = ["P", "C", "1B", "2B", "SS", "3B", "LF", "LC", "RC", "RF", "SS", "RF"];
 
-  return Array.from({ length: count }, (_, index) => {
-    const nextPlayer = player(`player-${index + 1}`, {
-      gender: index >= 1 && index <= 3 ? "Female" : "Male",
-      seedOrder: index + 1,
-      primaryPosition: preferredPositions[index] ?? "",
-    });
+  return Array.from({ length: count }, (_, index) => buildProtectedFemalePlayer(index, preferredPositions));
+}
 
-    nextPlayer.defensiveProfile.notes.bestPosition = preferredPositions[index] ?? "";
-    return nextPlayer;
+function buildProtectedFemalePlayer(index, preferredPositions) {
+  const preferredPosition = preferredPositions[index] ?? "";
+  const nextPlayer = player(`player-${index + 1}`, {
+    gender: getProtectedRosterGender(index),
+    seedOrder: index + 1,
+    primaryPosition: preferredPosition,
   });
+
+  nextPlayer.defensiveProfile.notes.bestPosition = preferredPosition;
+  return nextPlayer;
+}
+
+function getProtectedRosterGender(index) {
+  return index >= 1 && index <= 3 ? "Female" : "Male";
 }
 
 test("full-game defensive plan protects female players when three or fewer are available", () => {

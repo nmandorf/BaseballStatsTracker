@@ -83,22 +83,13 @@ export function PriorStatsEditor({ playerName, stats, currentGameStats, onCancel
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
         {editableFields.map((field) => (
-          <label
-            className="grid min-w-0 gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 text-xs font-bold text-[var(--muted-foreground)]"
+          <PriorStatField
+            field={field}
             key={field.key}
-          >
-            <span className="flex min-h-8 items-center justify-center text-center leading-tight">{field.label}</span>
-            <input
-              aria-describedby={validationError && (field.key === "outs" || field.key === "sacFlies") ? "prior-stats-error" : undefined}
-              aria-invalid={validationError && (field.key === "outs" || field.key === "sacFlies") ? true : undefined}
-              className="min-h-11 w-full min-w-0 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-center text-base font-bold tabular-nums text-foreground outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
-              inputMode="numeric"
-              min={0}
-              onChange={(event) => updateStat(field.key, event.target.value)}
-              type="number"
-              value={draftStats[field.key]}
-            />
-          </label>
+            validationError={validationError}
+            value={draftStats[field.key]}
+            onUpdate={updateStat}
+          />
         ))}
       </div>
 
@@ -138,6 +129,40 @@ export function PriorStatsEditor({ playerName, stats, currentGameStats, onCancel
       </div>
     </form>
   );
+}
+
+function PriorStatField({
+  field,
+  validationError,
+  value,
+  onUpdate,
+}: {
+  field: { key: keyof PlayerStats; label: string };
+  validationError: string | null;
+  value: number;
+  onUpdate: (key: keyof PlayerStats, value: string) => void;
+}) {
+  const hasValidationError = Boolean(validationError && isPriorStatsValidationField(field.key));
+
+  return (
+    <label className="grid min-w-0 gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-2 text-xs font-bold text-[var(--muted-foreground)]">
+      <span className="flex min-h-8 items-center justify-center text-center leading-tight">{field.label}</span>
+      <input
+        aria-describedby={hasValidationError ? "prior-stats-error" : undefined}
+        aria-invalid={hasValidationError ? true : undefined}
+        className="min-h-11 w-full min-w-0 rounded-md border border-[var(--border)] bg-[var(--card)] px-2 text-center text-base font-bold tabular-nums text-foreground outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]"
+        inputMode="numeric"
+        min={0}
+        onChange={(event) => onUpdate(field.key, event.target.value)}
+        type="number"
+        value={value}
+      />
+    </label>
+  );
+}
+
+function isPriorStatsValidationField(key: keyof PlayerStats) {
+  return key === "outs" || key === "sacFlies";
 }
 
 function DerivedStat({ label, value }: { label: string; value: number }) {
