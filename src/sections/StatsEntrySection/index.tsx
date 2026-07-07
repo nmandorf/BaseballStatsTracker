@@ -50,6 +50,7 @@ import type { BatterResult, OutType } from "@/types/game";
 import type { ScoredPlay } from "@/types/game";
 import type { Player } from "@/types/player";
 import type { BaseLabel, UiRunnerDestination } from "@/types/runner";
+import type { ScheduleWeek } from "@/types/schedule";
 import type { CalculatedStats, PlayerStats } from "@/types/stats";
 
 export function StatsEntrySection() {
@@ -57,25 +58,63 @@ export function StatsEntrySection() {
   const gameState = useFirstGameState();
   const setup = usePregameSetup();
   const { schedule } = useTeamSchedule(activeTeam?.id ?? null);
-  const scheduledGame = schedule?.weeks.find((week) => week.kind === "GAME" && week.gameId === setup.gameId);
 
+  return renderStatsEntryGate(activeTeam, gameState, getScheduleWeeks(schedule), setup.gameId);
+}
+
+function renderStatsEntryGate(
+  activeTeam: ReturnType<typeof useActiveTeam>,
+  gameState: GameState,
+  weeks: ScheduleWeek[],
+  gameId: string | null,
+) {
   if (!activeTeam) {
     return <TeamSetupGate title="Create your team before entering stats." />;
   }
 
-  if (gameState.status === "PREGAME" || !gameState.lineup.length) {
-    return <PregameStatsEntryPrompt eligibleAt={scheduledGame?.kind === "GAME" ? new Date(Date.parse(scheduledGame.scheduledStartAt) - 5 * 60_000).toLocaleString() : null} teamName={activeTeam.name} />;
+  const scheduledGame = findScheduledStatsGame(weeks, gameId);
+
+  return renderStatsEntryState(gameState, activeTeam.name, scheduledGame);
+}
+
+function getScheduleWeeks(schedule: ReturnType<typeof useTeamSchedule>["schedule"]) {
+  return schedule?.weeks ?? [];
+}
+
+function renderStatsEntryState(
+  gameState: GameState,
+  teamName: string,
+  scheduledGame: Extract<ScheduleWeek, { kind: "GAME" }> | null,
+) {
+  if (isPregameStatsEntry(gameState)) {
+    return <PregameStatsEntryPrompt eligibleAt={getStatsEntryEligibleAt(scheduledGame)} teamName={teamName} />;
   }
 
   if (gameState.status === "FINAL") {
-    return <EndGameSummary gameState={gameState} teamName={activeTeam.name} onReset={resetFirstGameState} />;
+    return <EndGameSummary gameState={gameState} teamName={teamName} onReset={resetFirstGameState} />;
   }
 
   if (getCurrentTeamPhase(gameState) === "FIELDING") {
-    return <DefensiveHalfPrompt gameState={gameState} teamName={activeTeam.name} />;
+    return <DefensiveHalfPrompt gameState={gameState} teamName={teamName} />;
   }
 
-  return <LiveStatsEntry gameState={gameState} teamName={activeTeam.name} />;
+  return <LiveStatsEntry gameState={gameState} teamName={teamName} />;
+}
+
+function findScheduledStatsGame(weeks: ScheduleWeek[], gameId: string | null) {
+  return weeks.find((week): week is Extract<ScheduleWeek, { kind: "GAME" }> => (
+    week.kind === "GAME" && week.gameId === gameId
+  )) ?? null;
+}
+
+function isPregameStatsEntry(gameState: GameState) {
+  return gameState.status === "PREGAME" || !gameState.lineup.length;
+}
+
+function getStatsEntryEligibleAt(scheduledGame: Extract<ScheduleWeek, { kind: "GAME" }> | null) {
+  return scheduledGame
+    ? new Date(Date.parse(scheduledGame.scheduledStartAt) - 5 * 60_000).toLocaleString()
+    : null;
 }
 
 function DefensiveHalfPrompt({ gameState, teamName }: { gameState: GameState; teamName: string }) {
@@ -154,35 +193,23 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
   const batterGameStats = getPlayerGameStats(scoringState, batter.id);
   const batterStats = calculateStats(batterGameStats);
   const batterSeasonStats = calculateStats(getPlayerSeasonStats(batter, scoringState));
-  const lastResultByBatter = useMemo(() => {
-    const results = new Map<string, BatterResult>();
-
-    gameState.plays.forEach((play) => {
-      results.set(play.batterId, play.result);
-    });
-
-    return results;
-  }, [gameState.plays]);
-  const hasRuns = Boolean(preview && preview.runs > 0);
-  const previewRuns = preview?.runs ?? 0;
-  const previewOuts = preview?.projectedOuts ?? scoringState.outs;
-  const previewRbis = preview?.rbis ?? 0;
-  const previewSummary = preview?.summary ?? "Tap a batter result to preview runner movement, runs, outs, and RBI.";
-  const playValidationError = selectedResult
-    ? getPlayValidationError(scoringState, selectedResult, effectiveMovements, pinchRunners, selectedOutType)
-    : null;
-  const pinchRunnerOptions = scoringState.lineup.filter((player) => {
-    const occupiedIds = new Set(occupiedBases.map(([, runner]) => runner.playerId));
-    const selectedPinchRunnerIds = new Set(Object.values(pinchRunners).map((runner) => runner.playerId));
-    return player.id !== batter.id && !occupiedIds.has(player.id) && !selectedPinchRunnerIds.has(player.id);
-  });
+  const lastResultByBatter = useMemo(() => getLastResultByBatter(gameState.plays), [gameState.plays]);
+  const previewDetails = getPreviewDetails(preview, scoringState.outs);
+  const playValidationError = getCurrentPlayValidationError(
+    scoringState,
+    selectedResult,
+    effectiveMovements,
+    pinchRunners,
+    selectedOutType,
+  );
+  const pinchRunnerOptions = getPinchRunnerOptions(scoringState.lineup, batter, occupiedBases, pinchRunners);
 
   function selectResult(result: BatterResult) {
-    if (getResultLockReason(result, scoringState.bases, scoringState.outs)) {
+    if (isResultLocked(result, scoringState)) {
       return;
     }
 
-    if (result === "Out") {
+    if (shouldAskForOutType(result)) {
       setIsOutTypeModalOpen(true);
       return;
     }
@@ -240,30 +267,26 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
   }
 
   function saveCurrentPlay() {
-    if (!selectedResult) {
-      return;
-    }
+    const result = getSavableResult(selectedResult, selectedOutType, playValidationError);
 
-    if (selectedResult === "Out" && !selectedOutType) {
+    if (result === "NEEDS_OUT_TYPE") {
       setIsOutTypeModalOpen(true);
       return;
     }
 
-    if (playValidationError) {
+    if (!result) {
       return;
     }
 
-    const nextState = editingPlayId
-      ? replaceLatestSavedPlay(
-          gameState,
-          editingPlayId,
-          selectedResult,
-          effectiveMovements,
-          pinchRunners,
-          rbiCredit,
-          selectedOutType,
-        )
-      : savePlay(gameState, selectedResult, effectiveMovements, pinchRunners, rbiCredit, selectedOutType);
+    const nextState = saveOrReplacePlay({
+      editingPlayId,
+      effectiveMovements,
+      gameState,
+      pinchRunners,
+      rbiCredit,
+      selectedOutType,
+      selectedResult: result,
+    });
 
     persistNextState(nextState, true);
     resetPlayForm();
@@ -292,281 +315,72 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
         teamName={teamName}
       />
       <div className="mx-auto mt-3 flex w-full max-w-md flex-col gap-3 px-3">
+        <BattingOrderNav
+          correctablePlay={correctablePlay}
+          currentBatterIndex={scoringState.currentBatterIndex}
+          editingPlayId={editingPlayId}
+          lastResultByBatter={lastResultByBatter}
+          lineup={gameState.lineup}
+          onEditLatestPlay={editLatestPlay}
+        />
 
-        <nav
-          aria-label="Batting order"
-          className="-mx-3 overflow-x-auto border-y border-[var(--border)] bg-[var(--card)] px-3 py-2 sm:mx-0 sm:rounded-lg sm:border"
-        >
-          <div className="flex min-w-max gap-2">
-            {gameState.lineup.map((player, index) => {
-              const isCurrent = index === scoringState.currentBatterIndex;
-              const lastResult = lastResultByBatter.get(player.id);
-              const canEdit = correctablePlay?.batterId === player.id && !editingPlayId;
+        <EditingPlayBanner
+          batterName={batter.name}
+          editingPlayId={editingPlayId}
+          onCancel={resetPlayForm}
+          onSave={saveCurrentPlay}
+          playValidationError={playValidationError}
+          selectedResult={selectedResult}
+        />
 
-              return (
-                <button
-                  className={cn(
-                    "grid min-h-12 min-w-20 content-center rounded-lg px-3 text-left text-sm font-bold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]",
-                    isCurrent
-                      ? "bg-[var(--amber)] text-[var(--foreground)]"
-                      : "bg-[var(--surface)] text-foreground",
-                    canEdit && "ring-2 ring-inset ring-[var(--accent)]/35",
-                  )}
-                  disabled={!canEdit}
-                  key={player.id}
-                  onClick={() => correctablePlay && editLatestPlay(correctablePlay)}
-                  type="button"
-                >
-                  <span>{index + 1}. {player.name.split(" ")[0]}</span>
-                  <span className={cn("mt-0.5 text-[0.68rem]", isCurrent ? "text-[var(--foreground)] opacity-75" : "text-[var(--muted-foreground)]")}>
-                    {isCurrent ? (editingPlayId ? "Editing" : "At bat") : canEdit ? "Edit last play" : lastResult ?? "Ready"}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </nav>
+        <CurrentBatterCard
+          batter={batter}
+          batterGameStats={batterGameStats}
+          batterSeasonStats={batterSeasonStats}
+          batterStats={batterStats}
+          lineupPosition={scoringState.currentBatterIndex + 1}
+        />
 
-        {editingPlayId ? (
-          <div className="rounded-lg border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3 sm:flex sm:items-center sm:justify-between sm:gap-3">
-            <div>
-              <p className="text-sm font-bold text-[var(--accent-strong)]">Editing {batter.name}&apos;s latest saved play</p>
-              <p className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">
-                Saving replaces the play and recalculates the score, outs, bases, and stats.
-              </p>
-            </div>
-            <div className="mt-3 grid shrink-0 grid-cols-2 gap-2 sm:mt-0">
-              <button
-                className="btn-base btn-secondary min-h-11 px-3 text-sm"
-                onClick={resetPlayForm}
-                type="button"
-              >
-                Cancel
-              </button>
-              <button
-                className="btn-base btn-primary min-h-11 px-3 text-sm"
-                disabled={!selectedResult || Boolean(playValidationError)}
-                onClick={saveCurrentPlay}
-                type="button"
-              >
-                <Save className="size-4" aria-hidden="true" />
-                Save Changes
-              </button>
-            </div>
-          </div>
-        ) : null}
+        <BatterResultPanel
+          bases={scoringState.bases}
+          onSelectResult={selectResult}
+          outs={scoringState.outs}
+          selectedResult={selectedResult}
+        />
 
-        <article className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
-                Current batter
-              </p>
-              <h2 className="mt-1 text-2xl font-semibold text-foreground">{batter.name}</h2>
-              <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">
-                {batter.roleHint}
-              </p>
-            </div>
-            <StatusPill tone="ready">#{scoringState.currentBatterIndex + 1}</StatusPill>
-          </div>
-          <div className="mt-4 grid grid-cols-3 gap-2">
-            <SummaryTile label="Game H-AB" value={`${batterGameStats.hits}-${batterGameStats.atBats}`} />
-            <SummaryTile label="Game OBP" value={formatRate(batterStats.onBasePercentage)} />
-            <SummaryTile label="Game SLG" value={formatRate(batterStats.sluggingPercentage)} />
-          </div>
-          <div className="mt-2 grid grid-cols-2 gap-2">
-            <SummaryTile label="Season OBP" value={formatRate(batterSeasonStats.onBasePercentage)} />
-            <SummaryTile label="Speed" value={batter.speedRating} />
-          </div>
-        </article>
+        <RunnersOnBasePanel
+          effectiveMovements={effectiveMovements}
+          occupiedBases={occupiedBases}
+          onChangeMovement={changeMovement}
+          onRemovePinchRunner={(base) => setPinchRunners((current) => removePinchRunner(current, base))}
+          onSetPinchBase={setPinchBase}
+          pinchRunners={pinchRunners}
+        />
 
-        <article className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3">
-          <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
-            Batter result
-          </p>
-          <div className="mt-3 grid grid-cols-5 gap-2">
-            {batterResults.map((result) => {
-              const lockReason = getResultLockReason(result, scoringState.bases, scoringState.outs);
+        <RbiControls
+          batterName={batter.name}
+          hasRuns={previewDetails.hasRuns}
+          onSetRbiCredit={setRbiCredit}
+          previewRuns={previewDetails.runs}
+          rbiCredit={rbiCredit}
+        />
 
-              return (
-                <ResultButton
-                  disabled={Boolean(lockReason)}
-                  key={result}
-                  label={result}
-                  lockReason={lockReason ?? undefined}
-                  onClick={() => selectResult(result)}
-                  selected={result === selectedResult}
-                />
-              );
-            })}
-          </div>
-        </article>
-
-        <article className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
-                Runners on base
-              </p>
-              <p className="mt-1 text-sm font-semibold text-foreground">
-                {occupiedBases.length ? "Auto-filled movement" : "Bases empty"}
-              </p>
-            </div>
-            <StatusPill tone="planned" className="min-h-7 rounded-md px-2 py-0.5">
-              Edit before save
-            </StatusPill>
-          </div>
-
-          <div className="mt-3 space-y-2">
-            {occupiedBases.length ? (
-              occupiedBases.map(([base, runner]) => {
-                const displayedRunner = pinchRunners[base] ?? runner;
-
-                return (
-                  <div className="rounded-lg bg-[var(--surface)] p-3" key={base}>
-                    <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-start">
-                      <div>
-                        <p className="text-sm font-semibold text-foreground">
-                          {base}: {displayedRunner.name}
-                        </p>
-                        {pinchRunners[base] ? (
-                          <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                            Pinch running for {runner.name}
-                          </p>
-                        ) : (
-                          <p className="mt-1 text-xs text-[var(--muted-foreground)]">
-                            Original runner
-                          </p>
-                        )}
-                      </div>
-                      <select
-                        className="min-h-11 w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 text-sm font-bold text-foreground outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] sm:w-40"
-                        onChange={(event) => changeMovement(base, event.target.value as UiRunnerDestination)}
-                        value={effectiveMovements[base] ?? base}
-                      >
-                        {destinationOptions[base].map((destination) => (
-                          <option key={destination} value={destination}>
-                            {destinationLabel[destination]}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <button
-                        className="btn-base btn-secondary min-h-9 px-3 text-xs text-[var(--accent)]"
-                        onClick={() => setPinchBase(base)}
-                        type="button"
-                      >
-                        <UserPlus className="size-4" aria-hidden="true" />
-                        {pinchRunners[base] ? "Change" : "Use Pinch Runner"}
-                      </button>
-                      {pinchRunners[base] ? (
-                        <button
-                          className="btn-base btn-danger-secondary min-h-9 px-3 text-xs"
-                          onClick={() =>
-                            setPinchRunners((current) => {
-                              const next = { ...current };
-                              delete next[base];
-                              return next;
-                            })
-                          }
-                          type="button"
-                        >
-                          Remove Pinch Runner
-                        </button>
-                      ) : null}
-                    </div>
-                  </div>
-                );
-              })
-            ) : (
-              <div className="rounded-lg bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
-                Bases empty
-              </div>
-            )}
-          </div>
-        </article>
-
-        {hasRuns ? (
-          <article className="rounded-lg border border-[var(--accent)]/20 bg-[var(--accent-soft)] p-3">
-            <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--accent)]">
-              RBI controls
-            </p>
-            <div className="mt-2 grid gap-3 sm:grid-cols-[1fr_12rem] sm:items-center">
-              <p className="text-sm font-semibold text-[var(--accent-strong)]">
-                {previewRuns} run{previewRuns === 1 ? "" : "s"} scored. Credit RBI to {batter.name.split(" ")[0]}?
-              </p>
-              <div className="grid grid-cols-2 gap-2 text-center text-sm font-bold">
-                <button
-                  className={cn(
-                    "btn-base min-h-11 px-3",
-                    rbiCredit ? "btn-choice-selected" : "btn-secondary",
-                  )}
-                  aria-pressed={rbiCredit}
-                  onClick={() => setRbiCredit(true)}
-                  type="button"
-                >
-                  Yes
-                </button>
-                <button
-                  className={cn(
-                    "btn-base min-h-11 px-3",
-                    !rbiCredit ? "btn-choice-selected" : "btn-secondary",
-                  )}
-                  aria-pressed={!rbiCredit}
-                  onClick={() => setRbiCredit(false)}
-                  type="button"
-                >
-                  No
-                </button>
-              </div>
-            </div>
-          </article>
-        ) : null}
-
-        <article className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3">
-          <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
-            After-play summary
-          </p>
-          <p className="mt-2 text-sm font-semibold text-foreground">{previewSummary}</p>
-          {playValidationError ? (
-            <p className="mt-2 rounded-md bg-[var(--danger-soft)] px-3 py-2 text-xs font-bold text-[var(--danger)]">
-              {playValidationError}
-            </p>
-          ) : null}
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            <SummaryTile label="Runs" value={`+${previewRuns}`} />
-            <SummaryTile label="Outs" value={previewOuts} />
-            <SummaryTile label="RBI" value={rbiCredit ? previewRbis : 0} />
-          </div>
-          <p className="mt-3 text-xs font-bold text-[var(--accent)]">
-            Last saved: {gameState.lastSummary}
-          </p>
-        </article>
+        <AfterPlaySummary
+          lastSummary={gameState.lastSummary}
+          playValidationError={playValidationError}
+          previewDetails={previewDetails}
+          rbiCredit={rbiCredit}
+        />
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--border)] bg-[var(--card)]/95 px-3 py-3 shadow-2xl shadow-foreground/10 backdrop-blur">
-        <div className="mx-auto grid w-full max-w-md grid-cols-[0.72fr_1.28fr] gap-2">
-          <button
-            className="btn-base btn-secondary min-h-12 text-sm"
-            disabled={!gameState.history.length}
-            onClick={undo}
-            type="button"
-          >
-            <RotateCcw className="size-4" aria-hidden="true" />
-            Undo
-          </button>
-          <button
-            className="btn-base btn-primary min-h-12 px-3 text-sm"
-            disabled={!selectedResult || Boolean(playValidationError)}
-            onClick={saveCurrentPlay}
-            type="button"
-          >
-            <Save className="size-4" aria-hidden="true" />
-            {editingPlayId ? "Save Changes + Continue" : "Save Play + Next Batter"}
-          </button>
-        </div>
-      </div>
+      <StickyPlayActions
+        canUndo={Boolean(gameState.history.length)}
+        editingPlayId={editingPlayId}
+        onSave={saveCurrentPlay}
+        onUndo={undo}
+        playValidationError={playValidationError}
+        selectedResult={selectedResult}
+      />
 
       <OutTypeModal
         isOpen={isOutTypeModalOpen}
@@ -574,57 +388,768 @@ function LiveStatsEntry({ gameState, teamName }: { gameState: GameState; teamNam
         onSelect={selectOutType}
       />
 
-      {pinchBase ? (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/35 p-4">
-          <div className="max-h-[calc(100dvh-2rem)] w-full max-w-[23rem] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-2xl sm:max-w-md">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
-                  Pinch runner
-                </p>
-                <h2 className="mt-1 text-lg font-semibold text-foreground">
-                  Choose runner for {pinchBase}
-                </h2>
-              </div>
-              <button
-                className="btn-base btn-secondary size-10 min-h-0 p-0"
-                onClick={() => setPinchBase(null)}
-                type="button"
-              >
-                <X className="size-5" aria-hidden="true" />
-              </button>
-            </div>
-            <div className="mt-4 grid gap-2">
-              {pinchRunnerOptions.map((player) => {
-                const originalRunner = scoringState.bases[baseToKey(pinchBase)];
-
-                return (
-                  <button
-                    className="btn-base btn-secondary min-h-11 justify-start px-3 text-left text-sm"
-                    key={player.id}
-                    onClick={() => {
-                      setPinchRunners((current) => ({
-                        ...current,
-                        [pinchBase]: {
-                          ...runnerSlotFromPlayer(player),
-                          originalPlayerId: originalRunner?.playerId,
-                          originalName: originalRunner?.name,
-                        },
-                      }));
-                      setPinchBase(null);
-                    }}
-                    type="button"
-                  >
-                    {player.name}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <PinchRunnerModal
+        onClose={() => setPinchBase(null)}
+        onSelect={(player) => {
+          setPinchRunners((current) => addPinchRunner(current, pinchBase, player, scoringState.bases));
+          setPinchBase(null);
+        }}
+        pinchBase={pinchBase}
+        players={pinchRunnerOptions}
+      />
     </section>
   );
+}
+
+function BattingOrderNav({
+  correctablePlay,
+  currentBatterIndex,
+  editingPlayId,
+  lastResultByBatter,
+  lineup,
+  onEditLatestPlay,
+}: {
+  correctablePlay: ScoredPlay | null;
+  currentBatterIndex: number;
+  editingPlayId: string | null;
+  lastResultByBatter: Map<string, BatterResult>;
+  lineup: Player[];
+  onEditLatestPlay: (play: ScoredPlay) => void;
+}) {
+  return (
+    <nav
+      aria-label="Batting order"
+      className="-mx-3 overflow-x-auto border-y border-[var(--border)] bg-[var(--card)] px-3 py-2 sm:mx-0 sm:rounded-lg sm:border"
+    >
+      <div className="flex min-w-max gap-2">
+        {lineup.map((player, index) => (
+          <BattingOrderButton
+            correctablePlay={correctablePlay}
+            editingPlayId={editingPlayId}
+            index={index}
+            isCurrent={index === currentBatterIndex}
+            key={player.id}
+            lastResult={lastResultByBatter.get(player.id)}
+            onEditLatestPlay={onEditLatestPlay}
+            player={player}
+          />
+        ))}
+      </div>
+    </nav>
+  );
+}
+
+function BattingOrderButton({
+  correctablePlay,
+  editingPlayId,
+  index,
+  isCurrent,
+  lastResult,
+  onEditLatestPlay,
+  player,
+}: {
+  correctablePlay: ScoredPlay | null;
+  editingPlayId: string | null;
+  index: number;
+  isCurrent: boolean;
+  lastResult: BatterResult | undefined;
+  onEditLatestPlay: (play: ScoredPlay) => void;
+  player: Player;
+}) {
+  const canEdit = canEditBattingOrderPlay(correctablePlay, player.id, editingPlayId);
+
+  return (
+    <button
+      className={cn(
+        "grid min-h-12 min-w-20 content-center rounded-lg px-3 text-left text-sm font-bold transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)]",
+        isCurrent ? "bg-[var(--amber)] text-[var(--foreground)]" : "bg-[var(--surface)] text-foreground",
+        canEdit && "ring-2 ring-inset ring-[var(--accent)]/35",
+      )}
+      disabled={!canEdit}
+      onClick={() => correctablePlay && onEditLatestPlay(correctablePlay)}
+      type="button"
+    >
+      <span>{index + 1}. {getFirstName(player.name)}</span>
+      <span className={cn("mt-0.5 text-[0.68rem]", isCurrent ? "text-[var(--foreground)] opacity-75" : "text-[var(--muted-foreground)]")}>
+        {getBattingOrderStatusLabel({ canEdit, editingPlayId, isCurrent, lastResult })}
+      </span>
+    </button>
+  );
+}
+
+function EditingPlayBanner({
+  batterName,
+  editingPlayId,
+  onCancel,
+  onSave,
+  playValidationError,
+  selectedResult,
+}: {
+  batterName: string;
+  editingPlayId: string | null;
+  onCancel: () => void;
+  onSave: () => void;
+  playValidationError: string | null;
+  selectedResult: BatterResult | null;
+}) {
+  if (!editingPlayId) {
+    return null;
+  }
+
+  return (
+    <div className="rounded-lg border border-[var(--accent)]/30 bg-[var(--accent-soft)] p-3 sm:flex sm:items-center sm:justify-between sm:gap-3">
+      <div>
+        <p className="text-sm font-bold text-[var(--accent-strong)]">Editing {batterName}&apos;s latest saved play</p>
+        <p className="mt-1 text-xs font-semibold text-[var(--muted-foreground)]">
+          Saving replaces the play and recalculates the score, outs, bases, and stats.
+        </p>
+      </div>
+      <div className="mt-3 grid shrink-0 grid-cols-2 gap-2 sm:mt-0">
+        <button className="btn-base btn-secondary min-h-11 px-3 text-sm" onClick={onCancel} type="button">
+          Cancel
+        </button>
+        <button
+          className="btn-base btn-primary min-h-11 px-3 text-sm"
+          disabled={!selectedResult || Boolean(playValidationError)}
+          onClick={onSave}
+          type="button"
+        >
+          <Save className="size-4" aria-hidden="true" />
+          Save Changes
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function CurrentBatterCard({
+  batter,
+  batterGameStats,
+  batterSeasonStats,
+  batterStats,
+  lineupPosition,
+}: {
+  batter: Player;
+  batterGameStats: PlayerStats;
+  batterSeasonStats: CalculatedStats;
+  batterStats: CalculatedStats;
+  lineupPosition: number;
+}) {
+  return (
+    <article className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
+            Current batter
+          </p>
+          <h2 className="mt-1 text-2xl font-semibold text-foreground">{batter.name}</h2>
+          <p className="mt-1 text-sm font-medium text-[var(--muted-foreground)]">
+            {batter.roleHint}
+          </p>
+        </div>
+        <StatusPill tone="ready">#{lineupPosition}</StatusPill>
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-2">
+        <SummaryTile label="Game H-AB" value={`${batterGameStats.hits}-${batterGameStats.atBats}`} />
+        <SummaryTile label="Game OBP" value={formatRate(batterStats.onBasePercentage)} />
+        <SummaryTile label="Game SLG" value={formatRate(batterStats.sluggingPercentage)} />
+      </div>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        <SummaryTile label="Season OBP" value={formatRate(batterSeasonStats.onBasePercentage)} />
+        <SummaryTile label="Speed" value={batter.speedRating} />
+      </div>
+    </article>
+  );
+}
+
+function BatterResultPanel({
+  bases,
+  onSelectResult,
+  outs,
+  selectedResult,
+}: {
+  bases: GameState["bases"];
+  onSelectResult: (result: BatterResult) => void;
+  outs: number;
+  selectedResult: BatterResult | null;
+}) {
+  return (
+    <article className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3">
+      <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
+        Batter result
+      </p>
+      <div className="mt-3 grid grid-cols-5 gap-2">
+        {batterResults.map((result) => (
+          <BatterResultChoice
+            bases={bases}
+            key={result}
+            onSelectResult={onSelectResult}
+            outs={outs}
+            result={result}
+            selectedResult={selectedResult}
+          />
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function BatterResultChoice({
+  bases,
+  onSelectResult,
+  outs,
+  result,
+  selectedResult,
+}: {
+  bases: GameState["bases"];
+  onSelectResult: (result: BatterResult) => void;
+  outs: number;
+  result: BatterResult;
+  selectedResult: BatterResult | null;
+}) {
+  const lockReason = getResultLockReason(result, bases, outs);
+
+  return (
+    <ResultButton
+      disabled={Boolean(lockReason)}
+      label={result}
+      lockReason={lockReason ?? undefined}
+      onClick={() => onSelectResult(result)}
+      selected={result === selectedResult}
+    />
+  );
+}
+
+function RunnersOnBasePanel({
+  effectiveMovements,
+  occupiedBases,
+  onChangeMovement,
+  onRemovePinchRunner,
+  onSetPinchBase,
+  pinchRunners,
+}: {
+  effectiveMovements: MovementSelections;
+  occupiedBases: ReturnType<typeof occupiedBaseEntries>;
+  onChangeMovement: (base: BaseLabel, destination: UiRunnerDestination) => void;
+  onRemovePinchRunner: (base: BaseLabel) => void;
+  onSetPinchBase: (base: BaseLabel) => void;
+  pinchRunners: PinchRunnerSelections;
+}) {
+  return (
+    <article className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
+            Runners on base
+          </p>
+          <p className="mt-1 text-sm font-semibold text-foreground">
+            {occupiedBases.length ? "Auto-filled movement" : "Bases empty"}
+          </p>
+        </div>
+        <StatusPill tone="planned" className="min-h-7 rounded-md px-2 py-0.5">
+          Edit before save
+        </StatusPill>
+      </div>
+
+      <div className="mt-3 space-y-2">
+        {occupiedBases.length ? (
+          occupiedBases.map(([base, runner]) => (
+            <RunnerMovementRow
+              base={base}
+              effectiveMovements={effectiveMovements}
+              key={base}
+              onChangeMovement={onChangeMovement}
+              onRemovePinchRunner={onRemovePinchRunner}
+              onSetPinchBase={onSetPinchBase}
+              pinchRunner={pinchRunners[base]}
+              runner={runner}
+            />
+          ))
+        ) : (
+          <div className="rounded-lg bg-[var(--surface)] p-4 text-sm font-semibold text-[var(--muted-foreground)]">
+            Bases empty
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function RunnerMovementRow({
+  base,
+  effectiveMovements,
+  onChangeMovement,
+  onRemovePinchRunner,
+  onSetPinchBase,
+  pinchRunner,
+  runner,
+}: {
+  base: BaseLabel;
+  effectiveMovements: MovementSelections;
+  onChangeMovement: (base: BaseLabel, destination: UiRunnerDestination) => void;
+  onRemovePinchRunner: (base: BaseLabel) => void;
+  onSetPinchBase: (base: BaseLabel) => void;
+  pinchRunner: PinchRunnerSelections[BaseLabel] | undefined;
+  runner: ReturnType<typeof occupiedBaseEntries>[number][1];
+}) {
+  const displayedRunner = pinchRunner ?? runner;
+
+  return (
+    <div className="rounded-lg bg-[var(--surface)] p-3">
+      <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-start">
+        <RunnerMovementLabel base={base} displayedRunnerName={displayedRunner.name} pinchRunner={pinchRunner} runnerName={runner.name} />
+        <RunnerDestinationSelect base={base} effectiveMovements={effectiveMovements} onChangeMovement={onChangeMovement} />
+      </div>
+      <RunnerPinchControls
+        base={base}
+        onRemovePinchRunner={onRemovePinchRunner}
+        onSetPinchBase={onSetPinchBase}
+        pinchRunner={pinchRunner}
+      />
+    </div>
+  );
+}
+
+function RunnerMovementLabel({
+  base,
+  displayedRunnerName,
+  pinchRunner,
+  runnerName,
+}: {
+  base: BaseLabel;
+  displayedRunnerName: string;
+  pinchRunner: PinchRunnerSelections[BaseLabel] | undefined;
+  runnerName: string;
+}) {
+  return (
+    <div>
+      <p className="text-sm font-semibold text-foreground">
+        {base}: {displayedRunnerName}
+      </p>
+      <p className="mt-1 text-xs text-[var(--muted-foreground)]">
+        {getRunnerMovementSubtext(pinchRunner, runnerName)}
+      </p>
+    </div>
+  );
+}
+
+function RunnerDestinationSelect({
+  base,
+  effectiveMovements,
+  onChangeMovement,
+}: {
+  base: BaseLabel;
+  effectiveMovements: MovementSelections;
+  onChangeMovement: (base: BaseLabel, destination: UiRunnerDestination) => void;
+}) {
+  return (
+    <select
+      className="min-h-11 w-full rounded-lg border border-[var(--border)] bg-[var(--card)] px-3 text-sm font-bold text-foreground outline-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--accent)] sm:w-40"
+      onChange={(event) => onChangeMovement(base, event.target.value as UiRunnerDestination)}
+      value={effectiveMovements[base] ?? base}
+    >
+      {destinationOptions[base].map((destination) => (
+        <option key={destination} value={destination}>
+          {destinationLabel[destination]}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+function RunnerPinchControls({
+  base,
+  onRemovePinchRunner,
+  onSetPinchBase,
+  pinchRunner,
+}: {
+  base: BaseLabel;
+  onRemovePinchRunner: (base: BaseLabel) => void;
+  onSetPinchBase: (base: BaseLabel) => void;
+  pinchRunner: PinchRunnerSelections[BaseLabel] | undefined;
+}) {
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      <button
+        className="btn-base btn-secondary min-h-9 px-3 text-xs text-[var(--accent)]"
+        onClick={() => onSetPinchBase(base)}
+        type="button"
+      >
+        <UserPlus className="size-4" aria-hidden="true" />
+        {pinchRunner ? "Change" : "Use Pinch Runner"}
+      </button>
+      <RemovePinchRunnerButton base={base} onRemovePinchRunner={onRemovePinchRunner} pinchRunner={pinchRunner} />
+    </div>
+  );
+}
+
+function RemovePinchRunnerButton({
+  base,
+  onRemovePinchRunner,
+  pinchRunner,
+}: {
+  base: BaseLabel;
+  onRemovePinchRunner: (base: BaseLabel) => void;
+  pinchRunner: PinchRunnerSelections[BaseLabel] | undefined;
+}) {
+  if (!pinchRunner) {
+    return null;
+  }
+
+  return (
+    <button className="btn-base btn-danger-secondary min-h-9 px-3 text-xs" onClick={() => onRemovePinchRunner(base)} type="button">
+      Remove Pinch Runner
+    </button>
+  );
+}
+
+function RbiControls({
+  batterName,
+  hasRuns,
+  onSetRbiCredit,
+  previewRuns,
+  rbiCredit,
+}: {
+  batterName: string;
+  hasRuns: boolean;
+  onSetRbiCredit: (credit: boolean) => void;
+  previewRuns: number;
+  rbiCredit: boolean;
+}) {
+  if (!hasRuns) {
+    return null;
+  }
+
+  return (
+    <article className="rounded-lg border border-[var(--accent)]/20 bg-[var(--accent-soft)] p-3">
+      <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--accent)]">
+        RBI controls
+      </p>
+      <div className="mt-2 grid gap-3 sm:grid-cols-[1fr_12rem] sm:items-center">
+        <p className="text-sm font-semibold text-[var(--accent-strong)]">
+          {previewRuns} run{previewRuns === 1 ? "" : "s"} scored. Credit RBI to {getFirstName(batterName)}?
+        </p>
+        <div className="grid grid-cols-2 gap-2 text-center text-sm font-bold">
+          <RbiChoiceButton label="Yes" onClick={() => onSetRbiCredit(true)} selected={rbiCredit} />
+          <RbiChoiceButton label="No" onClick={() => onSetRbiCredit(false)} selected={!rbiCredit} />
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function RbiChoiceButton({ label, onClick, selected }: { label: string; onClick: () => void; selected: boolean }) {
+  return (
+    <button
+      className={cn("btn-base min-h-11 px-3", selected ? "btn-choice-selected" : "btn-secondary")}
+      aria-pressed={selected}
+      onClick={onClick}
+      type="button"
+    >
+      {label}
+    </button>
+  );
+}
+
+function AfterPlaySummary({
+  lastSummary,
+  playValidationError,
+  previewDetails,
+  rbiCredit,
+}: {
+  lastSummary: string;
+  playValidationError: string | null;
+  previewDetails: ReturnType<typeof getPreviewDetails>;
+  rbiCredit: boolean;
+}) {
+  return (
+    <article className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-3">
+      <p className="text-xs font-bold uppercase tracking-[0.12em] text-[var(--muted-foreground)]">
+        After-play summary
+      </p>
+      <p className="mt-2 text-sm font-semibold text-foreground">{previewDetails.summary}</p>
+      <PlayValidationErrorMessage playValidationError={playValidationError} />
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <SummaryTile label="Runs" value={`+${previewDetails.runs}`} />
+        <SummaryTile label="Outs" value={previewDetails.outs} />
+        <SummaryTile label="RBI" value={rbiCredit ? previewDetails.rbis : 0} />
+      </div>
+      <p className="mt-3 text-xs font-bold text-[var(--accent)]">
+        Last saved: {lastSummary}
+      </p>
+    </article>
+  );
+}
+
+function PlayValidationErrorMessage({ playValidationError }: { playValidationError: string | null }) {
+  if (!playValidationError) {
+    return null;
+  }
+
+  return (
+    <p className="mt-2 rounded-md bg-[var(--danger-soft)] px-3 py-2 text-xs font-bold text-[var(--danger)]">
+      {playValidationError}
+    </p>
+  );
+}
+
+function StickyPlayActions({
+  canUndo,
+  editingPlayId,
+  onSave,
+  onUndo,
+  playValidationError,
+  selectedResult,
+}: {
+  canUndo: boolean;
+  editingPlayId: string | null;
+  onSave: () => void;
+  onUndo: () => void;
+  playValidationError: string | null;
+  selectedResult: BatterResult | null;
+}) {
+  return (
+    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-[var(--border)] bg-[var(--card)]/95 px-3 py-3 shadow-2xl shadow-foreground/10 backdrop-blur">
+      <div className="mx-auto grid w-full max-w-md grid-cols-[0.72fr_1.28fr] gap-2">
+        <button className="btn-base btn-secondary min-h-12 text-sm" disabled={!canUndo} onClick={onUndo} type="button">
+          <RotateCcw className="size-4" aria-hidden="true" />
+          Undo
+        </button>
+        <button
+          className="btn-base btn-primary min-h-12 px-3 text-sm"
+          disabled={!selectedResult || Boolean(playValidationError)}
+          onClick={onSave}
+          type="button"
+        >
+          <Save className="size-4" aria-hidden="true" />
+          {editingPlayId ? "Save Changes + Continue" : "Save Play + Next Batter"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PinchRunnerModal({
+  onClose,
+  onSelect,
+  pinchBase,
+  players,
+}: {
+  onClose: () => void;
+  onSelect: (player: Player) => void;
+  pinchBase: BaseLabel | null;
+  players: Player[];
+}) {
+  if (!pinchBase) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/35 p-4">
+      <div className="max-h-[calc(100dvh-2rem)] w-full max-w-[23rem] overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-2xl sm:max-w-md">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.14em] text-[var(--muted-foreground)]">
+              Pinch runner
+            </p>
+            <h2 className="mt-1 text-lg font-semibold text-foreground">
+              Choose runner for {pinchBase}
+            </h2>
+          </div>
+          <button className="btn-base btn-secondary size-10 min-h-0 p-0" onClick={onClose} type="button">
+            <X className="size-5" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="mt-4 grid gap-2">
+          {players.map((player) => (
+            <button
+              className="btn-base btn-secondary min-h-11 justify-start px-3 text-left text-sm"
+              key={player.id}
+              onClick={() => onSelect(player)}
+              type="button"
+            >
+              {player.name}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function getLastResultByBatter(plays: ScoredPlay[]) {
+  const results = new Map<string, BatterResult>();
+
+  plays.forEach((play) => {
+    results.set(play.batterId, play.result);
+  });
+
+  return results;
+}
+
+function getPreviewDetails(preview: ReturnType<typeof previewPlay> | null, currentOuts: number) {
+  if (!preview) {
+    return getEmptyPreviewDetails(currentOuts);
+  }
+
+  return {
+    hasRuns: preview.runs > 0,
+    outs: preview.projectedOuts,
+    rbis: preview.rbis,
+    runs: preview.runs,
+    summary: preview.summary,
+  };
+}
+
+function getEmptyPreviewDetails(currentOuts: number) {
+  return {
+    hasRuns: false,
+    outs: currentOuts,
+    rbis: 0,
+    runs: 0,
+    summary: "Tap a batter result to preview runner movement, runs, outs, and RBI.",
+  };
+}
+
+function getCurrentPlayValidationError(
+  scoringState: GameState,
+  selectedResult: BatterResult | null,
+  effectiveMovements: MovementSelections,
+  pinchRunners: PinchRunnerSelections,
+  selectedOutType: OutType | undefined,
+) {
+  return selectedResult
+    ? getPlayValidationError(scoringState, selectedResult, effectiveMovements, pinchRunners, selectedOutType)
+    : null;
+}
+
+function getPinchRunnerOptions(
+  lineup: Player[],
+  batter: Player,
+  occupiedBases: ReturnType<typeof occupiedBaseEntries>,
+  pinchRunners: PinchRunnerSelections,
+) {
+  const occupiedIds = new Set(occupiedBases.map(([, runner]) => runner.playerId));
+  const selectedPinchRunnerIds = new Set(Object.values(pinchRunners).map((runner) => runner.playerId));
+
+  return lineup.filter((player) => (
+    player.id !== batter.id && !occupiedIds.has(player.id) && !selectedPinchRunnerIds.has(player.id)
+  ));
+}
+
+function isResultLocked(result: BatterResult, scoringState: GameState) {
+  return Boolean(getResultLockReason(result, scoringState.bases, scoringState.outs));
+}
+
+function shouldAskForOutType(result: BatterResult) {
+  return result === "Out";
+}
+
+function getSavableResult(
+  selectedResult: BatterResult | null,
+  selectedOutType: OutType | undefined,
+  playValidationError: string | null,
+) {
+  if (!selectedResult || playValidationError) {
+    return null;
+  }
+
+  return needsOutTypeSelection(selectedResult, selectedOutType) ? "NEEDS_OUT_TYPE" as const : selectedResult;
+}
+
+function needsOutTypeSelection(selectedResult: BatterResult, selectedOutType: OutType | undefined) {
+  return selectedResult === "Out" && !selectedOutType;
+}
+
+function saveOrReplacePlay({
+  editingPlayId,
+  effectiveMovements,
+  gameState,
+  pinchRunners,
+  rbiCredit,
+  selectedOutType,
+  selectedResult,
+}: {
+  editingPlayId: string | null;
+  effectiveMovements: MovementSelections;
+  gameState: GameState;
+  pinchRunners: PinchRunnerSelections;
+  rbiCredit: boolean;
+  selectedOutType: OutType | undefined;
+  selectedResult: BatterResult;
+}) {
+  return editingPlayId
+    ? replaceLatestSavedPlay(gameState, editingPlayId, selectedResult, effectiveMovements, pinchRunners, rbiCredit, selectedOutType)
+    : savePlay(gameState, selectedResult, effectiveMovements, pinchRunners, rbiCredit, selectedOutType);
+}
+
+function removePinchRunner(current: PinchRunnerSelections, base: BaseLabel) {
+  const next = { ...current };
+  delete next[base];
+  return next;
+}
+
+function addPinchRunner(
+  current: PinchRunnerSelections,
+  pinchBase: BaseLabel | null,
+  player: Player,
+  bases: GameState["bases"],
+) {
+  if (!pinchBase) {
+    return current;
+  }
+
+  const originalRunner = bases[baseToKey(pinchBase)];
+
+  return {
+    ...current,
+    [pinchBase]: {
+      ...runnerSlotFromPlayer(player),
+      originalPlayerId: originalRunner?.playerId,
+      originalName: originalRunner?.name,
+    },
+  };
+}
+
+function canEditBattingOrderPlay(correctablePlay: ScoredPlay | null, playerId: string, editingPlayId: string | null) {
+  return correctablePlay?.batterId === playerId && !editingPlayId;
+}
+
+function getBattingOrderStatusLabel({
+  canEdit,
+  editingPlayId,
+  isCurrent,
+  lastResult,
+}: {
+  canEdit: boolean;
+  editingPlayId: string | null;
+  isCurrent: boolean;
+  lastResult: BatterResult | undefined;
+}) {
+  if (isCurrent) {
+    return getCurrentBatterStatusLabel(editingPlayId);
+  }
+
+  return getInactiveBatterStatusLabel(canEdit, lastResult);
+}
+
+function getCurrentBatterStatusLabel(editingPlayId: string | null) {
+  return editingPlayId ? "Editing" : "At bat";
+}
+
+function getInactiveBatterStatusLabel(canEdit: boolean, lastResult: BatterResult | undefined) {
+  return canEdit ? "Edit last play" : lastResult ?? "Ready";
+}
+
+function getFirstName(name: string) {
+  return name.split(" ")[0];
+}
+
+function getRunnerMovementSubtext(
+  pinchRunner: PinchRunnerSelections[BaseLabel] | undefined,
+  runnerName: string,
+) {
+  return pinchRunner ? `Pinch running for ${runnerName}` : "Original runner";
 }
 
 function EndGameSummary({
@@ -947,15 +1472,23 @@ function movementSelectionsFromPlay(play: ScoredPlay): MovementSelections {
       continue;
     }
 
-    selections[movement.fromBase] = movement.toBase === "HOME"
-      ? "Scores"
-      : movement.toBase === "OUT"
-        ? "Out"
-        : movement.toBase;
+    selections[movement.fromBase] = toMovementSelection(movement.toBase);
   }
 
   return selections;
 }
+
+function toMovementSelection(toBase: ScoredPlay["runnerAdvancements"][number]["toBase"]) {
+  return movementSelectionByDestination[toBase];
+}
+
+const movementSelectionByDestination: Record<ScoredPlay["runnerAdvancements"][number]["toBase"], UiRunnerDestination> = {
+  "1B": "1B",
+  "2B": "2B",
+  "3B": "3B",
+  HOME: "Scores",
+  OUT: "Out",
+};
 
 function pinchRunnerSelectionsFromPlay(play: ScoredPlay): PinchRunnerSelections {
   const selections: PinchRunnerSelections = {};

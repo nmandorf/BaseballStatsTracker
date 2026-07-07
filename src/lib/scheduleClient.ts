@@ -14,23 +14,16 @@ export function useTeamSchedule(teamId: string | null) {
 
   const reload = useCallback(async () => {
     if (!teamId) {
-      setSchedule(null);
-      setIsLoading(false);
+      clearScheduleState(setSchedule, setIsLoading);
       return;
     }
 
     setIsLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/team/${encodeURIComponent(teamId)}/schedule`, {
-        cache: "no-store",
-        headers: await getVerifiedTeamAccountHeaders(),
-      });
-      const payload = await response.json() as { schedule?: TeamSchedule; error?: { message?: string } };
-      if (!response.ok || !payload.schedule) throw new Error(payload.error?.message ?? "Unable to load schedule.");
-      setSchedule(payload.schedule);
+      setSchedule(await fetchTeamSchedule(teamId));
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to load schedule.");
+      setError(getScheduleClientErrorMessage(caught, "Unable to load schedule."));
     } finally {
       setIsLoading(false);
     }
@@ -48,16 +41,13 @@ export async function saveSchedule(teamId: string, timeZone: string, weeks: Sche
     headers: await getVerifiedTeamAccountHeaders({ "Content-Type": "application/json" }),
     body: JSON.stringify({ timeZone, weeks }),
   });
-  const payload = await response.json() as { schedule?: TeamSchedule; error?: { message?: string } };
-  if (!response.ok || !payload.schedule) throw new Error(payload.error?.message ?? "Unable to save schedule.");
-  return payload.schedule;
+  return parseScheduleResponse(response, "Unable to save schedule.");
 }
 
 export function loadSelectedScheduledGameId(teamId: string) {
   if (typeof window === "undefined") return null;
   try {
-    const selections = JSON.parse(window.localStorage.getItem(selectedGameStorageKey) ?? "{}") as Record<string, string>;
-    return selections[teamId] ?? null;
+    return getStoredSelectedGameId(teamId);
   } catch {
     return null;
   }
@@ -79,4 +69,47 @@ export function subscribeSelectedScheduledGame(listener: () => void) {
     window.removeEventListener(selectedGameEvent, listener);
     window.removeEventListener("storage", listener);
   };
+}
+
+function clearScheduleState(
+  setSchedule: (schedule: TeamSchedule | null) => void,
+  setIsLoading: (isLoading: boolean) => void,
+) {
+  setSchedule(null);
+  setIsLoading(false);
+}
+
+async function fetchTeamSchedule(teamId: string) {
+  const response = await fetch(`/api/team/${encodeURIComponent(teamId)}/schedule`, {
+    cache: "no-store",
+    headers: await getVerifiedTeamAccountHeaders(),
+  });
+
+  return parseScheduleResponse(response, "Unable to load schedule.");
+}
+
+async function parseScheduleResponse(response: Response, fallbackMessage: string) {
+  const payload = await response.json() as { schedule?: TeamSchedule; error?: { message?: string } };
+
+  if (!hasScheduleResponsePayload(response, payload)) {
+    throw new Error(payload.error?.message ?? fallbackMessage);
+  }
+
+  return payload.schedule;
+}
+
+function hasScheduleResponsePayload(
+  response: Response,
+  payload: { schedule?: TeamSchedule },
+): payload is { schedule: TeamSchedule } {
+  return response.ok && Boolean(payload.schedule);
+}
+
+function getScheduleClientErrorMessage(caught: unknown, fallbackMessage: string) {
+  return caught instanceof Error ? caught.message : fallbackMessage;
+}
+
+function getStoredSelectedGameId(teamId: string) {
+  const selections = JSON.parse(window.localStorage.getItem(selectedGameStorageKey) ?? "{}") as Record<string, string>;
+  return selections[teamId] ?? null;
 }

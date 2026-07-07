@@ -131,311 +131,601 @@ export async function saveFirstGameSnapshotToPrisma(
   const seasonYear = options.seasonYear ?? defaultSeasonYear;
   const account = options.account ?? legacyTeamAccount;
 
-  return prisma.$transaction(async (tx) => {
-    const team = await upsertSnapshotTeam(tx, options.team, account);
-    const scheduledGameId = options.gameId ?? state.gameId;
-    const gameId = scheduledGameId ?? getFirstGameId(seasonYear, team.id);
-    const existingGame = await tx.game.findFirst({
-      where: { id: gameId, teamId: team.id },
-      select: {
-        opponentScore: true,
-        snapshot: true,
-        status: true,
-        teamScore: true,
-      },
-    });
+  return prisma.$transaction((tx) =>
+    saveFirstGameSnapshotInTransaction(tx, state, options, seasonYear, account),
+  );
+}
 
-    if (scheduledGameId) {
-      if (!existingGame) {
-        throw notFoundError("TEAM_NOT_FOUND", "Scheduled game not found for this team.", { gameId: scheduledGameId });
-      }
-      if (!canSaveScheduledGameSnapshot(existingGame.status, state, existingGame.snapshot)) {
-        throw new AppError(
-          "GAME_NOT_STARTABLE",
-          existingGame.status === PrismaGameStatus.FINAL
-            ? "Completed games can only save final stat snapshots that are at least as complete as the saved game."
-            : "Start this game from its scheduled game screen before saving stats.",
-          409,
-          { gameId: scheduledGameId, status: existingGame.status },
-        );
-      }
-      if (state.status !== "IN_PROGRESS" && state.status !== "FINAL") {
-        throw new AppError("GAME_NOT_STARTABLE", "Only a started scheduled game can save live stats.", 409);
-      }
-    }
-    const season = await tx.season.upsert({
-      where: {
-        teamId_year: {
-          teamId: team.id,
-          year: seasonYear,
-        },
-      },
-      create: {
-        teamId: team.id,
-        year: seasonYear,
-        label: `${seasonYear} Season`,
-      },
-      update: {
-        label: `${seasonYear} Season`,
-      },
-    });
-    const players = uniquePlayers([...(options.team?.players ?? seedPlayers), ...state.lineup]);
+async function saveFirstGameSnapshotInTransaction(
+  tx: Prisma.TransactionClient,
+  state: GameState,
+  options: SaveFirstGameSnapshotOptions,
+  seasonYear: number,
+  account: TeamAccount,
+): Promise<SavedFirstGameSnapshot> {
+  const context = await prepareSnapshotSaveContext(tx, state, options, seasonYear, account);
+  const priorStats = await loadPriorSnapshotStats(tx, state, context);
+  const game = await upsertSnapshotGame(tx, state, options, context);
 
-    for (const player of players) {
-      await tx.player.upsert({
-        where: {
-          teamId_name: {
-            teamId: team.id,
-            name: player.name,
-          },
-        },
-        create: toPlayerCreate(team.id, player),
-        update: toPlayerUpdate(player),
-      });
-    }
+  await persistSnapshotGameDetails(tx, state, game.id);
+  await persistSnapshotPlayerStats(tx, state, context, priorStats);
+  await persistSnapshotTeamStats(tx, state, context, priorStats, game.id);
 
-    const lineupPlayerIds = state.lineup.map((player) => player.id);
-    const existingPlayerGameStats = await tx.playerGameStats.findMany({
-      where: { gameId, playerId: { in: lineupPlayerIds } },
-    });
-    const existingPlayerGameStatsByPlayerId = new Map(
-      existingPlayerGameStats.map((stats) => [stats.playerId, fromPlayerStatsRecord(stats)]),
-    );
-    const existingPlayerSeasonStats = await tx.playerSeasonStats.findMany({
-      where: { playerId: { in: lineupPlayerIds }, season: seasonYear },
-    });
-    const existingPlayerSeasonStatsByPlayerId = new Map(
-      existingPlayerSeasonStats.map((stats) => [stats.playerId, fromPlayerStatsRecord(stats)]),
-    );
-    const existingTeamGameStats = await tx.teamGameStats.findUnique({ where: { gameId } });
-    const existingTeamSeasonStats = await tx.teamSeasonStats.findUnique({ where: { seasonId: season.id } });
-    const result = state.status === "FINAL" ? getGameResult(state.teamScore, state.opponentScore) : null;
-    const game = await tx.game.upsert({
-      where: { id: gameId },
-      create: {
-        id: gameId,
-        teamId: team.id,
-        seasonId: season.id,
-        opponent: state.opponent,
-        date: options.gameDate ?? new Date(),
-        isHome: state.isHome,
-        teamScore: state.teamScore,
-        opponentScore: state.opponentScore,
-        inning: state.inning,
-        half: mapInningHalf(state.half),
-        outs: state.outs,
-        currentBatterIndex: state.currentBatterIndex,
-        bases: toJson(state.bases),
-        snapshot: toJson(state),
-        status: mapGameStatus(state.status),
-        result,
-      },
-      update: {
-        seasonId: season.id,
-        ...(!scheduledGameId ? { opponent: state.opponent, isHome: state.isHome } : {}),
-        teamScore: state.teamScore,
-        opponentScore: state.opponentScore,
-        inning: state.inning,
-        half: mapInningHalf(state.half),
-        outs: state.outs,
-        currentBatterIndex: state.currentBatterIndex,
-        bases: toJson(state.bases),
-        snapshot: toJson(state),
-        status: mapGameStatus(state.status),
-        result,
-      },
-    });
+  return getSavedSnapshotSummary(context, state, game.id);
+}
 
-    await tx.gameRuleSettings.upsert({
-      where: { gameId: game.id },
-      create: toRuleSettingsCreate(game.id, state.gameRules),
-      update: toRuleSettingsUpdate(state.gameRules),
-    });
+type SnapshotSaveContext = {
+  existingGame: ExistingSnapshotGame | null;
+  gameId: string;
+  scheduledGameId: string | null;
+  season: { id: string };
+  seasonYear: number;
+  team: { id: string };
+};
 
-    await tx.gameLineup.deleteMany({ where: { gameId: game.id } });
-    await tx.gameLineup.createMany({
-      data: state.lineup.map((player, index) => ({
-        gameId: game.id,
-        playerId: player.id,
-        battingOrderPosition: index + 1,
-        isActive: true,
-      })),
-    });
+type ExistingSnapshotGame = {
+  opponentScore: number;
+  snapshot: Prisma.JsonValue | null;
+  status: PrismaGameStatus;
+  teamScore: number;
+};
 
-    await tx.atBat.deleteMany({ where: { gameId: game.id } });
-    for (const play of state.plays) {
-      const atBatId = `${game.id}-${play.id}`;
+async function prepareSnapshotSaveContext(
+  tx: Prisma.TransactionClient,
+  state: GameState,
+  options: SaveFirstGameSnapshotOptions,
+  seasonYear: number,
+  account: TeamAccount,
+): Promise<SnapshotSaveContext> {
+  const team = await upsertSnapshotTeam(tx, options.team, account);
+  const scheduledGameId = options.gameId ?? state.gameId;
+  const gameId = scheduledGameId ?? getFirstGameId(seasonYear, team.id);
+  const existingGame = await findExistingSnapshotGame(tx, gameId, team.id);
 
-      await tx.atBat.create({
-        data: {
-          id: atBatId,
-          gameId: game.id,
-          inning: play.inning,
-          batterId: play.batterId,
-          outsBefore: play.outsBefore,
-          result: mapBatterResult(play.result),
-          outType: play.outType ? mapOutType(play.outType) : null,
-          basesBefore: toJson(play.basesBefore),
-          runsScored: play.runsScored,
-          rbis: play.rbis,
-          outsOnPlay: play.outsOnPlay,
-          basesAfter: toJson(play.basesAfter),
-          runnerAdvancements: {
-            create: play.runnerAdvancements.map((movement) =>
-              toRunnerAdvancementCreate(movement),
-            ),
-          },
-        },
-      });
-    }
+  validateScheduledSnapshotSave(scheduledGameId, existingGame, state);
 
-    await tx.playerGameStats.deleteMany({ where: { gameId: game.id } });
-    await tx.playerGameStats.createMany({
-      data: state.lineup.map((player) => ({
-        gameId: game.id,
-        playerId: player.id,
-        gamesPlayed: state.status === "PREGAME" ? 0 : 1,
-        ...toPersistedStatsData(getPlayerGameStats(state, player.id)),
-      })),
-    });
+  const season = await upsertSnapshotSeason(tx, team.id, seasonYear);
+  await upsertSnapshotPlayers(tx, team.id, getSnapshotPlayers(options.team, state));
 
-    for (const player of state.lineup) {
-      const playerGameStats = {
-        ...getPlayerGameStats(state, player.id),
-        gamesPlayed: state.status === "PREGAME" ? 0 : 1,
-      };
-      const existingSeasonStats = existingPlayerSeasonStatsByPlayerId.get(player.id) ?? player.seasonStats;
-      const existingGameStats = existingPlayerGameStatsByPlayerId.get(player.id) ?? createZeroStats();
-      const playerSeasonStats = replaceGameStatsInSeason(
-        existingSeasonStats,
-        existingGameStats,
-        playerGameStats,
-      );
+  return { existingGame, gameId, scheduledGameId, season, seasonYear, team };
+}
 
-      await tx.playerSeasonStats.upsert({
-        where: {
-          playerId_season: {
-            playerId: player.id,
-            season: seasonYear,
-          },
-        },
-        create: {
-          playerId: player.id,
-          seasonId: season.id,
-          season: seasonYear,
-          gamesPlayed: playerSeasonStats.gamesPlayed,
-          ...toPersistedStatsData(playerSeasonStats),
-        },
-        update: {
-          seasonId: season.id,
-          gamesPlayed: playerSeasonStats.gamesPlayed,
-          ...toPersistedStatsData(playerSeasonStats),
-        },
-      });
-    }
+function getSnapshotPlayers(activeTeam: ActiveTeam | undefined, state: GameState) {
+  return uniquePlayers([...(activeTeam?.players ?? seedPlayers), ...state.lineup]);
+}
 
-    const teamTotals = getTeamGameTotals(state);
-    const record = getRecordCounts(state.status, state.teamScore, state.opponentScore);
-    const existingTeamRecord = existingGame
-      ? getRecordCounts(mapLocalGameStatus(existingGame.status), existingGame.teamScore, existingGame.opponentScore)
-      : getRecordCounts("PREGAME", 0, 0);
-    const nextTeamSeasonStats = addTeamGameToSeasonStats(
-      subtractTeamGameFromSeasonStats(
-        existingTeamSeasonStats ? fromTeamSeasonStatsRecord(existingTeamSeasonStats) : createZeroTeamSeasonStats(),
-        existingTeamGameStats
-          ? fromTeamGameStatsRecord(
-              existingTeamGameStats,
-              mapLocalGameStatus(existingGame?.status ?? PrismaGameStatus.SCHEDULED) === "PREGAME" ? 0 : 1,
-            )
-          : createZeroTeamGameStats(),
-        existingTeamRecord,
-      ),
-      teamTotals,
-      record,
-      state.teamScore,
-      state.opponentScore,
-      state.status === "PREGAME" ? 0 : 1,
-    );
-
-    await tx.teamGameStats.upsert({
-      where: { gameId: game.id },
-      create: {
-        teamId: team.id,
-        gameId: game.id,
-        ...toPersistedTeamStatsData(teamTotals),
-        runs: teamTotals.runs,
-        opponentRuns: state.opponentScore,
-        leftOnBase: occupiedBaseEntries(state.bases).length,
-      },
-      update: {
-        ...toPersistedTeamStatsData(teamTotals),
-        runs: teamTotals.runs,
-        opponentRuns: state.opponentScore,
-        leftOnBase: occupiedBaseEntries(state.bases).length,
-      },
-    });
-
-    await tx.teamSeasonStats.upsert({
-      where: { seasonId: season.id },
-      create: {
-        teamId: team.id,
-        seasonId: season.id,
-        gamesPlayed: nextTeamSeasonStats.gamesPlayed,
-        wins: nextTeamSeasonStats.wins,
-        losses: nextTeamSeasonStats.losses,
-        ties: nextTeamSeasonStats.ties,
-        runsFor: nextTeamSeasonStats.runsFor,
-        runsAgainst: nextTeamSeasonStats.runsAgainst,
-        ...toPersistedTeamStatsData(nextTeamSeasonStats),
-        runs: nextTeamSeasonStats.runs,
-      },
-      update: {
-        gamesPlayed: nextTeamSeasonStats.gamesPlayed,
-        wins: nextTeamSeasonStats.wins,
-        losses: nextTeamSeasonStats.losses,
-        ties: nextTeamSeasonStats.ties,
-        runsFor: nextTeamSeasonStats.runsFor,
-        runsAgainst: nextTeamSeasonStats.runsAgainst,
-        ...toPersistedTeamStatsData(nextTeamSeasonStats),
-        runs: nextTeamSeasonStats.runs,
-      },
-    });
-
-    await tx.teamRecord.upsert({
-      where: {
-        teamId_seasonId_label: {
-          teamId: team.id,
-          seasonId: season.id,
-          label: "Overall",
-        },
-      },
-      create: {
-        teamId: team.id,
-        seasonId: season.id,
-        label: "Overall",
-        wins: nextTeamSeasonStats.wins,
-        losses: nextTeamSeasonStats.losses,
-        ties: nextTeamSeasonStats.ties,
-        runsFor: nextTeamSeasonStats.runsFor,
-        runsAgainst: nextTeamSeasonStats.runsAgainst,
-      },
-      update: {
-        wins: nextTeamSeasonStats.wins,
-        losses: nextTeamSeasonStats.losses,
-        ties: nextTeamSeasonStats.ties,
-        runsFor: nextTeamSeasonStats.runsFor,
-        runsAgainst: nextTeamSeasonStats.runsAgainst,
-      },
-    });
-
-    return {
-      teamId: team.id,
-      seasonId: season.id,
-      gameId: game.id,
-      playerCount: state.lineup.length,
-      playCount: state.plays.length,
-    };
+async function findExistingSnapshotGame(tx: Prisma.TransactionClient, gameId: string, teamId: string) {
+  return tx.game.findFirst({
+    where: { id: gameId, teamId },
+    select: {
+      opponentScore: true,
+      snapshot: true,
+      status: true,
+      teamScore: true,
+    },
   });
+}
+
+function validateScheduledSnapshotSave(
+  scheduledGameId: string | null,
+  existingGame: ExistingSnapshotGame | null,
+  state: GameState,
+) {
+  if (!scheduledGameId) {
+    return;
+  }
+
+  if (!existingGame) {
+    throw notFoundError("TEAM_NOT_FOUND", "Scheduled game not found for this team.", { gameId: scheduledGameId });
+  }
+
+  validateScheduledSnapshotProgress(scheduledGameId, existingGame, state);
+  validateLiveScheduledSnapshotStatus(state);
+}
+
+function validateScheduledSnapshotProgress(
+  scheduledGameId: string,
+  existingGame: ExistingSnapshotGame,
+  state: GameState,
+) {
+  if (canSaveScheduledGameSnapshot(existingGame.status, state, existingGame.snapshot)) {
+    return;
+  }
+
+  throw new AppError(
+    "GAME_NOT_STARTABLE",
+    getScheduledSnapshotSaveErrorMessage(existingGame.status),
+    409,
+    { gameId: scheduledGameId, status: existingGame.status },
+  );
+}
+
+function getScheduledSnapshotSaveErrorMessage(status: PrismaGameStatus) {
+  return status === PrismaGameStatus.FINAL
+    ? "Completed games can only save final stat snapshots that are at least as complete as the saved game."
+    : "Start this game from its scheduled game screen before saving stats.";
+}
+
+function validateLiveScheduledSnapshotStatus(state: GameState) {
+  if (state.status === "IN_PROGRESS" || state.status === "FINAL") {
+    return;
+  }
+
+  throw new AppError("GAME_NOT_STARTABLE", "Only a started scheduled game can save live stats.", 409);
+}
+
+async function upsertSnapshotSeason(tx: Prisma.TransactionClient, teamId: string, seasonYear: number) {
+  return tx.season.upsert({
+    where: {
+      teamId_year: {
+        teamId,
+        year: seasonYear,
+      },
+    },
+    create: {
+      teamId,
+      year: seasonYear,
+      label: `${seasonYear} Season`,
+    },
+    update: {
+      label: `${seasonYear} Season`,
+    },
+  });
+}
+
+async function upsertSnapshotPlayers(tx: Prisma.TransactionClient, teamId: string, players: Player[]) {
+  for (const player of players) {
+    await tx.player.upsert({
+      where: {
+        teamId_name: {
+          teamId,
+          name: player.name,
+        },
+      },
+      create: toPlayerCreate(teamId, player),
+      update: toPlayerUpdate(player),
+    });
+  }
+}
+
+type PriorSnapshotStats = {
+  existingPlayerGameStatsByPlayerId: Map<string, PlayerStats>;
+  existingPlayerSeasonStatsByPlayerId: Map<string, PlayerStats>;
+  existingTeamGameStats: Awaited<ReturnType<Prisma.TransactionClient["teamGameStats"]["findUnique"]>>;
+  existingTeamSeasonStats: Awaited<ReturnType<Prisma.TransactionClient["teamSeasonStats"]["findUnique"]>>;
+};
+
+async function loadPriorSnapshotStats(
+  tx: Prisma.TransactionClient,
+  state: GameState,
+  context: SnapshotSaveContext,
+): Promise<PriorSnapshotStats> {
+  const lineupPlayerIds = state.lineup.map((player) => player.id);
+  const existingPlayerGameStats = await tx.playerGameStats.findMany({
+    where: { gameId: context.gameId, playerId: { in: lineupPlayerIds } },
+  });
+  const existingPlayerSeasonStats = await tx.playerSeasonStats.findMany({
+    where: { playerId: { in: lineupPlayerIds }, season: context.seasonYear },
+  });
+
+  return {
+    existingPlayerGameStatsByPlayerId: toPlayerStatsMap(existingPlayerGameStats),
+    existingPlayerSeasonStatsByPlayerId: toPlayerStatsMap(existingPlayerSeasonStats),
+    existingTeamGameStats: await tx.teamGameStats.findUnique({ where: { gameId: context.gameId } }),
+    existingTeamSeasonStats: await tx.teamSeasonStats.findUnique({ where: { seasonId: context.season.id } }),
+  };
+}
+
+function toPlayerStatsMap(statsRecords: Array<{ playerId: string } & PlayerStats>) {
+  return new Map(statsRecords.map((stats) => [stats.playerId, fromPlayerStatsRecord(stats)]));
+}
+
+async function upsertSnapshotGame(
+  tx: Prisma.TransactionClient,
+  state: GameState,
+  options: SaveFirstGameSnapshotOptions,
+  context: SnapshotSaveContext,
+) {
+  const result = getSnapshotGameResult(state);
+
+  return tx.game.upsert({
+    where: { id: context.gameId },
+    create: getSnapshotGameCreateData(state, options, context, result),
+    update: getSnapshotGameUpdateData(state, context, result),
+  });
+}
+
+function getSnapshotGameResult(state: GameState) {
+  return state.status === "FINAL" ? getGameResult(state.teamScore, state.opponentScore) : null;
+}
+
+function getSnapshotGameCreateData(
+  state: GameState,
+  options: SaveFirstGameSnapshotOptions,
+  context: SnapshotSaveContext,
+  result: PrismaGameResult | null,
+) {
+  return {
+    id: context.gameId,
+    teamId: context.team.id,
+    seasonId: context.season.id,
+    opponent: state.opponent,
+    date: options.gameDate ?? new Date(),
+    isHome: state.isHome,
+    ...getSnapshotGameStateData(state, result),
+  };
+}
+
+function getSnapshotGameUpdateData(
+  state: GameState,
+  context: SnapshotSaveContext,
+  result: PrismaGameResult | null,
+) {
+  return {
+    seasonId: context.season.id,
+    ...getUnscheduledGameUpdateData(state, context.scheduledGameId),
+    ...getSnapshotGameStateData(state, result),
+  };
+}
+
+function getUnscheduledGameUpdateData(state: GameState, scheduledGameId: string | null) {
+  return scheduledGameId ? {} : { opponent: state.opponent, isHome: state.isHome };
+}
+
+function getSnapshotGameStateData(state: GameState, result: PrismaGameResult | null) {
+  return {
+    teamScore: state.teamScore,
+    opponentScore: state.opponentScore,
+    inning: state.inning,
+    half: mapInningHalf(state.half),
+    outs: state.outs,
+    currentBatterIndex: state.currentBatterIndex,
+    bases: toJson(state.bases),
+    snapshot: toJson(state),
+    status: mapGameStatus(state.status),
+    result,
+  };
+}
+
+async function persistSnapshotGameDetails(
+  tx: Prisma.TransactionClient,
+  state: GameState,
+  gameId: string,
+) {
+  await persistSnapshotGameRules(tx, state, gameId);
+  await replaceSnapshotLineup(tx, state, gameId);
+  await replaceSnapshotAtBats(tx, state, gameId);
+}
+
+async function persistSnapshotGameRules(
+  tx: Prisma.TransactionClient,
+  state: GameState,
+  gameId: string,
+) {
+  await tx.gameRuleSettings.upsert({
+    where: { gameId },
+    create: toRuleSettingsCreate(gameId, state.gameRules),
+    update: toRuleSettingsUpdate(state.gameRules),
+  });
+}
+
+async function replaceSnapshotLineup(
+  tx: Prisma.TransactionClient,
+  state: GameState,
+  gameId: string,
+) {
+  await tx.gameLineup.deleteMany({ where: { gameId } });
+  await tx.gameLineup.createMany({
+    data: state.lineup.map((player, index) => ({
+      gameId,
+      playerId: player.id,
+      battingOrderPosition: index + 1,
+      isActive: true,
+    })),
+  });
+}
+
+async function replaceSnapshotAtBats(
+  tx: Prisma.TransactionClient,
+  state: GameState,
+  gameId: string,
+) {
+  await tx.atBat.deleteMany({ where: { gameId } });
+
+  for (const play of state.plays) {
+    await tx.atBat.create({
+      data: toAtBatCreateData(gameId, play),
+    });
+  }
+}
+
+function toAtBatCreateData(gameId: string, play: GameState["plays"][number]) {
+  return {
+    id: `${gameId}-${play.id}`,
+    gameId,
+    inning: play.inning,
+    batterId: play.batterId,
+    outsBefore: play.outsBefore,
+    result: mapBatterResult(play.result),
+    outType: play.outType ? mapOutType(play.outType) : null,
+    basesBefore: toJson(play.basesBefore),
+    runsScored: play.runsScored,
+    rbis: play.rbis,
+    outsOnPlay: play.outsOnPlay,
+    basesAfter: toJson(play.basesAfter),
+    runnerAdvancements: {
+      create: play.runnerAdvancements.map((movement) =>
+        toRunnerAdvancementCreate(movement),
+      ),
+    },
+  };
+}
+
+async function persistSnapshotPlayerStats(
+  tx: Prisma.TransactionClient,
+  state: GameState,
+  context: SnapshotSaveContext,
+  priorStats: PriorSnapshotStats,
+) {
+  await replaceSnapshotPlayerGameStats(tx, state, context.gameId);
+
+  for (const player of state.lineup) {
+    await upsertSnapshotPlayerSeasonStats(tx, state, context, priorStats, player);
+  }
+}
+
+async function replaceSnapshotPlayerGameStats(
+  tx: Prisma.TransactionClient,
+  state: GameState,
+  gameId: string,
+) {
+  await tx.playerGameStats.deleteMany({ where: { gameId } });
+  await tx.playerGameStats.createMany({
+    data: state.lineup.map((player) => ({
+      gameId,
+      playerId: player.id,
+      gamesPlayed: getSnapshotGamesPlayed(state),
+      ...toPersistedStatsData(getPlayerGameStats(state, player.id)),
+    })),
+  });
+}
+
+async function upsertSnapshotPlayerSeasonStats(
+  tx: Prisma.TransactionClient,
+  state: GameState,
+  context: SnapshotSaveContext,
+  priorStats: PriorSnapshotStats,
+  player: Player,
+) {
+  const playerSeasonStats = getNextPlayerSeasonStats(state, priorStats, player);
+
+  await tx.playerSeasonStats.upsert({
+    where: {
+      playerId_season: {
+        playerId: player.id,
+        season: context.seasonYear,
+      },
+    },
+    create: {
+      playerId: player.id,
+      seasonId: context.season.id,
+      season: context.seasonYear,
+      gamesPlayed: playerSeasonStats.gamesPlayed,
+      ...toPersistedStatsData(playerSeasonStats),
+    },
+    update: {
+      seasonId: context.season.id,
+      gamesPlayed: playerSeasonStats.gamesPlayed,
+      ...toPersistedStatsData(playerSeasonStats),
+    },
+  });
+}
+
+function getNextPlayerSeasonStats(
+  state: GameState,
+  priorStats: PriorSnapshotStats,
+  player: Player,
+) {
+  const playerGameStats = {
+    ...getPlayerGameStats(state, player.id),
+    gamesPlayed: getSnapshotGamesPlayed(state),
+  };
+  const existingSeasonStats = priorStats.existingPlayerSeasonStatsByPlayerId.get(player.id) ?? player.seasonStats;
+  const existingGameStats = priorStats.existingPlayerGameStatsByPlayerId.get(player.id) ?? createZeroStats();
+
+  return replaceGameStatsInSeason(
+    existingSeasonStats,
+    existingGameStats,
+    playerGameStats,
+  );
+}
+
+async function persistSnapshotTeamStats(
+  tx: Prisma.TransactionClient,
+  state: GameState,
+  context: SnapshotSaveContext,
+  priorStats: PriorSnapshotStats,
+  gameId: string,
+) {
+  const teamTotals = getTeamGameTotals(state);
+  const nextTeamSeasonStats = getNextTeamSeasonStats(state, context, priorStats, teamTotals);
+
+  await upsertSnapshotTeamGameStats(tx, state, context, gameId, teamTotals);
+  await upsertSnapshotTeamSeasonStats(tx, context, nextTeamSeasonStats);
+  await upsertSnapshotTeamRecord(tx, context, nextTeamSeasonStats);
+}
+
+function getNextTeamSeasonStats(
+  state: GameState,
+  context: SnapshotSaveContext,
+  priorStats: PriorSnapshotStats,
+  teamTotals: ReturnType<typeof getTeamGameTotals>,
+) {
+  return addTeamGameToSeasonStats(
+    getPriorTeamSeasonStats(context, priorStats),
+    teamTotals,
+    getRecordCounts(state.status, state.teamScore, state.opponentScore),
+    state.teamScore,
+    state.opponentScore,
+    getSnapshotGamesPlayed(state),
+  );
+}
+
+function getPriorTeamSeasonStats(
+  context: SnapshotSaveContext,
+  priorStats: PriorSnapshotStats,
+) {
+  return subtractTeamGameFromSeasonStats(
+    priorStats.existingTeamSeasonStats
+      ? fromTeamSeasonStatsRecord(priorStats.existingTeamSeasonStats)
+      : createZeroTeamSeasonStats(),
+    getPriorTeamGameStats(context, priorStats),
+    getPriorTeamRecord(context),
+  );
+}
+
+function getPriorTeamGameStats(
+  context: SnapshotSaveContext,
+  priorStats: PriorSnapshotStats,
+) {
+  if (!priorStats.existingTeamGameStats) {
+    return createZeroTeamGameStats();
+  }
+
+  return fromTeamGameStatsRecord(
+    priorStats.existingTeamGameStats,
+    getPriorTeamGameCount(context),
+  );
+}
+
+function getPriorTeamGameCount(context: SnapshotSaveContext) {
+  return mapLocalGameStatus(context.existingGame?.status ?? PrismaGameStatus.SCHEDULED) === "PREGAME" ? 0 : 1;
+}
+
+function getPriorTeamRecord(context: SnapshotSaveContext) {
+  return context.existingGame
+    ? getRecordCounts(
+        mapLocalGameStatus(context.existingGame.status),
+        context.existingGame.teamScore,
+        context.existingGame.opponentScore,
+      )
+    : getRecordCounts("PREGAME", 0, 0);
+}
+
+async function upsertSnapshotTeamGameStats(
+  tx: Prisma.TransactionClient,
+  state: GameState,
+  context: SnapshotSaveContext,
+  gameId: string,
+  teamTotals: ReturnType<typeof getTeamGameTotals>,
+) {
+  const statsData = getSnapshotTeamGameStatsData(state, teamTotals);
+
+  await tx.teamGameStats.upsert({
+    where: { gameId },
+    create: {
+      teamId: context.team.id,
+      gameId,
+      ...statsData,
+    },
+    update: statsData,
+  });
+}
+
+function getSnapshotTeamGameStatsData(
+  state: GameState,
+  teamTotals: ReturnType<typeof getTeamGameTotals>,
+) {
+  return {
+    ...toPersistedTeamStatsData(teamTotals),
+    runs: teamTotals.runs,
+    opponentRuns: state.opponentScore,
+    leftOnBase: occupiedBaseEntries(state.bases).length,
+  };
+}
+
+async function upsertSnapshotTeamSeasonStats(
+  tx: Prisma.TransactionClient,
+  context: SnapshotSaveContext,
+  nextTeamSeasonStats: PersistedTeamSeasonStats,
+) {
+  const statsData = getSnapshotTeamSeasonStatsData(nextTeamSeasonStats);
+
+  await tx.teamSeasonStats.upsert({
+    where: { seasonId: context.season.id },
+    create: {
+      teamId: context.team.id,
+      seasonId: context.season.id,
+      ...statsData,
+    },
+    update: statsData,
+  });
+}
+
+function getSnapshotTeamSeasonStatsData(nextTeamSeasonStats: PersistedTeamSeasonStats) {
+  return {
+    gamesPlayed: nextTeamSeasonStats.gamesPlayed,
+    wins: nextTeamSeasonStats.wins,
+    losses: nextTeamSeasonStats.losses,
+    ties: nextTeamSeasonStats.ties,
+    runsFor: nextTeamSeasonStats.runsFor,
+    runsAgainst: nextTeamSeasonStats.runsAgainst,
+    ...toPersistedTeamStatsData(nextTeamSeasonStats),
+    runs: nextTeamSeasonStats.runs,
+  };
+}
+
+async function upsertSnapshotTeamRecord(
+  tx: Prisma.TransactionClient,
+  context: SnapshotSaveContext,
+  nextTeamSeasonStats: PersistedTeamSeasonStats,
+) {
+  const recordData = getSnapshotTeamRecordData(nextTeamSeasonStats);
+
+  await tx.teamRecord.upsert({
+    where: {
+      teamId_seasonId_label: {
+        teamId: context.team.id,
+        seasonId: context.season.id,
+        label: "Overall",
+      },
+    },
+    create: {
+      teamId: context.team.id,
+      seasonId: context.season.id,
+      label: "Overall",
+      ...recordData,
+    },
+    update: recordData,
+  });
+}
+
+function getSnapshotTeamRecordData(nextTeamSeasonStats: PersistedTeamSeasonStats) {
+  return {
+    wins: nextTeamSeasonStats.wins,
+    losses: nextTeamSeasonStats.losses,
+    ties: nextTeamSeasonStats.ties,
+    runsFor: nextTeamSeasonStats.runsFor,
+    runsAgainst: nextTeamSeasonStats.runsAgainst,
+  };
+}
+
+function getSnapshotGamesPlayed(state: GameState) {
+  return state.status === "PREGAME" ? 0 : 1;
+}
+
+function getSavedSnapshotSummary(
+  context: SnapshotSaveContext,
+  state: GameState,
+  gameId: string,
+): SavedFirstGameSnapshot {
+  return {
+    teamId: context.team.id,
+    seasonId: context.season.id,
+    gameId,
+    playerCount: state.lineup.length,
+    playCount: state.plays.length,
+  };
 }
 
 export async function loadFirstGameSnapshotFromPrisma(
@@ -451,21 +741,39 @@ export async function loadFirstGameSnapshotFromPrisma(
     return null;
   }
 
-  const game = await prisma.game.findFirst({
+  const game = await findLatestSavedSnapshotGame(prisma, team.id);
+
+  return (game?.snapshot ?? null) as GameState | null;
+}
+
+const latestSnapshotStatuses = [PrismaGameStatus.IN_PROGRESS, PrismaGameStatus.FINAL] as const;
+
+async function findLatestSavedSnapshotGame(
+  prisma: ReturnType<typeof getPrisma>,
+  teamId: string,
+) {
+  for (const status of latestSnapshotStatuses) {
+    const game = await findLatestSnapshotGame(prisma, teamId, status);
+    if (game) return game;
+  }
+
+  return null;
+}
+
+function findLatestSnapshotGame(
+  prisma: ReturnType<typeof getPrisma>,
+  teamId: string,
+  status: PrismaGameStatus,
+) {
+  return prisma.game.findFirst({
     where: {
-      teamId: team.id,
-      status: PrismaGameStatus.IN_PROGRESS,
+      teamId,
+      status,
       snapshot: { not: Prisma.DbNull },
     },
     orderBy: { updatedAt: "desc" },
     select: { snapshot: true },
-  }) ?? await prisma.game.findFirst({
-    where: { teamId: team.id, status: PrismaGameStatus.FINAL, snapshot: { not: Prisma.DbNull } },
-    orderBy: { updatedAt: "desc" },
-    select: { snapshot: true },
   });
-
-  return (game?.snapshot ?? null) as GameState | null;
 }
 
 export async function resetFirstGameSnapshotInPrisma(
@@ -723,10 +1031,14 @@ function getRecordCounts(status: LocalGameStatus, teamScore: number, opponentSco
     return { wins: 0, losses: 0, ties: 0 };
   }
 
+  return getFinalRecordCounts(teamScore, opponentScore);
+}
+
+function getFinalRecordCounts(teamScore: number, opponentScore: number) {
   return {
-    wins: teamScore > opponentScore ? 1 : 0,
-    losses: teamScore < opponentScore ? 1 : 0,
-    ties: teamScore === opponentScore ? 1 : 0,
+    wins: Number(teamScore > opponentScore),
+    losses: Number(teamScore < opponentScore),
+    ties: Number(teamScore === opponentScore),
   };
 }
 
@@ -809,29 +1121,41 @@ function mapOutType(value: OutType) {
 }
 
 function mapRunnerStart(value: RunnerMovement["fromBase"]) {
-  if (value === "BATTER") return PrismaRunnerStart.BATTER;
-  if (value === "1B") return PrismaRunnerStart.FIRST;
-  if (value === "2B") return PrismaRunnerStart.SECOND;
-  return PrismaRunnerStart.THIRD;
+  return runnerStartMap[value];
 }
+
+const runnerStartMap: Record<RunnerMovement["fromBase"], PrismaRunnerStart> = {
+  BATTER: PrismaRunnerStart.BATTER,
+  "1B": PrismaRunnerStart.FIRST,
+  "2B": PrismaRunnerStart.SECOND,
+  "3B": PrismaRunnerStart.THIRD,
+};
 
 function mapRunnerEnd(value: RunnerMovement["toBase"]) {
-  if (value === "HOME") return PrismaRunnerEnd.HOME;
-  if (value === "OUT") return PrismaRunnerEnd.OUT;
-  if (value === "1B") return PrismaRunnerEnd.FIRST;
-  if (value === "2B") return PrismaRunnerEnd.SECOND;
-  return PrismaRunnerEnd.THIRD;
+  return runnerEndMap[value];
 }
 
+const runnerEndMap: Record<RunnerMovement["toBase"], PrismaRunnerEnd> = {
+  HOME: PrismaRunnerEnd.HOME,
+  OUT: PrismaRunnerEnd.OUT,
+  "1B": PrismaRunnerEnd.FIRST,
+  "2B": PrismaRunnerEnd.SECOND,
+  "3B": PrismaRunnerEnd.THIRD,
+};
+
 function mapAdvanceReason(value: RunnerMovement["reason"]) {
-  if (value === "Hit") return PrismaAdvanceReason.HIT;
-  if (value === "Walk") return PrismaAdvanceReason.WALK;
-  if (value === "Error") return PrismaAdvanceReason.ERROR;
-  if (value === "Fielder's Choice") return PrismaAdvanceReason.FIELDERS_CHOICE;
-  if (value === "Sac Fly") return PrismaAdvanceReason.SAC_FLY;
-  if (value === "Out") return PrismaAdvanceReason.OUT;
-  return PrismaAdvanceReason.RUNNER_DECISION;
+  return advanceReasonMap[value];
 }
+
+const advanceReasonMap: Record<RunnerMovement["reason"], PrismaAdvanceReason> = {
+  Hit: PrismaAdvanceReason.HIT,
+  Walk: PrismaAdvanceReason.WALK,
+  Error: PrismaAdvanceReason.ERROR,
+  "Fielder's Choice": PrismaAdvanceReason.FIELDERS_CHOICE,
+  "Sac Fly": PrismaAdvanceReason.SAC_FLY,
+  Out: PrismaAdvanceReason.OUT,
+  "Runner Decision": PrismaAdvanceReason.RUNNER_DECISION,
+};
 
 function mapHomeRunLimitOutcome(value: string) {
   if (value === "Single") return PrismaHomeRunLimitOutcome.SINGLE;

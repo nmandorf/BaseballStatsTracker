@@ -98,99 +98,64 @@ type DefensiveEventDraft = DefensiveEventFormState & {
   effectiveFielderId: string;
 };
 
+type DefenseSectionContext = {
+  alignment: DefensiveAlignment;
+  alignmentHalf: AlignmentHalf;
+  isFielding: boolean;
+  savedAlignment: DefensiveAlignment | null;
+  teamPhase: ReturnType<typeof getCurrentTeamPhase>;
+};
+
+type DefensiveEventFormController = {
+  clearAfterSave: () => void;
+  draft: DefensiveEventDraft;
+  handlers: DefensiveEventFormHandlers;
+  state: DefensiveEventFormState;
+};
+
 export function DefenseSection() {
-  const router = useRouter();
   const activeTeam = useActiveTeam();
-  const gameState = useFirstGameState();
-  const [eventType, setEventType] = useState<DefensiveEventType>("ROUTINE_OUT");
-  const [fielderId, setFielderId] = useState("");
-  const [position, setPosition] = useState<DefensivePosition>("SS");
-  const [outsRecorded, setOutsRecorded] = useState(1);
-  const [runsAllowed, setRunsAllowed] = useState(0);
-  const [basesAllowed, setBasesAllowed] = useState(0);
-  const [ballType, setBallType] = useState<BallType | "">("");
-  const [misplayType, setMisplayType] = useState<MisplayType | "">("");
-  const [misplayResult, setMisplayResult] = useState<MisplayResult | "">("");
-  const [greatPlayImpact, setGreatPlayImpact] = useState<GreatPlayImpact | "">("");
-  const [notes, setNotes] = useState("");
-  const defenderSelectionWasEdited = useRef(false);
 
   if (!activeTeam) {
     return <TeamSetupGate title="Create your team before tracking defense." />;
   }
 
-  const activeTeamName = activeTeam.name;
+  return <TeamDefenseSection activeTeamName={activeTeam.name} />;
+}
 
-  if (gameState.status === "PREGAME" || !gameState.lineup.length) {
-    return <PregameDefensePrompt />;
+function TeamDefenseSection({ activeTeamName }: { activeTeamName: string }) {
+  const router = useRouter();
+  const gameState = useFirstGameState();
+  const unavailablePrompt = getUnavailableDefensePrompt(gameState);
+
+  if (unavailablePrompt) {
+    return unavailablePrompt;
   }
 
-  if (gameState.status === "FINAL") {
-    return <FinalDefensePrompt />;
-  }
+  return <LiveDefenseSection activeTeamName={activeTeamName} gameState={gameState} router={router} />;
+}
 
-  const teamPhase = getCurrentTeamPhase(gameState);
-  const isFielding = teamPhase === "FIELDING";
-  const alignmentHalf = isFielding
-    ? { inning: gameState.inning, half: gameState.half }
-    : getNextHalfInning(gameState.inning, gameState.half);
-  const savedAlignment = getDefensiveAlignmentForHalf(gameState, alignmentHalf.inning, alignmentHalf.half);
-  const alignment = getOrCreateDefensiveAlignmentForHalf(gameState, alignmentHalf.inning, alignmentHalf.half);
-  const fielderOptions = gameState.lineup;
-  const effectiveFielderId = fielderId || getAssignedPlayerIdForPosition(alignment, position) || "";
-  const eventDraft = {
-    eventType,
-    effectiveFielderId,
-    position,
-    outsRecorded,
-    runsAllowed,
-    basesAllowed,
-    ballType,
-    misplayType,
-    misplayResult,
-    greatPlayImpact,
-    notes,
-  };
-  const eventInput = buildDefensiveEventInput(eventDraft);
+function getUnavailableDefensePrompt(gameState: ReturnType<typeof useFirstGameState>) {
+  if (gameState.status === "PREGAME" || !gameState.lineup.length) return <PregameDefensePrompt />;
+  if (gameState.status === "FINAL") return <FinalDefensePrompt />;
+  return null;
+}
+
+function LiveDefenseSection({
+  activeTeamName,
+  gameState,
+  router,
+}: {
+  activeTeamName: string;
+  gameState: ReturnType<typeof useFirstGameState>;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const context = getDefenseSectionContext(gameState);
+  const eventForm = useDefensiveEventForm(context.alignment);
+  const eventInput = buildDefensiveEventInput(eventForm.draft);
   const preview = previewDefensiveEvent(gameState, eventInput);
 
-  function changeEventType(nextType: DefensiveEventType) {
-    setEventType(nextType);
-    setOutsRecorded(defaultOutsForEvent(nextType));
-    setBasesAllowed(nextType === "EXTRA_BASES_ALLOWED" ? Math.max(1, basesAllowed) : basesAllowed);
-  }
-
-  function changeFielder(nextFielderId: string) {
-    defenderSelectionWasEdited.current = true;
-    setFielderId(nextFielderId);
-
-    const assignedPosition = getAssignedPositionForPlayer(alignment, nextFielderId);
-
-    if (assignedPosition) {
-      setPosition(assignedPosition);
-    }
-  }
-
-  function changePosition(nextPosition: DefensivePosition) {
-    defenderSelectionWasEdited.current = true;
-    setPosition(nextPosition);
-    setFielderId(getAssignedPlayerIdForPosition(alignment, nextPosition) ?? "");
-  }
-
-  function changeBallType(nextBallType: BallType | "") {
-    setBallType(nextBallType);
-
-    if (!nextBallType || defenderSelectionWasEdited.current) {
-      return;
-    }
-
-    const suggestedPosition = getSuggestedPositionForBallType(alignment, nextBallType);
-
-    setPosition(suggestedPosition);
-    setFielderId(getAssignedPlayerIdForPosition(alignment, suggestedPosition) ?? "");
-  }
-
-  function persistAlignment(nextAlignment = alignment) {
+  function persistAlignment(nextAlignment = context.alignment) {
     saveFirstGameState(saveDefensiveAlignment(gameState, nextAlignment));
   }
 
@@ -199,8 +164,7 @@ export function DefenseSection() {
 
     saveFirstGameState(nextState);
     router.replace(getLiveGameHref(nextState));
-    setNotes("");
-    defenderSelectionWasEdited.current = false;
+    eventForm.clearAfterSave();
   }
 
   function undo() {
@@ -216,92 +180,370 @@ export function DefenseSection() {
   }
 
   return (
+    <DefenseSectionLayout
+      activeTeamName={activeTeamName}
+      context={context}
+      eventForm={eventForm}
+      gameState={gameState}
+      previewSummary={preview.summary}
+      onEndGame={endCurrentGame}
+      onPersistAlignment={persistAlignment}
+      onSaveEvent={saveEvent}
+      onUndo={undo}
+    />
+  );
+}
+
+function DefenseSectionLayout({
+  activeTeamName,
+  context,
+  eventForm,
+  gameState,
+  previewSummary,
+  onEndGame,
+  onPersistAlignment,
+  onSaveEvent,
+  onUndo,
+}: {
+  activeTeamName: string;
+  context: DefenseSectionContext;
+  eventForm: DefensiveEventFormController;
+  gameState: ReturnType<typeof useFirstGameState>;
+  previewSummary: string;
+  onEndGame: () => void;
+  onPersistAlignment: (nextAlignment?: DefensiveAlignment) => void;
+  onSaveEvent: () => void;
+  onUndo: () => void;
+}) {
+  return (
     <section className="min-w-0 overflow-x-clip bg-background pb-28 pt-3 sm:pb-32">
       <LiveGameHeader
         activeMode="DEFENSE"
-        currentPhase={teamPhase}
+        currentPhase={context.teamPhase}
         gameState={gameState}
-        onEndGame={endCurrentGame}
-        teamName={activeTeam.name}
+        onEndGame={onEndGame}
+        teamName={activeTeamName}
       />
       <div className="mx-auto mt-3 w-full min-w-0 max-w-6xl px-3 sm:px-4 lg:px-6">
         <h1 className="sr-only">Live game defense</h1>
 
-        {!isFielding ? <QueuedDefenseNotice /> : null}
+        {!context.isFielding ? <QueuedDefenseNotice /> : null}
 
         <div className="mt-4 grid min-w-0 gap-4 lg:grid-cols-[0.9fr_1.1fr]">
           <DefensiveEventCard
-            effectiveFielderId={effectiveFielderId}
-            fielderOptions={fielderOptions}
-            handlers={{
-              changeEventType,
-              changeBallType,
-              changeFielder,
-              changePosition,
-              setMisplayType,
-              setMisplayResult,
-              setGreatPlayImpact,
-              setOutsRecorded,
-              setRunsAllowed,
-              setBasesAllowed,
-              setNotes,
-            }}
-            isFielding={isFielding}
-            previewSummary={preview.summary}
-            state={{
-              eventType,
-              position,
-              outsRecorded,
-              runsAllowed,
-              basesAllowed,
-              ballType,
-              misplayType,
-              misplayResult,
-              greatPlayImpact,
-              notes,
-            }}
+            effectiveFielderId={eventForm.draft.effectiveFielderId}
+            fielderOptions={gameState.lineup}
+            handlers={eventForm.handlers}
+            isFielding={context.isFielding}
+            previewSummary={previewSummary}
+            state={eventForm.state}
           />
 
           <DefensiveAlignmentCard
-            alignment={alignment}
-            alignmentHalf={alignmentHalf}
+            alignment={context.alignment}
+            alignmentHalf={context.alignmentHalf}
             lockedPitcherPlayerId={gameState.lockedPitcherPlayerId}
             players={gameState.lineup}
             priorAlignments={gameState.defensiveAlignments}
-            savedAlignment={savedAlignment}
-            onSaveAlignment={persistAlignment}
+            savedAlignment={context.savedAlignment}
+            onSaveAlignment={onPersistAlignment}
           />
         </div>
       </div>
 
       <DefenseActionBar
         canUndo={Boolean(gameState.history.length)}
-        isFielding={isFielding}
-        onSaveEvent={saveEvent}
-        onUndo={undo}
+        isFielding={context.isFielding}
+        onSaveEvent={onSaveEvent}
+        onUndo={onUndo}
       />
     </section>
   );
 }
 
+function getDefenseSectionContext(gameState: ReturnType<typeof useFirstGameState>): DefenseSectionContext {
+  const teamPhase = getCurrentTeamPhase(gameState);
+  const isFielding = teamPhase === "FIELDING";
+  const alignmentHalf = getDefenseAlignmentHalf(gameState, isFielding);
+
+  return {
+    alignment: getOrCreateDefensiveAlignmentForHalf(gameState, alignmentHalf.inning, alignmentHalf.half),
+    alignmentHalf,
+    isFielding,
+    savedAlignment: getDefensiveAlignmentForHalf(gameState, alignmentHalf.inning, alignmentHalf.half),
+    teamPhase,
+  };
+}
+
+function getDefenseAlignmentHalf(
+  gameState: ReturnType<typeof useFirstGameState>,
+  isFielding: boolean,
+): AlignmentHalf {
+  return isFielding
+    ? { inning: gameState.inning, half: gameState.half }
+    : getNextHalfInning(gameState.inning, gameState.half);
+}
+
+function useDefensiveEventForm(alignment: DefensiveAlignment): DefensiveEventFormController {
+  const [eventType, setEventType] = useState<DefensiveEventType>("ROUTINE_OUT");
+  const [fielderId, setFielderId] = useState("");
+  const [position, setPosition] = useState<DefensivePosition>("SS");
+  const [outsRecorded, setOutsRecorded] = useState(1);
+  const [runsAllowed, setRunsAllowed] = useState(0);
+  const [basesAllowed, setBasesAllowed] = useState(0);
+  const [ballType, setBallType] = useState<BallType | "">("");
+  const [misplayType, setMisplayType] = useState<MisplayType | "">("");
+  const [misplayResult, setMisplayResult] = useState<MisplayResult | "">("");
+  const [greatPlayImpact, setGreatPlayImpact] = useState<GreatPlayImpact | "">("");
+  const [notes, setNotes] = useState("");
+  const defenderSelectionWasEdited = useRef(false);
+
+  const state = {
+    ballType,
+    basesAllowed,
+    eventType,
+    greatPlayImpact,
+    misplayResult,
+    misplayType,
+    notes,
+    outsRecorded,
+    position,
+    runsAllowed,
+  };
+
+  const draft = {
+    ...state,
+    effectiveFielderId: getEffectiveFielderId(fielderId, alignment, position),
+  };
+
+  return {
+    clearAfterSave: () => clearDefensiveEventFormAfterSave({ defenderSelectionWasEdited, setNotes }),
+    draft,
+    handlers: {
+      changeBallType: (nextBallType) => changeDefensiveBallType({
+        alignment,
+        defenderSelectionWasEdited,
+        nextBallType,
+        setBallType,
+        setFielderId,
+        setPosition,
+      }),
+      changeEventType: (nextType) => changeDefensiveEventType({
+        basesAllowed,
+        nextType,
+        setBasesAllowed,
+        setEventType,
+        setOutsRecorded,
+      }),
+      changeFielder: (nextFielderId) => changeDefensiveFielder({
+        alignment,
+        defenderSelectionWasEdited,
+        nextFielderId,
+        setFielderId,
+        setPosition,
+      }),
+      changePosition: (nextPosition) => changeDefensivePosition({
+        alignment,
+        defenderSelectionWasEdited,
+        nextPosition,
+        setFielderId,
+        setPosition,
+      }),
+      setBasesAllowed,
+      setGreatPlayImpact,
+      setMisplayResult,
+      setMisplayType,
+      setNotes,
+      setOutsRecorded,
+      setRunsAllowed,
+    },
+    state,
+  };
+}
+
+function getEffectiveFielderId(
+  fielderId: string,
+  alignment: DefensiveAlignment,
+  position: DefensivePosition,
+) {
+  return fielderId || getAssignedPlayerIdForPosition(alignment, position) || "";
+}
+
+function changeDefensiveEventType({
+  basesAllowed,
+  nextType,
+  setBasesAllowed,
+  setEventType,
+  setOutsRecorded,
+}: {
+  basesAllowed: number;
+  nextType: DefensiveEventType;
+  setBasesAllowed: (basesAllowed: number) => void;
+  setEventType: (eventType: DefensiveEventType) => void;
+  setOutsRecorded: (outsRecorded: number) => void;
+}) {
+  setEventType(nextType);
+  setOutsRecorded(defaultOutsForEvent(nextType));
+  setBasesAllowed(getBasesAllowedForEventType(nextType, basesAllowed));
+}
+
+function getBasesAllowedForEventType(nextType: DefensiveEventType, basesAllowed: number) {
+  return nextType === "EXTRA_BASES_ALLOWED" ? Math.max(1, basesAllowed) : basesAllowed;
+}
+
+function changeDefensiveFielder({
+  alignment,
+  defenderSelectionWasEdited,
+  nextFielderId,
+  setFielderId,
+  setPosition,
+}: {
+  alignment: DefensiveAlignment;
+  defenderSelectionWasEdited: { current: boolean };
+  nextFielderId: string;
+  setFielderId: (fielderId: string) => void;
+  setPosition: (position: DefensivePosition) => void;
+}) {
+  defenderSelectionWasEdited.current = true;
+  setFielderId(nextFielderId);
+  setAssignedPositionForFielder(alignment, nextFielderId, setPosition);
+}
+
+function setAssignedPositionForFielder(
+  alignment: DefensiveAlignment,
+  nextFielderId: string,
+  setPosition: (position: DefensivePosition) => void,
+) {
+  const assignedPosition = getAssignedPositionForPlayer(alignment, nextFielderId);
+
+  if (assignedPosition) {
+    setPosition(assignedPosition);
+  }
+}
+
+function changeDefensivePosition({
+  alignment,
+  defenderSelectionWasEdited,
+  nextPosition,
+  setFielderId,
+  setPosition,
+}: {
+  alignment: DefensiveAlignment;
+  defenderSelectionWasEdited: { current: boolean };
+  nextPosition: DefensivePosition;
+  setFielderId: (fielderId: string) => void;
+  setPosition: (position: DefensivePosition) => void;
+}) {
+  defenderSelectionWasEdited.current = true;
+  setPosition(nextPosition);
+  setFielderId(getAssignedPlayerIdForPosition(alignment, nextPosition) ?? "");
+}
+
+function changeDefensiveBallType({
+  alignment,
+  defenderSelectionWasEdited,
+  nextBallType,
+  setBallType,
+  setFielderId,
+  setPosition,
+}: {
+  alignment: DefensiveAlignment;
+  defenderSelectionWasEdited: { current: boolean };
+  nextBallType: BallType | "";
+  setBallType: (ballType: BallType | "") => void;
+  setFielderId: (fielderId: string) => void;
+  setPosition: (position: DefensivePosition) => void;
+}) {
+  setBallType(nextBallType);
+
+  if (shouldKeepEditedDefender(nextBallType, defenderSelectionWasEdited.current)) {
+    return;
+  }
+
+  setSuggestedFielderForBallType({ alignment, nextBallType: nextBallType as BallType, setFielderId, setPosition });
+}
+
+function shouldKeepEditedDefender(nextBallType: BallType | "", wasEdited: boolean) {
+  return !nextBallType || wasEdited;
+}
+
+function setSuggestedFielderForBallType({
+  alignment,
+  nextBallType,
+  setFielderId,
+  setPosition,
+}: {
+  alignment: DefensiveAlignment;
+  nextBallType: BallType;
+  setFielderId: (fielderId: string) => void;
+  setPosition: (position: DefensivePosition) => void;
+}) {
+  const suggestedPosition = getSuggestedPositionForBallType(alignment, nextBallType);
+
+  setPosition(suggestedPosition);
+  setFielderId(getAssignedPlayerIdForPosition(alignment, suggestedPosition) ?? "");
+}
+
+function clearDefensiveEventFormAfterSave({
+  defenderSelectionWasEdited,
+  setNotes,
+}: {
+  defenderSelectionWasEdited: { current: boolean };
+  setNotes: (notes: string) => void;
+}) {
+  setNotes("");
+  defenderSelectionWasEdited.current = false;
+}
+
 function buildDefensiveEventInput(draft: DefensiveEventDraft): DefensiveEventInput {
-  const tracksFielder = draft.eventType !== "HIT_NO_PLAY";
-  const hasFielder = tracksFielder && Boolean(draft.effectiveFielderId);
+  const fielderId = getDefensiveEventFielderId(draft);
 
   return {
     type: draft.eventType,
-    fielderId: tracksFielder ? draft.effectiveFielderId : undefined,
+    fielderId,
     position: draft.position,
     outsRecorded: draft.outsRecorded,
     runsAllowed: draft.runsAllowed,
     basesAllowed: draft.basesAllowed,
-    ballType: draft.ballType || undefined,
-    misplayType: draft.eventType === "MISPLAY" && draft.misplayType ? draft.misplayType : undefined,
-    misplayResult: draft.eventType === "MISPLAY" && draft.misplayResult ? draft.misplayResult : undefined,
-    greatPlayImpact: draft.eventType === "GREAT_PLAY" && draft.greatPlayImpact ? draft.greatPlayImpact : undefined,
-    involvedPlayerIds: hasFielder ? [draft.effectiveFielderId] : [],
+    ballType: optionalDefenseField(draft.ballType),
+    misplayType: getMisplayField(draft.eventType, draft.misplayType),
+    misplayResult: getMisplayField(draft.eventType, draft.misplayResult),
+    greatPlayImpact: getGreatPlayImpactField(draft),
+    involvedPlayerIds: getDefensiveEventInvolvedPlayers(fielderId),
     notes: draft.notes,
   };
+}
+
+function getDefensiveEventFielderId(draft: DefensiveEventDraft) {
+  if (draft.eventType === "HIT_NO_PLAY") {
+    return undefined;
+  }
+
+  return optionalDefenseField(draft.effectiveFielderId);
+}
+
+function optionalDefenseField<T>(value: T | "") {
+  return value || undefined;
+}
+
+function getMisplayField<T>(eventType: DefensiveEventType, value: T | "") {
+  if (eventType !== "MISPLAY") {
+    return undefined;
+  }
+
+  return optionalDefenseField(value);
+}
+
+function getGreatPlayImpactField(draft: DefensiveEventDraft) {
+  if (draft.eventType !== "GREAT_PLAY") {
+    return undefined;
+  }
+
+  return optionalDefenseField(draft.greatPlayImpact);
+}
+
+function getDefensiveEventInvolvedPlayers(fielderId: string | undefined) {
+  return fielderId ? [fielderId] : [];
 }
 
 function QueuedDefenseNotice() {

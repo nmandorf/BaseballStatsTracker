@@ -45,9 +45,17 @@ export type SuggestedLineupResolution = {
 type SuggestedLineupOptions = LineupRecommendationOptions & {
   useSavedGeneratedLineup?: boolean;
 };
+type ScheduledGame = Extract<ScheduleWeek, { kind: "GAME" }>;
+type ScheduledGamePreparationStatus = ScheduledGame["preparationStatus"];
 
 const storageKey = "baseball-tracker:pregame-setup-by-game:v2";
 const storageEventName = "baseball-tracker:pregame-setup-updated";
+const setupStatusBySchedulePreparationStatus: Record<ScheduledGamePreparationStatus, PregameSetupStatus> = {
+  ACCEPTED: "ACCEPTED",
+  GENERATED: "GENERATED",
+  SETUP: "SETUP",
+  STARTED: "SETUP",
+};
 
 const defaultSetup: PregameSetup = {
   gameId: null,
@@ -88,37 +96,23 @@ function loadPregameSetup(): PregameSetup {
   }
 
   const raw = window.localStorage.getItem(storageKey);
-  const activeTeam = loadActiveTeam();
-  const activeTeamId = activeTeam?.id ?? null;
-  const selectedGameId = activeTeamId ? loadSelectedScheduledGameId(activeTeamId) : null;
+  const context = getPregameSetupContext();
 
-  if (raw === cachedRaw && activeTeamId === cachedTeamId && selectedGameId === cachedGameId && cachedSetup) {
-    return cachedSetup;
+  const cachedPregameSetup = getCachedPregameSetup(raw, context.activeTeamId, context.selectedGameId);
+
+  if (cachedPregameSetup) {
+    return cachedPregameSetup;
   }
 
+  return cachePregameSetup(raw, context, getPregameSetupFromStorage(raw, context));
+}
+
+function getPregameSetupFromStorage(raw: string | null, context: PregameSetupContext) {
   if (!raw) {
-    cachedRaw = raw;
-    cachedTeamId = activeTeamId;
-    cachedGameId = selectedGameId;
-    cachedSetup = createDefaultPregameSetup(activeTeam ?? undefined);
-    return cachedSetup;
+    return createDefaultPregameSetup(context.activeTeam ?? undefined);
   }
 
-  try {
-    const parsed = JSON.parse(raw) as Record<string, PregameSetup>;
-    cachedRaw = raw;
-    cachedTeamId = activeTeamId;
-    cachedGameId = selectedGameId;
-    const storedSetup = selectedGameId ? parsed[selectedGameId] ?? { gameId: selectedGameId } : parsed.unscheduled ?? {};
-    cachedSetup = normalizePregameSetup(storedSetup, activeTeam ?? undefined);
-    return cachedSetup;
-  } catch {
-    cachedRaw = raw;
-    cachedTeamId = activeTeamId;
-    cachedGameId = selectedGameId;
-    cachedSetup = createDefaultPregameSetup(activeTeam ?? undefined);
-    return cachedSetup;
-  }
+  return readStoredPregameSetup(raw, context);
 }
 
 export function savePregameSetup(setup: PregameSetup, options: { sync?: boolean } = {}) {
@@ -126,35 +120,40 @@ export function savePregameSetup(setup: PregameSetup, options: { sync?: boolean 
     return;
   }
 
-  const nextSetup = normalizePregameSetup({
+  const nextSetup = createSavedPregameSetup(setup);
+
+  writePregameSetupToBrowser(nextSetup);
+
+  if (shouldSyncPregameSetup(nextSetup, options)) {
+    queuePregameSetupSync(nextSetup);
+  }
+}
+
+function createSavedPregameSetup(setup: PregameSetup) {
+  return normalizePregameSetup({
     ...setup,
     updatedAt: new Date().toISOString(),
   }, loadActiveTeam() ?? undefined);
-  let setups: Record<string, PregameSetup> = {};
-  try { setups = JSON.parse(window.localStorage.getItem(storageKey) ?? "{}"); } catch { /* replace malformed storage */ }
-  const gameKey = nextSetup.gameId ?? "unscheduled";
-  const raw = JSON.stringify({ ...setups, [gameKey]: nextSetup });
+}
+
+function writePregameSetupToBrowser(setup: PregameSetup) {
+  const raw = serializePregameSetupMap(setup);
 
   cachedRaw = raw;
   cachedTeamId = loadActiveTeam()?.id ?? null;
-  cachedGameId = nextSetup.gameId;
-  cachedSetup = nextSetup;
+  cachedGameId = setup.gameId;
+  cachedSetup = setup;
   window.localStorage.setItem(storageKey, raw);
   window.dispatchEvent(new Event(storageEventName));
+}
 
-  if (options.sync !== false && nextSetup.gameId && nextSetup.status !== "STARTED") {
-    preparationSyncQueue = preparationSyncQueue
-      .catch(() => undefined)
-      .then(async () => fetch(`/api/games/${encodeURIComponent(nextSetup.gameId!)}/preparation`, {
-        method: "PUT",
-        headers: await getVerifiedTeamAccountHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify(nextSetup),
-      }))
-      .then(() => undefined)
-      .catch(() => {
-        // Keep the game-scoped local preparation available; start still requires server confirmation.
-      });
-  }
+function serializePregameSetupMap(setup: PregameSetup) {
+  const setups = readPregameSetupMap(window.localStorage.getItem(storageKey));
+  return JSON.stringify({ ...setups, [getPregameSetupStorageKey(setup)]: setup });
+}
+
+function getPregameSetupStorageKey(setup: PregameSetup) {
+  return setup.gameId ?? "unscheduled";
 }
 
 function subscribePregameSetup(onStoreChange: () => void) {
@@ -173,7 +172,7 @@ function subscribePregameSetup(onStoreChange: () => void) {
   };
 }
 
-export function selectScheduledGameForPregame(teamId: string, game: Extract<ScheduleWeek, { kind: "GAME" }>, activeTeam?: ActiveTeam | null) {
+export function selectScheduledGameForPregame(teamId: string, game: ScheduledGame, activeTeam?: ActiveTeam | null) {
   saveSelectedScheduledGameId(teamId, game.gameId);
   const existing = loadPregameSetup();
   const setup = existing.gameId === game.gameId ? existing : createDefaultPregameSetup(activeTeam);
@@ -182,7 +181,7 @@ export function selectScheduledGameForPregame(teamId: string, game: Extract<Sche
     gameId: game.gameId,
     opponent: game.opponent,
     isHome: game.isHome,
-    status: game.preparationStatus === "ACCEPTED" ? "ACCEPTED" : game.preparationStatus === "GENERATED" ? "GENERATED" : "SETUP",
+    status: getSetupStatusFromScheduledGame(game),
   }, { sync: false });
 
   void getVerifiedTeamAccountHeaders().then((headers) => fetch(`/api/games/${encodeURIComponent(game.gameId)}/preparation`, {
@@ -195,6 +194,113 @@ export function selectScheduledGameForPregame(teamId: string, game: Extract<Sche
   }).catch(() => {
     // The game-scoped local copy remains available; starting still requires the backend.
   });
+}
+
+function getCachedPregameSetup(raw: string | null, activeTeamId: string | null, selectedGameId: string | null) {
+  if (!isPregameSetupCacheKey(raw, activeTeamId, selectedGameId)) {
+    return null;
+  }
+
+  return cachedSetup ?? null;
+}
+
+function isPregameSetupCacheKey(raw: string | null, activeTeamId: string | null, selectedGameId: string | null) {
+  return raw === cachedRaw && activeTeamId === cachedTeamId && selectedGameId === cachedGameId;
+}
+
+type PregameSetupContext = {
+  activeTeam: ActiveTeam | null;
+  activeTeamId: string | null;
+  selectedGameId: string | null;
+};
+
+function getPregameSetupContext(): PregameSetupContext {
+  const activeTeam = loadActiveTeam();
+  const activeTeamId = activeTeam?.id ?? null;
+
+  return {
+    activeTeam,
+    activeTeamId,
+    selectedGameId: activeTeamId ? loadSelectedScheduledGameId(activeTeamId) : null,
+  };
+}
+
+function readStoredPregameSetup(raw: string, context: PregameSetupContext) {
+  const parsed = parsePregameSetupMap(raw);
+
+  if (!parsed) {
+    return createDefaultPregameSetup(context.activeTeam ?? undefined);
+  }
+
+  return normalizePregameSetup(
+    getStoredSetupForSelectedGame(parsed, context.selectedGameId),
+    context.activeTeam ?? undefined,
+  );
+}
+
+function getStoredSetupForSelectedGame(
+  setups: Record<string, Partial<PregameSetup>>,
+  selectedGameId: string | null,
+) {
+  if (!selectedGameId) {
+    return setups.unscheduled ?? {};
+  }
+
+  return setups[selectedGameId] ?? { gameId: selectedGameId };
+}
+
+function readPregameSetupMap(raw: string | null): Record<string, Partial<PregameSetup>> {
+  if (!raw) {
+    return {};
+  }
+
+  return parsePregameSetupMap(raw) ?? {};
+}
+
+function parsePregameSetupMap(raw: string): Record<string, Partial<PregameSetup>> | null {
+  try {
+    return JSON.parse(raw) as Record<string, Partial<PregameSetup>>;
+  } catch {
+    return null;
+  }
+}
+
+function cachePregameSetup(raw: string | null, context: PregameSetupContext, setup: PregameSetup) {
+  cachedRaw = raw;
+  cachedTeamId = context.activeTeamId;
+  cachedGameId = context.selectedGameId;
+  cachedSetup = setup;
+  return setup;
+}
+
+function shouldSyncPregameSetup(setup: PregameSetup, options: { sync?: boolean }) {
+  return options.sync !== false && Boolean(setup.gameId) && setup.status !== "STARTED";
+}
+
+function queuePregameSetupSync(setup: PregameSetup) {
+  preparationSyncQueue = preparationSyncQueue
+    .catch(() => undefined)
+    .then(() => savePregameSetupToBackend(setup))
+    .then(() => undefined)
+    .catch(() => {
+      // Keep the game-scoped local preparation available; start still requires server confirmation.
+    });
+}
+
+async function savePregameSetupToBackend(setup: PregameSetup) {
+  if (!setup.gameId) {
+    return;
+  }
+
+  await fetch(`/api/games/${encodeURIComponent(setup.gameId)}/preparation`, {
+    method: "PUT",
+    headers: await getVerifiedTeamAccountHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(setup),
+  });
+}
+
+function getSetupStatusFromScheduledGame(game: ScheduledGame) {
+  return setupStatusBySchedulePreparationStatus[game.preparationStatus];
 }
 
 function getPregameSetupServerSnapshot() {
@@ -268,17 +374,19 @@ export function isStartingDefenseSavedForFirstFieldingHalf(
     return false;
   }
 
-  if (
-    savedAlignment.inning !== firstDefensiveHalf.inning ||
-    savedAlignment.half !== firstDefensiveHalf.half ||
-    currentAlignment.inning !== firstDefensiveHalf.inning ||
-    currentAlignment.half !== firstDefensiveHalf.half
-  ) {
-    return false;
-  }
+  return [
+    isAlignmentForFieldingHalf(savedAlignment, firstDefensiveHalf),
+    isAlignmentForFieldingHalf(currentAlignment, firstDefensiveHalf),
+    defensiveSlotsMatch(savedAlignment, currentAlignment),
+    unorderedIdsMatch(savedAlignment.benchPlayerIds, currentAlignment.benchPlayerIds),
+  ].every(Boolean);
+}
 
-  return defensiveSlotsMatch(savedAlignment, currentAlignment)
-    && unorderedIdsMatch(savedAlignment.benchPlayerIds, currentAlignment.benchPlayerIds);
+function isAlignmentForFieldingHalf(
+  alignment: DefensiveAlignment,
+  fieldingHalf: Pick<DefensiveAlignment, "inning" | "half">,
+) {
+  return alignment.inning === fieldingHalf.inning && alignment.half === fieldingHalf.half;
 }
 
 export function resolveSuggestedLineupIds(
@@ -288,58 +396,80 @@ export function resolveSuggestedLineupIds(
 ): SuggestedLineupResolution {
   const pool = buildPregamePlayerPool(setup, activeTeam);
   const validation = validateLineupPlayerPool(pool);
+  const unavailableResolution = getUnavailableLineupResolution(pool, validation);
 
+  if (unavailableResolution) return unavailableResolution;
+
+  const generatedLineupIds = generateLineupIds(setup, activeTeam, options);
+  const savedGeneratedLineupIds = resolveOptionalSavedGeneratedLineupIds(setup, pool, options);
+  const lineupIds = savedGeneratedLineupIds.length ? savedGeneratedLineupIds : generatedLineupIds;
+
+  return getAvailableLineupResolution(lineupIds);
+}
+
+function getUnavailableLineupResolution(
+  pool: Player[],
+  validation: ReturnType<typeof validateLineupPlayerPool>,
+) {
   if (!pool.length) {
-    return {
-      lineupIds: [],
-      canGenerate: false,
-      emptyReason: "Select active players in Game Setup before reviewing the order.",
-      warnings: validation.warnings,
-    };
+    return createLineupResolution(
+      [],
+      false,
+      "Select active players in Game Setup before reviewing the order.",
+      validation.warnings,
+    );
   }
 
   if (!validation.isLeagueCompliant) {
-    return {
-      lineupIds: [],
-      canGenerate: false,
-      emptyReason: "Update the selected player pool before generating a lineup.",
-      warnings: validation.warnings,
-    };
+    return createLineupResolution(
+      [],
+      false,
+      "Update the selected player pool before generating a lineup.",
+      validation.warnings,
+    );
   }
 
-  const generatedLineupIds = generateLineupIds(setup, activeTeam, options);
-  const savedGeneratedLineupIds = options.useSavedGeneratedLineup === false
-    ? []
-    : resolveSavedGeneratedLineupIds(
-        setup.generatedLineupIds,
-        pool,
-        getLineupTargetCount(setup.lineupSize, pool.length),
-      );
-  const lineupIds = savedGeneratedLineupIds.length ? savedGeneratedLineupIds : generatedLineupIds;
+  return null;
+}
 
-  if (!lineupIds.length) {
-    return {
-      lineupIds: [],
-      canGenerate: true,
-      emptyReason: "Generate the lineup from today's selected players.",
-      warnings: [],
-    };
-  }
+function getAvailableLineupResolution(lineupIds: string[]) {
+  return lineupIds.length
+    ? createLineupResolution(lineupIds, true, null, [])
+    : createLineupResolution([], true, "Generate the lineup from today's selected players.", []);
+}
 
+function createLineupResolution(
+  lineupIds: string[],
+  canGenerate: boolean,
+  emptyReason: string | null,
+  warnings: string[],
+): SuggestedLineupResolution {
   return {
     lineupIds,
-    canGenerate: true,
-    emptyReason: null,
-    warnings: [],
+    canGenerate,
+    emptyReason,
+    warnings,
   };
 }
 
-export function resolveLineupPlayers(lineupIds: string[], activeTeam: ActiveTeam | null) {
-  const playersById = new Map(buildRosterPlayers(activeTeam?.players ?? []).map((player) => [player.id, player]));
+function resolveOptionalSavedGeneratedLineupIds(
+  setup: PregameSetup,
+  pool: Player[],
+  options: SuggestedLineupOptions,
+) {
+  if (options.useSavedGeneratedLineup === false) {
+    return [];
+  }
 
-  return lineupIds
-    .map((playerId) => playersById.get(playerId))
-    .filter((player): player is Player => Boolean(player));
+  return resolveSavedGeneratedLineupIds(
+    setup.generatedLineupIds,
+    pool,
+    getLineupTargetCount(setup.lineupSize, pool.length),
+  );
+}
+
+export function resolveLineupPlayers(lineupIds: string[], activeTeam: ActiveTeam | null) {
+  return resolveLineupFromPool(lineupIds, buildRosterPlayers(activeTeam?.players ?? []));
 }
 
 function resolveSavedGeneratedLineupIds(lineupIds: string[], pool: Player[], targetCount: number) {
@@ -347,20 +477,28 @@ function resolveSavedGeneratedLineupIds(lineupIds: string[], pool: Player[], tar
     return [];
   }
 
+  const savedLineup = resolveLineupFromPool(lineupIds, pool);
+
+  if (!isSavedLineupUsable(savedLineup, targetCount)) {
+    return [];
+  }
+
+  return isLineupGenderOptimized(savedLineup) ? lineupIds : [];
+}
+
+function resolveLineupFromPool(lineupIds: string[], pool: Player[]) {
   const playersById = new Map(pool.map((player) => [player.id, player]));
-  const savedLineup = lineupIds
+
+  return lineupIds
     .map((playerId) => playersById.get(playerId))
     .filter((player): player is Player => Boolean(player));
+}
 
-  if (savedLineup.length !== targetCount || !validateLineupGenderRules(savedLineup).isLeagueCompliant) {
-    return [];
-  }
-
-  if (!isLineupGenderOptimized(savedLineup)) {
-    return [];
-  }
-
-  return lineupIds;
+function isSavedLineupUsable(savedLineup: Player[], targetCount: number) {
+  return [
+    savedLineup.length === targetCount,
+    validateLineupGenderRules(savedLineup).isLeagueCompliant,
+  ].every(Boolean);
 }
 
 function selectTargetLineupPlayers(recommendedPlayers: Player[], targetCount: number) {
@@ -389,12 +527,20 @@ function needsMaleIncludedForFemaleLeadoffWraparound(
   recommendedPlayers: Player[],
   targetCount: number,
 ) {
-  return (
-    targetLineupPlayers.length > 1 &&
-    targetLineupPlayers[0]?.gender === "Female" &&
-    !targetLineupPlayers.some((player, index) => index > 0 && player.gender === "Male") &&
-    recommendedPlayers.slice(targetCount).some((player) => player.gender === "Male")
-  );
+  return [
+    targetLineupPlayers.length > 1,
+    targetLineupPlayers[0]?.gender === "Female",
+    !hasMaleAfterLeadoff(targetLineupPlayers),
+    hasMaleAfterTargetCount(recommendedPlayers, targetCount),
+  ].every(Boolean);
+}
+
+function hasMaleAfterLeadoff(players: Player[]) {
+  return players.some((player, index) => index > 0 && player.gender === "Male");
+}
+
+function hasMaleAfterTargetCount(players: Player[], targetCount: number) {
+  return players.slice(targetCount).some((player) => player.gender === "Male");
 }
 
 function findFinalNonMaleReplacementIndex(players: Player[]) {
@@ -420,18 +566,15 @@ function defensiveSlotsMatch(left: DefensiveAlignment, right: DefensiveAlignment
     ...Object.keys(right.slots),
   ]);
 
-  for (const position of positions) {
+  return Array.from(positions).every((position) => {
     const leftSlot = left.slots[position as keyof DefensiveAlignment["slots"]];
     const rightSlot = right.slots[position as keyof DefensiveAlignment["slots"]];
-    const leftPlayerId = leftSlot?.status === "ASSIGNED" ? leftSlot.playerId : null;
-    const rightPlayerId = rightSlot?.status === "ASSIGNED" ? rightSlot.playerId : null;
+    return getAssignedPlayerId(leftSlot) === getAssignedPlayerId(rightSlot);
+  });
+}
 
-    if (leftPlayerId !== rightPlayerId) {
-      return false;
-    }
-  }
-
-  return true;
+function getAssignedPlayerId(slot: DefensiveAlignment["slots"][keyof DefensiveAlignment["slots"]] | undefined) {
+  return slot?.status === "ASSIGNED" ? slot.playerId : null;
 }
 
 function unorderedIdsMatch(left: string[], right: string[]) {
@@ -453,32 +596,58 @@ export function getLineupTargetCount(lineupSize: LineupSizeOption, selectedCount
 
 function normalizePregameSetup(setup: Partial<PregameSetup>, activeTeam?: ActiveTeam): PregameSetup {
   const fallback = createDefaultPregameSetup(activeTeam);
-  const playerIds = new Set((activeTeam?.players ?? []).map((player) => player.id));
-  const selectedPlayerIds = Array.isArray(setup.selectedPlayerIds)
-    ? setup.selectedPlayerIds.filter((id) => playerIds.has(id))
-    : fallback.selectedPlayerIds;
-  const generatedLineupIds = Array.isArray(setup.generatedLineupIds)
-    ? setup.generatedLineupIds.filter((id) => playerIds.has(id))
-    : [];
-  const acceptedLineupIds = Array.isArray(setup.acceptedLineupIds)
-    ? setup.acceptedLineupIds.filter((id) => playerIds.has(id))
-    : [];
+  const validPlayerIds = new Set((activeTeam?.players ?? []).map((player) => player.id));
 
   return {
-    gameId: typeof setup.gameId === "string" ? setup.gameId : fallback.gameId,
-    opponent: typeof setup.opponent === "string" ? setup.opponent : fallback.opponent,
-    isHome: typeof setup.isHome === "boolean" ? setup.isHome : fallback.isHome,
-    lineupSize: isLineupSize(setup.lineupSize) ? setup.lineupSize : fallback.lineupSize,
-    selectedPlayerIds,
-    generatedLineupIds,
-    acceptedLineupIds,
+    gameId: getOptionalSetupString(setup.gameId, fallback.gameId),
+    opponent: getSetupString(setup.opponent, fallback.opponent),
+    isHome: getSetupBoolean(setup.isHome, fallback.isHome),
+    lineupSize: getSetupLineupSize(setup.lineupSize, fallback.lineupSize),
+    selectedPlayerIds: normalizeSetupPlayerIds(setup.selectedPlayerIds, validPlayerIds, fallback.selectedPlayerIds),
+    generatedLineupIds: normalizeSetupPlayerIds(setup.generatedLineupIds, validPlayerIds, []),
+    acceptedLineupIds: normalizeSetupPlayerIds(setup.acceptedLineupIds, validPlayerIds, []),
     gameRules: normalizeGameRules(setup.gameRules),
-    startingDefense: setup.startingDefense && typeof setup.startingDefense === "object" ? setup.startingDefense : null,
-    status: isPregameStatus(setup.status) ? setup.status : fallback.status,
-    updatedAt: typeof setup.updatedAt === "string" ? setup.updatedAt : null,
+    startingDefense: normalizeStartingDefense(setup.startingDefense),
+    status: getSetupStatus(setup.status, fallback.status),
+    updatedAt: getOptionalSetupString(setup.updatedAt, null),
   };
 }
 
+function getSetupLineupSize(lineupSize: unknown, fallback: LineupSizeOption) {
+  return isLineupSize(lineupSize) ? lineupSize : fallback;
+}
+
+function getSetupStatus(status: unknown, fallback: PregameSetup["status"]) {
+  return isPregameStatus(status) ? status : fallback;
+}
+
+function normalizeSetupPlayerIds(
+  playerIds: unknown,
+  validPlayerIds: Set<string>,
+  fallback: string[],
+) {
+  return Array.isArray(playerIds)
+    ? playerIds.filter((id) => validPlayerIds.has(id))
+    : fallback;
+}
+
+function normalizeStartingDefense(startingDefense: unknown) {
+  return startingDefense && typeof startingDefense === "object"
+    ? startingDefense as DefensiveAlignment
+    : null;
+}
+
+function getSetupString(value: unknown, fallback: string) {
+  return typeof value === "string" ? value : fallback;
+}
+
+function getOptionalSetupString<T extends string | null>(value: unknown, fallback: T) {
+  return typeof value === "string" ? value : fallback;
+}
+
+function getSetupBoolean(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
+}
 
 function isLineupSize(value: unknown): value is LineupSizeOption {
   return value === "9" || value === "10" || value === "11" || value === "Everyone";

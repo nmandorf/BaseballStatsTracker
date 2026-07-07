@@ -57,9 +57,21 @@ function ScoreValue({ label, value }: { label: string; value: number }) {
 function ordinalInning(inning: number) {
   const modTen = inning % 10;
   const modHundred = inning % 100;
+  const suffix = getOrdinalSuffix(modTen, modHundred);
 
-  if (modTen === 1 && modHundred !== 11) return `${inning}st`;
-  if (modTen === 2 && modHundred !== 12) return `${inning}nd`;
-  if (modTen === 3 && modHundred !== 13) return `${inning}rd`;
-  return `${inning}th`;
+  return `${inning}${suffix}`;
+}
+
+const ordinalSuffixes: Record<number, string> = {
+  1: "st",
+  2: "nd",
+  3: "rd",
+};
+
+function getOrdinalSuffix(modTen: number, modHundred: number) {
+  return isTeenOrdinal(modHundred) ? "th" : ordinalSuffixes[modTen] ?? "th";
+}
+
+function isTeenOrdinal(modHundred: number) {
+  return modHundred >= 11 && modHundred <= 13;
 }

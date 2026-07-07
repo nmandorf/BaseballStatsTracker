@@ -165,14 +165,23 @@ type CreateInitialGameStateOptions = {
   gameRules?: GameRules;
 };
 
-export function createInitialGameState(lineup: Player[], options: CreateInitialGameStateOptions = {}): GameState {
+export function createInitialGameState(
+  lineup: Player[],
+  {
+    gameId,
+    opponent = "Opponent",
+    isHome = false,
+    status = "PREGAME",
+    gameRules = defaultGameRules,
+  }: CreateInitialGameStateOptions = {},
+): GameState {
   return {
-    gameId: options.gameId ?? null,
-    status: options.status ?? "PREGAME",
+    gameId: normalizeInitialGameId(gameId),
+    status,
     endedAt: null,
-    opponent: options.opponent ?? "Opponent",
-    isHome: options.isHome ?? false,
-    gameRules: options.gameRules ?? defaultGameRules,
+    opponent,
+    isHome,
+    gameRules,
     lineup,
     currentBatterIndex: 0,
     inning: 1,
@@ -189,6 +198,10 @@ export function createInitialGameState(lineup: Player[], options: CreateInitialG
     history: [],
     lastSummary: "First game of the season. All player stats start at zero.",
   };
+}
+
+function normalizeInitialGameId(gameId: string | undefined) {
+  return gameId ?? null;
 }
 
 function createEmptyBases(): BasesState {
@@ -331,21 +344,19 @@ export function updatePlayerSeasonStatsBaseline(
 }
 
 export function getCompletedGameHistory(source: GameState | GameState[]): CompletedGameSummary[] {
-  const completedGames = Array.isArray(source)
-    ? source.filter((game) => game.status === "FINAL")
-    : source.status === "FINAL"
-      ? [source]
-      : [];
-
-  return completedGames.map((game) => getCompletedGameSummary(game));
+  return getCompletedGames(source).map((game) => getCompletedGameSummary(game));
 }
 
 export function getCompletedGameById(source: GameState | GameState[], gameId: string) {
+  return getCompletedGames(source).find((game) => getCompletedGameId(game) === gameId) ?? null;
+}
+
+function getCompletedGames(source: GameState | GameState[]) {
   if (Array.isArray(source)) {
-    return source.find((game) => game.status === "FINAL" && getCompletedGameId(game) === gameId) ?? null;
+    return source.filter((game) => game.status === "FINAL");
   }
 
-  return source.status === "FINAL" && getCompletedGameId(source) === gameId ? source : null;
+  return source.status === "FINAL" ? [source] : [];
 }
 
 export function upsertCompletedGame(games: GameState[], game: GameState): GameState[] {
@@ -383,23 +394,35 @@ export function occupiedBaseEntries(bases: BasesState): Array<readonly [BaseLabe
 }
 
 export function getResultLockReason(result: BatterResult, bases: BasesState, outs: number): string | null {
-  const hasRunner = Boolean(bases.first || bases.second || bases.third);
+  return resultLockChecks[result]?.(bases, outs) ?? null;
+}
 
-  if (result === "SF") {
-    if (!bases.third) return "Sac fly needs a runner on 3B";
-    if (outs >= 2) return "Sac fly needs fewer than 2 outs";
-  }
+type ResultLockCheck = (bases: BasesState, outs: number) => string | null;
 
-  if (result === "DP") {
-    if (!hasRunner) return "Double play needs a runner on base";
-    if (outs >= 2) return "Double play needs fewer than 2 outs";
-  }
+const resultLockChecks: Partial<Record<BatterResult, ResultLockCheck>> = {
+  SF: getSacFlyLockReason,
+  DP: getDoublePlayLockReason,
+  FC: getFieldersChoiceLockReason,
+};
 
-  if (result === "FC" && !hasRunner) {
-    return "Fielder's choice needs a runner on base";
-  }
-
+function getSacFlyLockReason(bases: BasesState, outs: number) {
+  if (!bases.third) return "Sac fly needs a runner on 3B";
+  if (outs >= 2) return "Sac fly needs fewer than 2 outs";
   return null;
+}
+
+function getDoublePlayLockReason(bases: BasesState, outs: number) {
+  if (!hasAnyRunner(bases)) return "Double play needs a runner on base";
+  if (outs >= 2) return "Double play needs fewer than 2 outs";
+  return null;
+}
+
+function getFieldersChoiceLockReason(bases: BasesState) {
+  return hasAnyRunner(bases) ? null : "Fielder's choice needs a runner on base";
+}
+
+function hasAnyRunner(bases: BasesState) {
+  return Boolean(bases.first || bases.second || bases.third);
 }
 
 export function createDefaultMovements(result: BatterResult, bases: BasesState): MovementSelections {
@@ -434,45 +457,23 @@ function applyDefaultMovementForResult(
   occupiedBases: OccupiedBaseFlags,
   movements: MovementSelections,
 ) {
-  if (result === "1B") {
-    applySingleMovement(occupiedBases, movements);
-    return;
-  }
-
-  if (result === "2B") {
-    applyDoubleMovement(occupiedBases, movements);
-    return;
-  }
-
-  if (result === "3B" || result === "HR") {
-    scoreAllOccupiedRunners(occupiedBases, movements);
-    return;
-  }
-
-  if (result === "BB") {
-    applyWalkMovement(occupiedBases, movements);
-    return;
-  }
-
-  if (result === "ROE") {
-    applyReachedOnErrorMovement(occupiedBases, movements);
-    return;
-  }
-
-  if (result === "FC") {
-    applyFieldersChoiceMovement(occupiedBases, movements);
-    return;
-  }
-
-  if (result === "SF") {
-    applySacFlyMovement(occupiedBases, movements);
-    return;
-  }
-
-  if (result === "DP") {
-    applyDoublePlayMovement(occupiedBases, movements);
-  }
+  defaultMovementAppliers[result]?.(occupiedBases, movements);
 }
+
+const defaultMovementAppliers: Partial<Record<
+  BatterResult,
+  (occupiedBases: OccupiedBaseFlags, movements: MovementSelections) => void
+>> = {
+  "1B": applySingleMovement,
+  "2B": applyDoubleMovement,
+  "3B": scoreAllOccupiedRunners,
+  HR: scoreAllOccupiedRunners,
+  BB: applyWalkMovement,
+  ROE: applyReachedOnErrorMovement,
+  FC: applyFieldersChoiceMovement,
+  SF: applySacFlyMovement,
+  DP: applyDoublePlayMovement,
+};
 
 function applySingleMovement(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
   if (occupiedBases.hasFirst) movements["1B"] = "2B";
@@ -493,9 +494,25 @@ function scoreAllOccupiedRunners(occupiedBases: OccupiedBaseFlags, movements: Mo
 }
 
 function applyWalkMovement(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
-  if (occupiedBases.hasFirst) movements["1B"] = "2B";
-  if (occupiedBases.hasFirst && occupiedBases.hasSecond) movements["2B"] = "3B";
-  if (occupiedBases.hasFirst && occupiedBases.hasSecond && occupiedBases.hasThird) movements["3B"] = "Scores";
+  if (!occupiedBases.hasFirst) {
+    return;
+  }
+
+  movements["1B"] = "2B";
+  applyForcedWalkFromSecond(occupiedBases, movements);
+}
+
+function applyForcedWalkFromSecond(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
+  if (!occupiedBases.hasSecond) {
+    return;
+  }
+
+  movements["2B"] = "3B";
+  applyForcedWalkFromThird(occupiedBases, movements);
+}
+
+function applyForcedWalkFromThird(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
+  if (occupiedBases.hasThird) movements["3B"] = "Scores";
 }
 
 function applyReachedOnErrorMovement(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
@@ -505,17 +522,25 @@ function applyReachedOnErrorMovement(occupiedBases: OccupiedBaseFlags, movements
 }
 
 function applyFieldersChoiceMovement(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
-  if (occupiedBases.hasThird && occupiedBases.hasSecond && occupiedBases.hasFirst) {
-    movements["3B"] = "Out";
-    movements["2B"] = "3B";
-    movements["1B"] = "2B";
+  if (areBasesLoaded(occupiedBases)) {
+    applyBasesLoadedFieldersChoice(movements);
     return;
   }
 
-  if (!occupiedBases.hasFirst) {
-    return;
-  }
+  if (occupiedBases.hasFirst) applyRunnerOnFirstFieldersChoice(occupiedBases, movements);
+}
 
+function areBasesLoaded(occupiedBases: OccupiedBaseFlags) {
+  return occupiedBases.hasFirst && occupiedBases.hasSecond && occupiedBases.hasThird;
+}
+
+function applyBasesLoadedFieldersChoice(movements: MovementSelections) {
+  movements["3B"] = "Out";
+  movements["2B"] = "3B";
+  movements["1B"] = "2B";
+}
+
+function applyRunnerOnFirstFieldersChoice(occupiedBases: OccupiedBaseFlags, movements: MovementSelections) {
   movements["1B"] = "Out";
   if (occupiedBases.hasSecond) movements["2B"] = "3B";
   if (occupiedBases.hasThird) movements["3B"] = "3B";
@@ -544,12 +569,25 @@ export function defaultRbiCredit(result: BatterResult, bases: BasesState, runsSc
     return false;
   }
 
-  if (result === "BB") {
-    return Boolean(bases.first && bases.second && bases.third);
-  }
-
-  return ["1B", "2B", "3B", "HR", "SF"].includes(result);
+  return result === "BB" ? areBasesOccupied(bases) : defaultRbiCreditByResult[result];
 }
+
+function areBasesOccupied(bases: BasesState) {
+  return Boolean(bases.first && bases.second && bases.third);
+}
+
+const defaultRbiCreditByResult: Record<BatterResult, boolean> = {
+  "1B": true,
+  "2B": true,
+  "3B": true,
+  HR: true,
+  BB: false,
+  ROE: false,
+  FC: false,
+  SF: true,
+  Out: false,
+  DP: false,
+};
 
 export function previewPlay(
   state: GameState,
@@ -562,33 +600,173 @@ export function previewPlay(
   assertValidOutType(result, outType);
 
   const batter = getCurrentBatter(state);
-  const movements: RunnerMovement[] = [];
   const nextBases = createEmptyBases();
-  let runs = 0;
-  let runnerOuts = 0;
+  const runnerPreview = previewBaseRunnerMovements({
+    bases: state.bases,
+    nextBases,
+    pinchRunners,
+    result,
+    rbiCredit,
+    selections,
+  });
+  const batterMovement = previewBatterMovement(batter, result, nextBases);
+  const movements = [...runnerPreview.movements, batterMovement];
+  const counts = getPlayPreviewCounts(state, result, runnerPreview, batterMovement, movements, rbiCredit);
 
-  for (const [base, runner] of occupiedBaseEntries(state.bases)) {
-    const selectedRunner = pinchRunners[base] ?? runner;
-    const destination = toRunnerDestination(selections[base] ?? base);
-    const movement = buildRunnerMovement({
-      runner: selectedRunner,
-      fromBase: base,
-      destination,
-      result,
-      rbiCredit,
-    });
+  return {
+    batter,
+    result,
+    outType: getPreviewOutType(result, outType),
+    movements,
+    nextBases: getPreviewNextBases(nextBases, counts.inningEnded),
+    runs: counts.runs,
+    runnerOuts: runnerPreview.runnerOuts,
+    batterOuts: counts.batterOuts,
+    outsOnPlay: counts.outsOnPlay,
+    projectedOuts: counts.projectedOuts,
+    inningEnded: counts.inningEnded,
+    productiveOut: counts.productiveOut,
+    rbis: counts.creditedRbis,
+    summary: buildSummary(batter.name, result, outType, movements, counts.runs, state.outs, counts.projectedOuts, counts.creditedRbis),
+  };
+}
 
-    if (runner.originalPlayerId || selectedRunner.originalPlayerId) {
-      movement.originalPlayerId = selectedRunner.originalPlayerId ?? runner.originalPlayerId;
-      movement.originalPlayerName = selectedRunner.originalName ?? runner.originalName;
-    }
+type PlayPreviewCounts = {
+  runs: number;
+  batterOuts: number;
+  outsOnPlay: number;
+  projectedOuts: number;
+  inningEnded: boolean;
+  creditedRbis: number;
+  productiveOut: boolean;
+};
 
-    if (movement.scored) runs += 1;
-    if (movement.out) runnerOuts += 1;
-    placeRunner(nextBases, destination, selectedRunner);
-    movements.push(movement);
+function getPlayPreviewCounts(
+  state: GameState,
+  result: BatterResult,
+  runnerPreview: BaseRunnerPreview,
+  batterMovement: RunnerMovement,
+  movements: RunnerMovement[],
+  rbiCredit: boolean,
+): PlayPreviewCounts {
+  const runs = runnerPreview.runs + getBatterRunCount(batterMovement);
+  const batterOuts = getBatterOuts(result);
+  const outsOnPlay = batterOuts + runnerPreview.runnerOuts;
+  const projectedOuts = Math.min(3, state.outs + outsOnPlay);
+  const creditedRbis = rbiCredit ? runs : 0;
+
+  return {
+    runs,
+    batterOuts,
+    outsOnPlay,
+    projectedOuts,
+    inningEnded: hasInningEnded(state, outsOnPlay),
+    creditedRbis,
+    productiveOut: isProductiveOut(result, movements, creditedRbis),
+  };
+}
+
+function getBatterRunCount(batterMovement: RunnerMovement) {
+  return batterMovement.scored ? 1 : 0;
+}
+
+function hasInningEnded(state: GameState, outsOnPlay: number) {
+  return state.outs + outsOnPlay >= 3;
+}
+
+function getPreviewOutType(result: BatterResult, outType: OutType | undefined) {
+  return result === "Out" ? outType : undefined;
+}
+
+function getPreviewNextBases(nextBases: BasesState, inningEnded: boolean) {
+  return inningEnded ? createEmptyBases() : nextBases;
+}
+
+type BaseRunnerPreviewInput = {
+  bases: BasesState;
+  nextBases: BasesState;
+  pinchRunners: PinchRunnerSelections;
+  result: BatterResult;
+  rbiCredit: boolean;
+  selections: MovementSelections;
+};
+
+function previewBaseRunnerMovements(input: BaseRunnerPreviewInput) {
+  const preview = createEmptyBaseRunnerPreview();
+
+  for (const [base, runner] of occupiedBaseEntries(input.bases)) {
+    const selectedRunner = input.pinchRunners[base] ?? runner;
+    const destination = toRunnerDestination(input.selections[base] ?? base);
+    const movement = buildBaseRunnerMovement(input, base, runner, selectedRunner, destination);
+
+    placeRunner(input.nextBases, destination, selectedRunner);
+    addBaseRunnerMovement(preview, movement);
   }
 
+  return preview;
+}
+
+type BaseRunnerPreview = {
+  movements: RunnerMovement[];
+  runs: number;
+  runnerOuts: number;
+};
+
+function createEmptyBaseRunnerPreview(): BaseRunnerPreview {
+  return {
+    movements: [],
+    runs: 0,
+    runnerOuts: 0,
+  };
+}
+
+function addBaseRunnerMovement(preview: BaseRunnerPreview, movement: RunnerMovement) {
+  preview.runs += movement.scored ? 1 : 0;
+  preview.runnerOuts += movement.out ? 1 : 0;
+  preview.movements.push(movement);
+}
+
+function buildBaseRunnerMovement(
+  input: BaseRunnerPreviewInput,
+  base: BaseLabel,
+  runner: RunnerSlot,
+  selectedRunner: RunnerSlot,
+  destination: RunnerDestination,
+) {
+  const movement = buildRunnerMovement({
+    runner: selectedRunner,
+    fromBase: base,
+    destination,
+    result: input.result,
+    rbiCredit: input.rbiCredit,
+  });
+
+  return withOriginalRunnerMetadata(movement, runner, selectedRunner);
+}
+
+function withOriginalRunnerMetadata(
+  movement: RunnerMovement,
+  runner: RunnerSlot,
+  selectedRunner: RunnerSlot,
+) {
+  const originalPlayerId = selectedRunner.originalPlayerId ?? runner.originalPlayerId;
+
+  if (!originalPlayerId) {
+    return movement;
+  }
+
+  return {
+    ...movement,
+    originalPlayerId,
+    originalPlayerName: selectedRunner.originalName ?? runner.originalName,
+  };
+}
+
+function previewBatterMovement(
+  batter: Player,
+  result: BatterResult,
+  nextBases: BasesState,
+) {
   const batterDestination = getBatterDestination(result);
   const batterMovement = buildRunnerMovement({
     runner: { playerId: batter.id, name: batter.name },
@@ -598,34 +776,8 @@ export function previewPlay(
     rbiCredit: false,
   });
 
-  if (batterMovement.scored) runs += 1;
   placeRunner(nextBases, batterDestination, { playerId: batter.id, name: batter.name });
-  movements.push(batterMovement);
-
-  const batterOuts = getBatterOuts(result);
-  const outsOnPlay = batterOuts + runnerOuts;
-  const projectedOuts = Math.min(3, state.outs + outsOnPlay);
-  const inningEnded = state.outs + outsOnPlay >= 3;
-  const creditedRbis = rbiCredit ? runs : 0;
-  const productiveOut = isProductiveOut(result, movements, creditedRbis);
-  const finalBases = inningEnded ? createEmptyBases() : nextBases;
-
-  return {
-    batter,
-    result,
-    outType: result === "Out" ? outType : undefined,
-    movements,
-    nextBases: finalBases,
-    runs,
-    runnerOuts,
-    batterOuts,
-    outsOnPlay,
-    projectedOuts,
-    inningEnded,
-    productiveOut,
-    rbis: creditedRbis,
-    summary: buildSummary(batter.name, result, outType, movements, runs, state.outs, projectedOuts, creditedRbis),
-  };
+  return batterMovement;
 }
 
 export function savePlay(
@@ -643,7 +795,44 @@ export function savePlay(
   assertValidPlay(state, result, selections, pinchRunners, outType);
 
   const preview = previewPlay(state, result, selections, pinchRunners, rbiCredit, outType);
+  const savedPlay = createSavedPlayUpdate(state, preview, result, outType);
 
+  return applySavedPlayUpdate(state, savedPlay);
+}
+
+type SavedPlayUpdate = {
+  play: ScoredPlay;
+  preview: PlayPreview;
+  nextStats: Record<string, PlayerStats>;
+  nextBatterIndex: number;
+  nextHalfInning: Pick<GameState, "inning" | "half">;
+  defensiveAlignments: DefensiveAlignment[];
+};
+
+function createSavedPlayUpdate(
+  state: GameState,
+  preview: PlayPreview,
+  result: BatterResult,
+  outType?: OutType,
+): SavedPlayUpdate {
+  const nextHalfInning = getNextHalfInningAfterPlay(state, preview);
+
+  return {
+    play: buildScoredPlay(state, preview, result, outType),
+    preview,
+    nextStats: applyPlayStats(state.statsByPlayerId, preview, result, outType),
+    nextBatterIndex: (state.currentBatterIndex + 1) % state.lineup.length,
+    nextHalfInning,
+    defensiveAlignments: getDefensiveAlignmentsAfterPlay(state, nextHalfInning, preview),
+  };
+}
+
+function buildScoredPlay(
+  state: GameState,
+  preview: PlayPreview,
+  result: BatterResult,
+  outType?: OutType,
+): ScoredPlay {
   const play: ScoredPlay = {
     id: `play-${state.plays.length + 1}`,
     inning: state.inning,
@@ -661,68 +850,123 @@ export function savePlay(
     basesAfter: cloneBases(preview.nextBases),
     summary: preview.summary,
   };
-  const nextStats = applyPlayStats(state.statsByPlayerId, preview, result, outType);
-  const nextBatterIndex = (state.currentBatterIndex + 1) % state.lineup.length;
-  const nextHalfInning = preview.inningEnded ? getNextHalfInning(state.inning, state.half) : state;
-  const existingNextDefense = getAlignmentForCurrentHalf(
-    state.defensiveAlignments,
-    nextHalfInning.inning,
-    nextHalfInning.half,
-  );
-  const shouldGenerateDefense = preview.inningEnded
-    && getTeamPhase(state.isHome, nextHalfInning.half) === "FIELDING"
-    && !existingNextDefense;
-  const nextDefenseAlignment = shouldGenerateDefense
-    ? generateDefensiveAlignment({
-        players: state.lineup,
-        priorAlignments: state.defensiveAlignments,
-        inning: nextHalfInning.inning,
-        half: nextHalfInning.half,
-        lockedPitcherPlayerId: state.lockedPitcherPlayerId,
-      })
-    : null;
-  const canSaveNextDefense = nextDefenseAlignment
-    ? getDefensiveAlignmentIssues(
-        nextDefenseAlignment,
-        state.lineup,
-        state.lockedPitcherPlayerId,
-      ).length === 0
-    : false;
 
-  return {
-    ...state,
+  return play;
+}
+
+function getNextHalfInningAfterPlay(
+  state: GameState,
+  preview: PlayPreview,
+): Pick<GameState, "inning" | "half"> {
+  return preview.inningEnded ? getNextHalfInning(state.inning, state.half) : state;
+}
+
+function getDefensiveAlignmentsAfterPlay(
+  state: GameState,
+  nextHalfInning: Pick<GameState, "inning" | "half">,
+  preview: PlayPreview,
+) {
+  const nextDefenseAlignment = getGeneratedNextDefenseAlignment(state, nextHalfInning, preview);
+
+  if (!nextDefenseAlignment || !canSaveGeneratedDefense(state, nextDefenseAlignment)) {
+    return state.defensiveAlignments;
+  }
+
+  return upsertDefensiveAlignment(state.defensiveAlignments, nextDefenseAlignment);
+}
+
+function getGeneratedNextDefenseAlignment(
+  state: GameState,
+  nextHalfInning: Pick<GameState, "inning" | "half">,
+  preview: PlayPreview,
+) {
+  if (!shouldGenerateNextDefense(state, nextHalfInning, preview)) {
+    return null;
+  }
+
+  return generateDefensiveAlignment({
+    players: state.lineup,
+    priorAlignments: state.defensiveAlignments,
     inning: nextHalfInning.inning,
     half: nextHalfInning.half,
-    outs: preview.inningEnded ? 0 : preview.projectedOuts,
-    teamScore: state.teamScore + preview.runs,
-    bases: cloneBases(preview.nextBases),
-    defensiveAlignments: nextDefenseAlignment && canSaveNextDefense
-      ? upsertDefensiveAlignment(state.defensiveAlignments, nextDefenseAlignment)
-      : state.defensiveAlignments,
-    statsByPlayerId: nextStats,
-    plays: [...state.plays, play],
-    currentBatterIndex: nextBatterIndex,
+    lockedPitcherPlayerId: state.lockedPitcherPlayerId,
+  });
+}
+
+function shouldGenerateNextDefense(
+  state: GameState,
+  nextHalfInning: Pick<GameState, "inning" | "half">,
+  preview: PlayPreview,
+) {
+  return [
+    preview.inningEnded,
+    getTeamPhase(state.isHome, nextHalfInning.half) === "FIELDING",
+    !getAlignmentForCurrentHalf(state.defensiveAlignments, nextHalfInning.inning, nextHalfInning.half),
+  ].every(Boolean);
+}
+
+function canSaveGeneratedDefense(state: GameState, alignment: DefensiveAlignment) {
+  return getDefensiveAlignmentIssues(
+    alignment,
+    state.lineup,
+    state.lockedPitcherPlayerId,
+  ).length === 0;
+}
+
+function applySavedPlayUpdate(state: GameState, savedPlay: SavedPlayUpdate): GameState {
+  return {
+    ...state,
+    inning: savedPlay.nextHalfInning.inning,
+    half: savedPlay.nextHalfInning.half,
+    outs: getNextOutCount(savedPlay.preview),
+    teamScore: state.teamScore + savedPlay.preview.runs,
+    bases: cloneBases(savedPlay.preview.nextBases),
+    defensiveAlignments: savedPlay.defensiveAlignments,
+    statsByPlayerId: savedPlay.nextStats,
+    plays: [...state.plays, savedPlay.play],
+    currentBatterIndex: savedPlay.nextBatterIndex,
     history: [...state.history, snapshotState(state)],
-    lastSummary: preview.summary,
+    lastSummary: savedPlay.preview.summary,
   };
 }
 
+function getNextOutCount(preview: PlayPreview) {
+  return preview.inningEnded ? 0 : preview.projectedOuts;
+}
+
 export function getLatestCorrectablePlay(state: GameState): ScoredPlay | null {
-  if (state.status !== "IN_PROGRESS" || getCurrentTeamPhase(state) !== "BATTING") {
+  if (!canCorrectLatestPlay(state)) {
     return null;
   }
 
+  const latestPlay = getLatestPlayInCurrentHalf(state);
+
+  return latestPlay && hasPrePlaySnapshot(state, latestPlay) ? latestPlay : null;
+}
+
+function canCorrectLatestPlay(state: GameState) {
+  return state.status === "IN_PROGRESS" && getCurrentTeamPhase(state) === "BATTING";
+}
+
+function getLatestPlayInCurrentHalf(state: GameState) {
   const latestPlay = state.plays.at(-1);
 
-  if (!latestPlay || latestPlay.inning !== state.inning) {
+  if (!latestPlay || !isLatestPlayInCurrentHalf(state, latestPlay)) {
     return null;
   }
 
-  if (latestPlay.half && latestPlay.half !== state.half) {
-    return null;
-  }
+  return latestPlay;
+}
 
-  return findPrePlaySnapshotIndex(state, latestPlay) >= 0 ? latestPlay : null;
+function isLatestPlayInCurrentHalf(state: GameState, latestPlay: ScoredPlay) {
+  return [
+    latestPlay.inning === state.inning,
+    !latestPlay.half || latestPlay.half === state.half,
+  ].every(Boolean);
+}
+
+function hasPrePlaySnapshot(state: GameState, latestPlay: ScoredPlay) {
+  return findPrePlaySnapshotIndex(state, latestPlay) >= 0;
 }
 
 export function getStateBeforeLatestPlayCorrection(state: GameState, playId: string): GameState | null {
@@ -870,58 +1114,7 @@ export function getTeamSeasonTotals(players: Player[], state?: GameState): TeamG
 }
 
 function getTeamTotalsFromStats(statsList: PlayerStats[]): TeamGameTotals {
-  const totals = statsList.reduce(
-    (current, stats) => ({
-      plateAppearances: current.plateAppearances + stats.plateAppearances,
-      atBats: current.atBats + stats.atBats,
-      hits: current.hits + stats.hits,
-      singles: current.singles + stats.singles,
-      doubles: current.doubles + stats.doubles,
-      triples: current.triples + stats.triples,
-      homeRuns: current.homeRuns + stats.homeRuns,
-      walks: current.walks + stats.walks,
-      reachedOnError: current.reachedOnError + stats.reachedOnError,
-      fieldersChoice: current.fieldersChoice + stats.fieldersChoice,
-      sacFlies: current.sacFlies + stats.sacFlies,
-      runs: current.runs + stats.runs,
-      rbis: current.rbis + stats.rbis,
-      outs: current.outs + stats.outs,
-      groundouts: current.groundouts + (stats.groundouts ?? 0),
-      flyouts: current.flyouts + (stats.flyouts ?? 0),
-      lineouts: current.lineouts + (stats.lineouts ?? 0),
-      strikeoutsLooking: current.strikeoutsLooking + (stats.strikeoutsLooking ?? 0),
-      strikeoutsSwinging: current.strikeoutsSwinging + (stats.strikeoutsSwinging ?? 0),
-      otherOuts: current.otherOuts + (stats.otherOuts ?? 0),
-      doublePlays: current.doublePlays + (stats.doublePlays ?? 0),
-      productiveOuts: current.productiveOuts + (stats.productiveOuts ?? 0),
-      totalBases: current.totalBases + stats.singles + stats.doubles * 2 + stats.triples * 3 + stats.homeRuns * 4,
-    }),
-    {
-      plateAppearances: 0,
-      atBats: 0,
-      hits: 0,
-      singles: 0,
-      doubles: 0,
-      triples: 0,
-      homeRuns: 0,
-      walks: 0,
-      reachedOnError: 0,
-      fieldersChoice: 0,
-      sacFlies: 0,
-      runs: 0,
-      rbis: 0,
-      outs: 0,
-      groundouts: 0,
-      flyouts: 0,
-      lineouts: 0,
-      strikeoutsLooking: 0,
-      strikeoutsSwinging: 0,
-      otherOuts: 0,
-      doublePlays: 0,
-      productiveOuts: 0,
-      totalBases: 0,
-    },
-  );
+  const totals = statsList.reduce(addPlayerStatsToTeamTotals, createZeroTeamTotals());
 
   const onBaseTimes = totals.hits + totals.walks + totals.reachedOnError;
   const strikeouts = totals.strikeoutsLooking + totals.strikeoutsSwinging;
@@ -947,6 +1140,98 @@ function getTeamTotalsFromStats(statsList: PlayerStats[]): TeamGameTotals {
   };
 }
 
+type TeamTotalsAccumulator = Pick<
+  TeamGameTotals,
+  | "plateAppearances"
+  | "atBats"
+  | "hits"
+  | "singles"
+  | "doubles"
+  | "triples"
+  | "homeRuns"
+  | "walks"
+  | "reachedOnError"
+  | "fieldersChoice"
+  | "sacFlies"
+  | "runs"
+  | "rbis"
+  | "outs"
+  | "groundouts"
+  | "flyouts"
+  | "lineouts"
+  | "strikeoutsLooking"
+  | "strikeoutsSwinging"
+  | "otherOuts"
+  | "doublePlays"
+  | "productiveOuts"
+  | "totalBases"
+>;
+
+function createZeroTeamTotals(): TeamTotalsAccumulator {
+  return {
+    plateAppearances: 0,
+    atBats: 0,
+    hits: 0,
+    singles: 0,
+    doubles: 0,
+    triples: 0,
+    homeRuns: 0,
+    walks: 0,
+    reachedOnError: 0,
+    fieldersChoice: 0,
+    sacFlies: 0,
+    runs: 0,
+    rbis: 0,
+    outs: 0,
+    groundouts: 0,
+    flyouts: 0,
+    lineouts: 0,
+    strikeoutsLooking: 0,
+    strikeoutsSwinging: 0,
+    otherOuts: 0,
+    doublePlays: 0,
+    productiveOuts: 0,
+    totalBases: 0,
+  };
+}
+
+function addPlayerStatsToTeamTotals(
+  current: TeamTotalsAccumulator,
+  stats: PlayerStats,
+): TeamTotalsAccumulator {
+  const playerStats = { ...createZeroStats(), ...stats };
+
+  return {
+    plateAppearances: current.plateAppearances + playerStats.plateAppearances,
+    atBats: current.atBats + playerStats.atBats,
+    hits: current.hits + playerStats.hits,
+    singles: current.singles + playerStats.singles,
+    doubles: current.doubles + playerStats.doubles,
+    triples: current.triples + playerStats.triples,
+    homeRuns: current.homeRuns + playerStats.homeRuns,
+    walks: current.walks + playerStats.walks,
+    reachedOnError: current.reachedOnError + playerStats.reachedOnError,
+    fieldersChoice: current.fieldersChoice + playerStats.fieldersChoice,
+    sacFlies: current.sacFlies + playerStats.sacFlies,
+    runs: current.runs + playerStats.runs,
+    rbis: current.rbis + playerStats.rbis,
+    outs: current.outs + playerStats.outs,
+    groundouts: current.groundouts + playerStats.groundouts,
+    flyouts: current.flyouts + playerStats.flyouts,
+    lineouts: current.lineouts + playerStats.lineouts,
+    strikeoutsLooking: current.strikeoutsLooking + playerStats.strikeoutsLooking,
+    strikeoutsSwinging: current.strikeoutsSwinging + playerStats.strikeoutsSwinging,
+    otherOuts: current.otherOuts + playerStats.otherOuts,
+    doublePlays: current.doublePlays + playerStats.doublePlays,
+    productiveOuts: current.productiveOuts + playerStats.productiveOuts,
+    totalBases: current.totalBases + getTotalBases(playerStats),
+  };
+}
+
+function getTotalBases(stats: PlayerStats) {
+  return stats.singles + stats.doubles * 2 + stats.triples * 3 + stats.homeRuns * 4;
+}
+
 export function runnerSlotFromPlayer(player: Player): RunnerSlot {
   return {
     playerId: player.id,
@@ -965,16 +1250,28 @@ function applyPlayStats(
   next[preview.batter.id] = addBatterResult(batterStats, result, preview.rbis, outType, preview.productiveOut);
 
   for (const movement of preview.movements) {
-    if (movement.scored) {
-      next[movement.playerId] = addRun(next[movement.playerId]);
-    }
-
-    if (movement.out && movement.fromBase !== "BATTER") {
-      next[movement.playerId] = addRunnerOut(next[movement.playerId]);
-    }
+    next[movement.playerId] = applyRunnerMovementStats(next[movement.playerId], movement);
   }
 
   return next;
+}
+
+function applyRunnerMovementStats(stats: PlayerStats, movement: RunnerMovement) {
+  let nextStats = stats;
+
+  if (movement.scored) {
+    nextStats = addRun(nextStats);
+  }
+
+  if (isBaseRunnerOut(movement)) {
+    nextStats = addRunnerOut(nextStats);
+  }
+
+  return nextStats;
+}
+
+function isBaseRunnerOut(movement: RunnerMovement) {
+  return movement.out && movement.fromBase !== "BATTER";
 }
 
 function createGameStatsByPlayerId(lineup: Player[]) {
@@ -1010,12 +1307,21 @@ function buildRunnerMovement({
 }
 
 function getBatterDestination(result: BatterResult): RunnerDestination {
-  if (result === "HR") return "HOME";
-  if (result === "3B") return "3B";
-  if (result === "2B") return "2B";
-  if (["1B", "BB", "ROE", "FC"].includes(result)) return "1B";
-  return "OUT";
+  return batterDestinations[result];
 }
+
+const batterDestinations: Record<BatterResult, RunnerDestination> = {
+  "1B": "1B",
+  "2B": "2B",
+  "3B": "3B",
+  HR: "HOME",
+  BB: "1B",
+  ROE: "1B",
+  FC: "1B",
+  SF: "OUT",
+  Out: "OUT",
+  DP: "OUT",
+};
 
 function getBatterOuts(result: BatterResult) {
   if (result === "DP") return 1;
@@ -1024,14 +1330,21 @@ function getBatterOuts(result: BatterResult) {
 }
 
 function getAdvanceReason(result: BatterResult): RunnerMovement["reason"] {
-  if (["1B", "2B", "3B", "HR"].includes(result)) return "Hit";
-  if (result === "BB") return "Walk";
-  if (result === "ROE") return "Error";
-  if (result === "FC") return "Fielder's Choice";
-  if (result === "SF") return "Sac Fly";
-  if (result === "Out" || result === "DP") return "Out";
-  return "Runner Decision";
+  return advanceReasons[result];
 }
+
+const advanceReasons: Record<BatterResult, RunnerMovement["reason"]> = {
+  "1B": "Hit",
+  "2B": "Hit",
+  "3B": "Hit",
+  HR: "Hit",
+  BB: "Walk",
+  ROE: "Error",
+  FC: "Fielder's Choice",
+  SF: "Sac Fly",
+  Out: "Out",
+  DP: "Out",
+};
 
 function getAdvancedBases(fromBase: BaseLabel | "BATTER", destination: RunnerDestination) {
   if (destination === "OUT") return 0;
@@ -1125,57 +1438,101 @@ export function getPlayValidationError(
   pinchRunners: PinchRunnerSelections,
   outType?: OutType,
 ) {
-  const lockReason = getResultLockReason(result, state.bases, state.outs);
+  return firstValidationError([
+    getResultLockReason(result, state.bases, state.outs),
+    getOutTypeValidationError(result, outType),
+    getPinchRunnerValidationError(state, pinchRunners),
+    getRunnerDestinationValidationError(state, result, selections),
+    getOutCountValidationError(state, result, selections),
+  ]);
+}
 
-  if (lockReason) {
-    return lockReason;
-  }
+function firstValidationError(errors: Array<string | null | undefined>) {
+  return errors.find(Boolean) ?? null;
+}
 
-  if (result === "Out" && !outType) {
-    return "Out type is required for normal outs.";
-  }
+function getOutTypeValidationError(result: BatterResult, outType: OutType | undefined) {
+  return result === "Out" && !outType ? "Out type is required for normal outs." : null;
+}
 
-  const pinchRunnerError = getPinchRunnerValidationError(state, pinchRunners);
-
-  if (pinchRunnerError) {
-    return pinchRunnerError;
-  }
-
+function getRunnerDestinationValidationError(
+  state: GameState,
+  result: BatterResult,
+  selections: MovementSelections,
+) {
   const occupiedDestinations = new Map<BaseLabel, string>();
-  let runnerOuts = 0;
 
   for (const [base, runner] of occupiedBaseEntries(state.bases)) {
     const destination = toRunnerDestination(selections[base] ?? base);
+    const destinationError = addOccupiedDestination(occupiedDestinations, runner.name, destination);
 
-    if (destination === "OUT") {
-      runnerOuts += 1;
-      continue;
+    if (destinationError) {
+      return destinationError;
     }
-
-    if (destination === "HOME") {
-      continue;
-    }
-
-    const occupyingRunner = occupiedDestinations.get(destination);
-
-    if (occupyingRunner) {
-      return `${runner.name} and ${occupyingRunner} cannot both end at ${destination}.`;
-    }
-
-    occupiedDestinations.set(destination, runner.name);
   }
 
+  return getBatterDestinationValidationError(state, result, occupiedDestinations);
+}
+
+function addOccupiedDestination(
+  occupiedDestinations: Map<BaseLabel, string>,
+  runnerName: string,
+  destination: RunnerDestination,
+) {
+  if (!isBaseDestination(destination)) {
+    return null;
+  }
+
+  const occupyingRunner = occupiedDestinations.get(destination);
+
+  if (occupyingRunner) {
+    return `${runnerName} and ${occupyingRunner} cannot both end at ${destination}.`;
+  }
+
+  occupiedDestinations.set(destination, runnerName);
+  return null;
+}
+
+function isBaseDestination(destination: RunnerDestination): destination is BaseLabel {
+  return baseDestinationValues.has(destination);
+}
+
+const baseDestinationValues = new Set<RunnerDestination>(["1B", "2B", "3B"]);
+
+function getBatterDestinationValidationError(
+  state: GameState,
+  result: BatterResult,
+  occupiedDestinations: Map<BaseLabel, string>,
+) {
   const batterDestination = getBatterDestination(result);
 
-  if (batterDestination !== "OUT" && batterDestination !== "HOME") {
-    const occupyingRunner = occupiedDestinations.get(batterDestination);
-
-    if (occupyingRunner) {
-      return `${getCurrentBatter(state).name} and ${occupyingRunner} cannot both end at ${batterDestination}.`;
-    }
+  if (!isBaseDestination(batterDestination)) {
+    return null;
   }
 
-  const outsOnPlay = runnerOuts + getBatterOuts(result);
+  return getBatterBaseCollisionError(state, occupiedDestinations, batterDestination);
+}
+
+function getBatterBaseCollisionError(
+  state: GameState,
+  occupiedDestinations: Map<BaseLabel, string>,
+  batterDestination: BaseLabel,
+) {
+  const occupyingRunner = occupiedDestinations.get(batterDestination);
+
+  if (!occupyingRunner) {
+    return null;
+  }
+
+  return `${getCurrentBatter(state).name} and ${occupyingRunner} cannot both end at ${batterDestination}.`;
+}
+
+function getOutCountValidationError(
+  state: GameState,
+  result: BatterResult,
+  selections: MovementSelections,
+) {
+  const outsOnPlay = getRunnerOutCount(state, selections) + getBatterOuts(result);
 
   if (state.outs + outsOnPlay > 3) {
     return "Play cannot record more than three outs in the inning.";
@@ -1184,32 +1541,68 @@ export function getPlayValidationError(
   return null;
 }
 
+function getRunnerOutCount(state: GameState, selections: MovementSelections) {
+  return occupiedBaseEntries(state.bases).filter(([base]) => (
+    toRunnerDestination(selections[base] ?? base) === "OUT"
+  )).length;
+}
+
 function getPinchRunnerValidationError(state: GameState, pinchRunners: PinchRunnerSelections) {
   const occupiedPlayerIds = new Set(occupiedBaseEntries(state.bases).map(([, runner]) => runner.playerId));
   const selectedPinchRunnerIds = new Set<string>();
   const batter = getCurrentBatter(state);
 
-  for (const pinchRunner of Object.values(pinchRunners)) {
-    if (!pinchRunner) {
-      continue;
-    }
+  for (const pinchRunner of getSelectedPinchRunners(pinchRunners)) {
+    const validationError = validatePinchRunner(
+      pinchRunner,
+      batter,
+      occupiedPlayerIds,
+      selectedPinchRunnerIds,
+    );
 
-    if (pinchRunner.playerId === batter.id) {
-      return "The current batter cannot also be a pinch runner.";
-    }
-
-    if (occupiedPlayerIds.has(pinchRunner.playerId)) {
-      return `${pinchRunner.name} is already on base.`;
-    }
-
-    if (selectedPinchRunnerIds.has(pinchRunner.playerId)) {
-      return `${pinchRunner.name} cannot pinch run for multiple runners on the same play.`;
+    if (validationError) {
+      return validationError;
     }
 
     selectedPinchRunnerIds.add(pinchRunner.playerId);
   }
 
   return null;
+}
+
+function getSelectedPinchRunners(pinchRunners: PinchRunnerSelections) {
+  return Object.values(pinchRunners).filter(isRunnerSlot);
+}
+
+function isRunnerSlot(runner: RunnerSlot | undefined): runner is RunnerSlot {
+  return Boolean(runner);
+}
+
+function validatePinchRunner(
+  pinchRunner: RunnerSlot,
+  batter: Player,
+  occupiedPlayerIds: Set<string>,
+  selectedPinchRunnerIds: Set<string>,
+) {
+  return firstValidationError([
+    getBatterPinchRunnerError(pinchRunner, batter),
+    getOccupiedPinchRunnerError(pinchRunner, occupiedPlayerIds),
+    getDuplicatePinchRunnerError(pinchRunner, selectedPinchRunnerIds),
+  ]);
+}
+
+function getBatterPinchRunnerError(pinchRunner: RunnerSlot, batter: Player) {
+  return pinchRunner.playerId === batter.id ? "The current batter cannot also be a pinch runner." : null;
+}
+
+function getOccupiedPinchRunnerError(pinchRunner: RunnerSlot, occupiedPlayerIds: Set<string>) {
+  return occupiedPlayerIds.has(pinchRunner.playerId) ? `${pinchRunner.name} is already on base.` : null;
+}
+
+function getDuplicatePinchRunnerError(pinchRunner: RunnerSlot, selectedPinchRunnerIds: Set<string>) {
+  return selectedPinchRunnerIds.has(pinchRunner.playerId)
+    ? `${pinchRunner.name} cannot pinch run for multiple runners on the same play.`
+    : null;
 }
 
 function isProductiveOut(result: BatterResult, movements: RunnerMovement[], rbis: number) {
@@ -1260,11 +1653,29 @@ function updateLineupPlayerSeasonStats(
 
 function findPrePlaySnapshotIndex(state: GameState, play: ScoredPlay) {
   return state.history.findLastIndex((snapshot) => (
-    snapshot.plays.length === state.plays.length - 1 &&
-    snapshot.inning === play.inning &&
-    snapshot.half === (play.half ?? state.half) &&
-    snapshot.lineup[snapshot.currentBatterIndex]?.id === play.batterId
+    isPrePlaySnapshot(snapshot, state, play)
   ));
+}
+
+function isPrePlaySnapshot(
+  snapshot: GameStateSnapshot,
+  state: GameState,
+  play: ScoredPlay,
+) {
+  return [
+    snapshot.plays.length === state.plays.length - 1,
+    snapshot.inning === play.inning,
+    snapshot.half === getPlayHalf(play, state),
+    getSnapshotBatterId(snapshot) === play.batterId,
+  ].every(Boolean);
+}
+
+function getPlayHalf(play: ScoredPlay, state: GameState) {
+  return play.half ?? state.half;
+}
+
+function getSnapshotBatterId(snapshot: GameStateSnapshot) {
+  return snapshot.lineup[snapshot.currentBatterIndex]?.id;
 }
 
 function snapshotState(state: GameState): GameStateSnapshot {

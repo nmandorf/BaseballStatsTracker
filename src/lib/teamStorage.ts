@@ -26,6 +26,11 @@ import type { PlayerStats } from "@/types/stats";
 const storageKey = "baseball-tracker:active-team:v1";
 const storageEventName = "baseball-tracker:active-team-updated";
 const activeTeamBackendSyncTimeoutMs = 10_000;
+const defaultRoleHints = [
+  { maximumSeedOrder: 1, roleHint: "High OBP table-setter" },
+  { maximumSeedOrder: 3, roleHint: "Contact hitter" },
+  { maximumSeedOrder: 5, roleHint: "Power hitter" },
+] as const;
 
 let cachedRaw: string | null | undefined;
 let cachedAccountUid: string | null | undefined;
@@ -81,35 +86,46 @@ export function loadActiveTeam(): ActiveTeam | null {
     return null;
   }
 
+  return loadBrowserActiveTeam();
+}
+
+function loadBrowserActiveTeam() {
   const raw = window.localStorage.getItem(storageKey);
   const signedInAccount = getSignedInTeamAccount();
   const accountUid = signedInAccount?.uid ?? null;
 
-  if (raw === cachedRaw && accountUid === cachedAccountUid) {
-    return cachedTeam ?? null;
-  }
+  const cachedActiveTeam = getCachedActiveTeam(raw, accountUid);
 
+  return cachedActiveTeam ?? cacheActiveTeam(
+    raw,
+    accountUid,
+    readActiveTeamFromStorage(raw, signedInAccount),
+  );
+}
+
+function getCachedActiveTeam(raw: string | null, accountUid: string | null) {
+  return isActiveTeamCacheKey(raw, accountUid) ? cachedTeam ?? null : null;
+}
+
+function readActiveTeamFromStorage(raw: string | null, signedInAccount: TeamAccount | null) {
   if (!raw) {
-    cachedRaw = raw;
-    cachedAccountUid = accountUid;
-    cachedTeam = null;
     return null;
   }
 
+  const normalizedTeam = parseActiveTeam(raw);
+
+  if (!normalizedTeam || !isTeamOwnedByAccount(normalizedTeam, signedInAccount)) {
+    return null;
+  }
+
+  return normalizedTeam;
+}
+
+function parseActiveTeam(raw: string) {
   try {
     const parsed = JSON.parse(raw) as ActiveTeam;
-    const normalizedTeam = normalizeActiveTeam(parsed);
-
-    cachedRaw = raw;
-    cachedAccountUid = accountUid;
-    cachedTeam = normalizedTeam && isTeamOwnedByAccount(normalizedTeam, signedInAccount)
-      ? normalizedTeam
-      : null;
-    return cachedTeam;
+    return normalizeActiveTeam(parsed);
   } catch {
-    cachedRaw = raw;
-    cachedAccountUid = accountUid;
-    cachedTeam = null;
     return null;
   }
 }
@@ -197,40 +213,49 @@ export async function createBackendTeam(
   const localTeam = createActiveTeam(name, []);
 
   try {
-    const response = await fetch("/api/team", {
-      method: "POST",
-      headers: await getVerifiedTeamAccountHeaders({
-        "Content-Type": "application/json",
-      }),
-      body: JSON.stringify({ name }),
-    });
-
-    if (!response.ok) {
-      throw new Error("Team backend unavailable.");
-    }
-
-    const payload = (await response.json()) as { team?: ActiveTeam | null };
-    const backendTeam = payload.team ? normalizeActiveTeam(payload.team) : null;
-
-    return backendTeam ?? localTeam;
+    return getCreatedBackendTeamFallback(await requestCreatedBackendTeam(name), localTeam);
   } catch (error) {
-    if (!shouldFallbackToLocal) {
-      throw error;
-    }
-
-    return localTeam;
+    return handleCreateBackendTeamError(error, shouldFallbackToLocal, localTeam);
   }
+}
+
+function getCreatedBackendTeamFallback(backendTeam: ActiveTeam | null, localTeam: ActiveTeam) {
+  return backendTeam ?? localTeam;
+}
+
+function handleCreateBackendTeamError(
+  error: unknown,
+  shouldFallbackToLocal: boolean,
+  localTeam: ActiveTeam,
+) {
+  if (!shouldFallbackToLocal) {
+    throw error;
+  }
+
+  return localTeam;
+}
+
+async function requestCreatedBackendTeam(name: string) {
+  const response = await fetch("/api/team", {
+    method: "POST",
+    headers: await getVerifiedTeamAccountHeaders({
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify({ name }),
+  });
+
+  if (!response.ok) {
+    throw new Error("Team backend unavailable.");
+  }
+
+  return normalizeTeamPayload(await response.json());
 }
 
 export async function loadAvailableTeamsFromBackend(
   options: { fallbackToActiveTeam?: boolean } = {},
 ) {
-  const shouldFallbackToActiveTeam = options.fallbackToActiveTeam ?? true;
-  const signedInAccount = getSignedInTeamAccount();
-  const storedActiveTeam = loadActiveTeam();
-  const activeTeam = storedActiveTeam?.ownerUid === signedInAccount?.uid
-    ? storedActiveTeam
-    : null;
+  const shouldFallbackToActiveTeam = options.fallbackToActiveTeam !== false;
+  const activeTeamFallback = getAccountOwnedActiveTeamFallback();
 
   try {
     const response = await fetch("/api/team?list=1", {
@@ -239,36 +264,19 @@ export async function loadAvailableTeamsFromBackend(
     });
 
     if (!response.ok) {
-      if (!shouldFallbackToActiveTeam) {
-        throw new Error("Unable to load account teams.");
-      }
-
-      return activeTeam ? [activeTeam] : [];
+      return handleUnavailableTeamList(shouldFallbackToActiveTeam, activeTeamFallback);
     }
 
-    const payload = (await response.json()) as { teams?: Partial<ActiveTeam>[] };
-    const backendTeams = Array.isArray(payload.teams)
-      ? payload.teams
-          .map((team) => normalizeActiveTeam(team))
-          .filter((team): team is ActiveTeam => Boolean(team))
-      : [];
+    const backendTeams = normalizeBackendTeamList(await response.json());
 
     if (backendTeams.length > 0) {
       return backendTeams;
     }
   } catch (error) {
-    if (!shouldFallbackToActiveTeam) {
-      throw error;
-    }
-
-    return activeTeam ? [activeTeam] : [];
+    return handleTeamListLoadError(error, shouldFallbackToActiveTeam, activeTeamFallback);
   }
 
-  if (!shouldFallbackToActiveTeam) {
-    return [];
-  }
-
-  return activeTeam ? [activeTeam] : [];
+  return getAvailableTeamsFallback(shouldFallbackToActiveTeam, activeTeamFallback);
 }
 
 export async function addPlayerToBackendTeam(
@@ -276,33 +284,47 @@ export async function addPlayerToBackendTeam(
   input: PlayerProfileInput,
   seedOrder: number,
 ) {
+  const fallbackTeam = createAddPlayerFallbackTeam(team, input, seedOrder);
+
+  try {
+    return await requestAddedPlayerBackendTeam(team, input, seedOrder) ?? fallbackTeam;
+  } catch {
+    return fallbackTeam;
+  }
+}
+
+function createAddPlayerFallbackTeam(
+  team: ActiveTeam,
+  input: PlayerProfileInput,
+  seedOrder: number,
+) {
   const fallbackPlayer = createPlayerFromInput(input, seedOrder);
-  const fallbackTeam = normalizeActiveTeam({
+
+  return normalizeActiveTeam({
     ...team,
     players: [...team.players, fallbackPlayer],
     updatedAt: new Date().toISOString(),
   }) ?? team;
+}
 
-  try {
-    const response = await fetch(`/api/team/${encodeURIComponent(team.id)}/players`, {
-      method: "POST",
-      headers: await getVerifiedTeamAccountHeaders({
-        "Content-Type": "application/json",
-      }),
-      body: JSON.stringify({ input, seedOrder }),
-    });
+async function requestAddedPlayerBackendTeam(
+  team: ActiveTeam,
+  input: PlayerProfileInput,
+  seedOrder: number,
+) {
+  const response = await fetch(`/api/team/${encodeURIComponent(team.id)}/players`, {
+    method: "POST",
+    headers: await getVerifiedTeamAccountHeaders({
+      "Content-Type": "application/json",
+    }),
+    body: JSON.stringify({ input, seedOrder }),
+  });
 
-    if (!response.ok) {
-      throw new Error("Player backend unavailable.");
-    }
-
-    const payload = (await response.json()) as { team?: ActiveTeam | null };
-    const backendTeam = payload.team ? normalizeActiveTeam(payload.team) : null;
-
-    return backendTeam ?? fallbackTeam;
-  } catch {
-    return fallbackTeam;
+  if (!response.ok) {
+    throw new Error("Player backend unavailable.");
   }
+
+  return normalizeTeamPayload(await response.json());
 }
 
 export async function addPlayerToActiveTeamBackend(input: PlayerProfileInput) {
@@ -338,32 +360,45 @@ export async function hydrateActiveTeamFromBackend() {
   }
 
   const activeTeam = loadActiveTeam();
-  const query = activeTeam?.id ? `?teamId=${encodeURIComponent(activeTeam.id)}` : "";
 
   try {
-    const response = await fetch(`/api/team${query}`, {
-      cache: "no-store",
-      headers: await getVerifiedTeamAccountHeaders(),
-    });
-
-    if (!response.ok) {
-      return activeTeam;
-    }
-
-    const payload = (await response.json()) as { team?: ActiveTeam | null };
-    const backendTeam = payload.team ? normalizeActiveTeam(payload.team) : null;
-
-    if (backendTeam) {
-      const nextTeam = mergeBackendTeamWithLocalSeasonStats(backendTeam, activeTeam);
-
-      saveActiveTeam(nextTeam);
-      return nextTeam;
-    }
+    return saveHydratedBackendTeam(await requestActiveBackendTeam(getActiveTeamQuery(activeTeam)), activeTeam);
   } catch {
     return activeTeam;
   }
+}
 
-  return activeTeam;
+function getActiveTeamQuery(activeTeam: ActiveTeam | null) {
+  return activeTeam?.id ? `?teamId=${encodeURIComponent(activeTeam.id)}` : "";
+}
+
+function saveHydratedBackendTeam(backendTeam: ActiveTeam | null, activeTeam: ActiveTeam | null) {
+  if (!backendTeam) {
+    return activeTeam;
+  }
+
+  const nextTeam = mergeBackendTeamWithLocalSeasonStats(backendTeam, activeTeam);
+
+  saveActiveTeam(nextTeam);
+  return nextTeam;
+}
+
+async function requestActiveBackendTeam(query: string) {
+  const response = await fetch(`/api/team${query}`, {
+    cache: "no-store",
+    headers: await getVerifiedTeamAccountHeaders(),
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  return normalizeTeamPayload(await response.json());
+}
+
+function normalizeTeamPayload(payload: unknown) {
+  const team = (payload as { team?: ActiveTeam | null }).team;
+  return team ? normalizeActiveTeam(team) : null;
 }
 
 function mergeBackendTeamWithLocalSeasonStats(backendTeam: ActiveTeam, localTeam: ActiveTeam | null): ActiveTeam {
@@ -407,16 +442,78 @@ export async function getVerifiedTeamAccountHeaders(baseHeaders: Record<string, 
 
 async function readTeamDeletionError(response: Response) {
   try {
-    const payload = (await response.json()) as { error?: { message?: unknown } };
-
-    if (typeof payload.error?.message === "string" && payload.error.message.trim()) {
-      return payload.error.message;
-    }
+    return getTeamDeletionErrorMessage(await response.json());
   } catch {
     // The fallback below is safe to show when the backend returns a non-JSON error.
   }
 
   return "Unable to delete the team. Please try again.";
+}
+
+function getTeamDeletionErrorMessage(payload: unknown) {
+  const message = (payload as { error?: { message?: unknown } }).error?.message;
+
+  return typeof message === "string" && message.trim()
+    ? message
+    : "Unable to delete the team. Please try again.";
+}
+
+function getAccountOwnedActiveTeamFallback() {
+  const signedInAccount = getSignedInTeamAccount();
+  const storedActiveTeam = loadActiveTeam();
+
+  return storedActiveTeam?.ownerUid === signedInAccount?.uid
+    ? storedActiveTeam
+    : null;
+}
+
+function handleUnavailableTeamList(shouldFallbackToActiveTeam: boolean, activeTeam: ActiveTeam | null) {
+  if (!shouldFallbackToActiveTeam) {
+    throw new Error("Unable to load account teams.");
+  }
+
+  return getAvailableTeamsFallback(shouldFallbackToActiveTeam, activeTeam);
+}
+
+function handleTeamListLoadError(
+  error: unknown,
+  shouldFallbackToActiveTeam: boolean,
+  activeTeam: ActiveTeam | null,
+) {
+  if (!shouldFallbackToActiveTeam) {
+    throw error;
+  }
+
+  return getAvailableTeamsFallback(shouldFallbackToActiveTeam, activeTeam);
+}
+
+function getAvailableTeamsFallback(shouldFallbackToActiveTeam: boolean, activeTeam: ActiveTeam | null) {
+  if (!shouldFallbackToActiveTeam || !activeTeam) {
+    return [];
+  }
+
+  return [activeTeam];
+}
+
+function isActiveTeamCacheKey(raw: string | null, accountUid: string | null) {
+  return raw === cachedRaw && accountUid === cachedAccountUid;
+}
+
+function cacheActiveTeam(raw: string | null, accountUid: string | null, team: ActiveTeam | null) {
+  cachedRaw = raw;
+  cachedAccountUid = accountUid;
+  cachedTeam = team;
+  return team;
+}
+
+function normalizeBackendTeamList(payload: unknown) {
+  const teams = (payload as { teams?: Partial<ActiveTeam>[] }).teams;
+
+  return Array.isArray(teams)
+    ? teams
+        .map((team) => normalizeActiveTeam(team))
+        .filter((team): team is ActiveTeam => Boolean(team))
+    : [];
 }
 
 function writeActiveTeam(team: Partial<ActiveTeam>) {
@@ -430,11 +527,15 @@ function writeActiveTeam(team: Partial<ActiveTeam>) {
     return;
   }
 
-  const raw = JSON.stringify(nextTeam);
+  writeNormalizedActiveTeam(nextTeam);
+}
+
+function writeNormalizedActiveTeam(team: ActiveTeam) {
+  const raw = JSON.stringify(team);
 
   cachedRaw = raw;
   cachedAccountUid = getSignedInTeamAccount()?.uid ?? null;
-  cachedTeam = nextTeam;
+  cachedTeam = team;
   window.localStorage.setItem(storageKey, raw);
   window.dispatchEvent(new Event(storageEventName));
 }
@@ -443,11 +544,17 @@ export function isSameTeamWorkspace(
   firstTeam: Pick<ActiveTeam, "id" | "ownerUid"> | null,
   secondTeam: Pick<ActiveTeam, "id" | "ownerUid"> | null,
 ) {
-  if (!firstTeam?.ownerUid || !secondTeam?.ownerUid) {
+  if (!hasTeamOwner(firstTeam) || !hasTeamOwner(secondTeam)) {
     return false;
   }
 
   return firstTeam.id === secondTeam.id && firstTeam.ownerUid === secondTeam.ownerUid;
+}
+
+function hasTeamOwner<T extends Pick<ActiveTeam, "ownerUid"> | null>(
+  team: T,
+): team is Exclude<T, null> & { ownerUid: string } {
+  return Boolean(team?.ownerUid);
 }
 
 function isTeamOwnedByAccount(team: ActiveTeam, account: TeamAccount | null) {
@@ -505,33 +612,54 @@ function withTimeout<T>(
 }
 
 function normalizeActiveTeam(team: Partial<ActiveTeam>): ActiveTeam | null {
-  if (!team || typeof team.name !== "string" || !team.name.trim() || !Array.isArray(team.players)) {
+  if (!isNormalizableTeam(team)) {
     return null;
   }
 
   const now = new Date().toISOString();
+  const signedInAccount = getSignedInTeamAccount();
+  const normalizedPlayers = normalizeTeamPlayers(team.players);
 
   return {
-    id: typeof team.id === "string" && team.id ? team.id : createSlug(team.name),
-    ownerUid: typeof team.ownerUid === "string" && team.ownerUid ? team.ownerUid : getSignedInTeamAccount()?.uid,
-    ownerEmail: typeof team.ownerEmail === "string" && team.ownerEmail ? team.ownerEmail : getSignedInTeamAccount()?.email,
+    id: getNonEmptyString(team.id, createSlug(team.name)),
+    ownerUid: getNonEmptyString(team.ownerUid, signedInAccount?.uid),
+    ownerEmail: getNonEmptyString(team.ownerEmail, signedInAccount?.email),
     name: team.name.trim(),
-    timeZone: typeof team.timeZone === "string" && team.timeZone ? team.timeZone : null,
-    scheduleSetupCompleted: typeof team.scheduleSetupCompleted === "boolean" ? team.scheduleSetupCompleted : true,
-    players: team.players
-      .map((player, index) => normalizePlayer(player, index + 1))
-      .filter((player): player is Player => Boolean(player)),
-    createdAt: typeof team.createdAt === "string" ? team.createdAt : now,
-    updatedAt: typeof team.updatedAt === "string" ? team.updatedAt : now,
+    timeZone: getNonEmptyString(team.timeZone, null),
+    scheduleSetupCompleted: getScheduleSetupCompleted(team.scheduleSetupCompleted),
+    players: normalizedPlayers,
+    createdAt: getNonEmptyString(team.createdAt, now),
+    updatedAt: getNonEmptyString(team.updatedAt, now),
   };
 }
 
+function normalizeTeamPlayers(players: Partial<Player>[]) {
+  return players
+    .map((player, index) => normalizePlayer(player, index + 1))
+    .filter((player): player is Player => Boolean(player));
+}
+
+function getScheduleSetupCompleted(value: unknown) {
+  return typeof value === "boolean" ? value : true;
+}
+
+function isNormalizableTeam(team: Partial<ActiveTeam>): team is Partial<ActiveTeam> & Pick<ActiveTeam, "name" | "players"> {
+  return Boolean(team)
+    && typeof team.name === "string"
+    && Boolean(team.name.trim())
+    && Array.isArray(team.players);
+}
+
+function getNonEmptyString(value: unknown, fallback: string): string;
+function getNonEmptyString(value: unknown, fallback: string | undefined): string | undefined;
+function getNonEmptyString(value: unknown, fallback: string | null): string | null;
+function getNonEmptyString(value: unknown, fallback: string | null | undefined): string | null | undefined;
+function getNonEmptyString(value: unknown, fallback: string | null | undefined) {
+  return typeof value === "string" && value ? value : fallback;
+}
+
 function getSignedInTeamAccount(): TeamAccount | null {
-  if (
-    typeof window === "undefined" ||
-    typeof document === "undefined" ||
-    !isFirebaseConfigured()
-  ) {
+  if (!canReadSignedInTeamAccount()) {
     return null;
   }
 
@@ -548,29 +676,58 @@ function getSignedInTeamAccount(): TeamAccount | null {
   }
 }
 
+function canReadSignedInTeamAccount() {
+  return [
+    typeof window !== "undefined",
+    typeof document !== "undefined",
+    isFirebaseConfigured(),
+  ].every(Boolean);
+}
+
 function normalizePlayer(player: Partial<Player>, seedOrder: number): Player | null {
-  if (!player || typeof player.name !== "string" || !player.name.trim()) {
+  if (!isNormalizablePlayer(player)) {
     return null;
   }
 
   const fallbackId = createPlayerId(player.name, seedOrder);
+  const trimmedName = player.name.trim();
 
   return {
-    id: typeof player.id === "string" && player.id ? player.id : fallbackId,
-    name: player.name.trim(),
+    id: getNonEmptyString(player.id, fallbackId),
+    name: trimmedName,
     gender: normalizePlayerGender(player.gender),
     bats: normalizeBattingSide(player.bats),
     throws: normalizeThrowingSide(player.throws),
     primaryPosition: normalizeDefensivePositionPreference(player.primaryPosition),
     speedRating: normalizeSpeedRating(player.speedRating),
-    notes: typeof player.notes === "string" && player.notes.trim() ? player.notes.trim() : "Player profile ready for game-day tracking.",
-    contactNotes: Array.isArray(player.contactNotes) ? player.contactNotes.filter(Boolean) : [],
+    notes: getPlayerNotes(player.notes),
+    contactNotes: normalizeContactNotes(player.contactNotes),
     defensiveProfile: normalizeDefensiveProfile(player.defensiveProfile),
-    roleHint: typeof player.roleHint === "string" && player.roleHint.trim() ? player.roleHint.trim() : defaultRoleHint(seedOrder),
+    roleHint: getPlayerRoleHint(player.roleHint, seedOrder),
     isActive: typeof player.isActive === "boolean" ? player.isActive : true,
     seedOrder,
     seasonStats: normalizePlayerStats(player.seasonStats),
   };
+}
+
+function isNormalizablePlayer(player: Partial<Player>): player is Partial<Player> & Pick<Player, "name"> {
+  return Boolean(player) && typeof player.name === "string" && Boolean(player.name.trim());
+}
+
+function getPlayerNotes(notes: unknown) {
+  return typeof notes === "string" && notes.trim()
+    ? notes.trim()
+    : "Player profile ready for game-day tracking.";
+}
+
+function normalizeContactNotes(contactNotes: unknown) {
+  return Array.isArray(contactNotes) ? contactNotes.filter(Boolean) : [];
+}
+
+function getPlayerRoleHint(roleHint: unknown, seedOrder: number) {
+  return typeof roleHint === "string" && roleHint.trim()
+    ? roleHint.trim()
+    : defaultRoleHint(seedOrder);
 }
 
 function createPlayerId(name: string, seedOrder: number) {
@@ -581,8 +738,5 @@ function createPlayerId(name: string, seedOrder: number) {
 }
 
 function defaultRoleHint(seedOrder: number) {
-  if (seedOrder === 1) return "High OBP table-setter";
-  if (seedOrder <= 3) return "Contact hitter";
-  if (seedOrder <= 5) return "Power hitter";
-  return "Roster hitter";
+  return defaultRoleHints.find((hint) => seedOrder <= hint.maximumSeedOrder)?.roleHint ?? "Roster hitter";
 }

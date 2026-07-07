@@ -117,7 +117,7 @@ export function buildPlannedWork(project) {
   return [
     {
       name: "Set up project manager CLI",
-      complete: project.hasProjectManagerScript && project.hasClickUpClient,
+      complete: hasProjectManagerCli(project),
       markdownContent: [
         "Create the local CLI that reviews repo progress and proposes ClickUp Kanban updates.",
         "",
@@ -150,11 +150,7 @@ export function buildPlannedWork(project) {
     },
     {
       name: "Add starter domain helpers and workflow placeholders",
-      complete:
-        project.hasDomainTypes &&
-        project.hasLineupRules &&
-        project.hasStatCalculations &&
-        project.hasWorkflowPlaceholders,
+      complete: hasStarterDomainWorkflow(project),
       markdownContent: [
         "Add the first project structure for domain types, stat calculations, lineup rules, and the main workflow areas.",
         "",
@@ -444,74 +440,142 @@ export function buildPlannedWork(project) {
   ];
 }
 
-export function proposeOperations({ tasks, project }) {
-  const existingByTitle = new Map();
-  for (const task of tasks) {
-    const normalized = normalizeTaskTitle(task.name);
-    if (normalized && !existingByTitle.has(normalized)) {
-      existingByTitle.set(normalized, task);
-    }
-  }
+function hasProjectManagerCli(project) {
+  return project.hasProjectManagerScript && project.hasClickUpClient;
+}
 
+function hasStarterDomainWorkflow(project) {
+  return [
+    project.hasDomainTypes,
+    project.hasLineupRules,
+    project.hasStatCalculations,
+    project.hasWorkflowPlaceholders
+  ].every(Boolean);
+}
+
+export function proposeOperations({ tasks, project }) {
+  const existingByTitle = mapTasksByNormalizedTitle(tasks);
   const operations = [];
   const doneStatus = findDoneStatus(tasks);
+  const overviewOperation = proposeOverviewOperation(existingByTitle, project);
+
+  if (overviewOperation) {
+    operations.push(overviewOperation);
+  }
+
+  operations.push(...proposePlannedWorkOperations(existingByTitle, buildPlannedWork(project), doneStatus));
+
+  return operations;
+}
+
+function mapTasksByNormalizedTitle(tasks) {
+  const existingByTitle = new Map();
+
+  for (const task of tasks) {
+    addTaskByNormalizedTitle(existingByTitle, task);
+  }
+
+  return existingByTitle;
+}
+
+function addTaskByNormalizedTitle(existingByTitle, task) {
+  const normalized = normalizeTaskTitle(task.name);
+
+  if (normalized && !existingByTitle.has(normalized)) {
+    existingByTitle.set(normalized, task);
+  }
+}
+
+function proposeOverviewOperation(existingByTitle, project) {
   const overviewMarkdown = buildProjectOverview(project);
   const existingOverview = existingByTitle.get(normalizeTaskTitle(PM_TASK_NAME));
 
-  if (existingOverview) {
-    if (existingOverview.description !== overviewMarkdown && existingOverview.text_content !== overviewMarkdown) {
-      operations.push({
-        type: "update_task",
-        reason: "Refresh the project-wide direction and repo signal summary.",
-        taskId: existingOverview.id,
-        taskName: existingOverview.name,
-        patch: {
-          description: overviewMarkdown
-        }
-      });
-    }
-  } else {
-    operations.push({
-      type: "create_task",
-      reason: "Create the project manager overview task.",
-      taskName: PM_TASK_NAME,
-      task: {
-        name: PM_TASK_NAME,
-        description: overviewMarkdown
-      }
-    });
+  if (!existingOverview) {
+    return createOverviewTaskOperation(overviewMarkdown);
   }
 
-  for (const item of buildPlannedWork(project)) {
-    const existingTask = existingByTitle.get(normalizeTaskTitle(item.name));
+  return shouldUpdateOverviewTask(existingOverview, overviewMarkdown)
+    ? updateOverviewTaskOperation(existingOverview, overviewMarkdown)
+    : null;
+}
 
-    if (!existingTask) {
-      operations.push({
-        type: "create_task",
-        reason: item.complete ? "Track completed scaffold work in ClickUp." : "Add missing roadmap work to the Kanban board.",
-        taskName: item.name,
-        task: {
-          name: item.name,
-          markdownContent: item.markdownContent
-        }
-      });
-      continue;
+function createOverviewTaskOperation(overviewMarkdown) {
+  return {
+    type: "create_task",
+    reason: "Create the project manager overview task.",
+    taskName: PM_TASK_NAME,
+    task: {
+      name: PM_TASK_NAME,
+      description: overviewMarkdown
     }
+  };
+}
 
-    if (item.complete && doneStatus && !isTaskInDoneStatus(existingTask, doneStatus)) {
-      operations.push({
-        type: "update_task",
-        reason: "Local repo signals show this work is complete.",
-        taskId: existingTask.id,
-        taskName: existingTask.name,
-        patch: {
-          status: doneStatus
-        }
-      });
+function updateOverviewTaskOperation(existingOverview, overviewMarkdown) {
+  return {
+    type: "update_task",
+    reason: "Refresh the project-wide direction and repo signal summary.",
+    taskId: existingOverview.id,
+    taskName: existingOverview.name,
+    patch: {
+      description: overviewMarkdown
     }
+  };
+}
+
+function shouldUpdateOverviewTask(existingOverview, overviewMarkdown) {
+  return existingOverview.description !== overviewMarkdown && existingOverview.text_content !== overviewMarkdown;
+}
+
+function proposePlannedWorkOperations(existingByTitle, plannedWork, doneStatus) {
+  const operations = [];
+
+  for (const item of plannedWork) {
+    const operation = proposePlannedWorkOperation(existingByTitle, item, doneStatus);
+    if (operation) operations.push(operation);
   }
 
   return operations;
+}
+
+function proposePlannedWorkOperation(existingByTitle, item, doneStatus) {
+  const existingTask = existingByTitle.get(normalizeTaskTitle(item.name));
+
+  if (!existingTask) {
+    return createPlannedWorkOperation(item);
+  }
+
+  return shouldMarkPlannedWorkDone(item, existingTask, doneStatus)
+    ? updatePlannedWorkDoneOperation(existingTask, doneStatus)
+    : null;
+}
+
+function createPlannedWorkOperation(item) {
+  return {
+    type: "create_task",
+    reason: item.complete ? "Track completed scaffold work in ClickUp." : "Add missing roadmap work to the Kanban board.",
+    taskName: item.name,
+    task: {
+      name: item.name,
+      markdownContent: item.markdownContent
+    }
+  };
+}
+
+function shouldMarkPlannedWorkDone(item, existingTask, doneStatus) {
+  return item.complete && doneStatus && !isTaskInDoneStatus(existingTask, doneStatus);
+}
+
+function updatePlannedWorkDoneOperation(existingTask, doneStatus) {
+  return {
+    type: "update_task",
+    reason: "Local repo signals show this work is complete.",
+    taskId: existingTask.id,
+    taskName: existingTask.name,
+    patch: {
+      status: doneStatus
+    }
+  };
 }
 
 export async function applyOperations(client, operations) {
@@ -537,16 +601,7 @@ export async function applyOperations(client, operations) {
 }
 
 export function formatOperations({ project, operations, apply }) {
-  const lines = [
-    "Baseball Stats Tracker Project Manager",
-    "======================================",
-    "",
-    `Mode: ${apply ? "apply" : "dry-run"}`,
-    `Files inspected: ${project.files.length}`,
-    `Git: ${project.gitStatus.available ? `${project.gitStatus.changedFiles.length} changed file(s)` : "not initialized"}`,
-    "",
-    "Proposed ClickUp operations:"
-  ];
+  const lines = buildOperationReportHeader(project, apply);
 
   if (operations.length === 0) {
     lines.push("- No changes proposed.");
@@ -554,21 +609,52 @@ export function formatOperations({ project, operations, apply }) {
   }
 
   for (const operation of operations) {
-    if (operation.type === "create_task") {
-      lines.push(`- create task: ${operation.taskName}`);
-      lines.push(`  reason: ${operation.reason}`);
-      continue;
-    }
-
-    if (operation.type === "update_task") {
-      const patchFields = Object.keys(operation.patch).join(", ");
-      lines.push(`- update task: ${operation.taskName} (${operation.taskId})`);
-      lines.push(`  fields: ${patchFields}`);
-      lines.push(`  reason: ${operation.reason}`);
-    }
+    lines.push(...formatOperationLines(operation));
   }
 
   return lines.join("\n");
+}
+
+function buildOperationReportHeader(project, apply) {
+  return [
+    "Baseball Stats Tracker Project Manager",
+    "======================================",
+    "",
+    `Mode: ${formatApplyMode(apply)}`,
+    `Files inspected: ${project.files.length}`,
+    `Git: ${formatGitStatus(project.gitStatus)}`,
+    "",
+    "Proposed ClickUp operations:"
+  ];
+}
+
+function formatApplyMode(apply) {
+  return apply ? "apply" : "dry-run";
+}
+
+function formatGitStatus(gitStatus) {
+  return gitStatus.available ? `${gitStatus.changedFiles.length} changed file(s)` : "not initialized";
+}
+
+function formatOperationLines(operation) {
+  if (operation.type === "create_task") {
+    return [
+      `- create task: ${operation.taskName}`,
+      `  reason: ${operation.reason}`
+    ];
+  }
+
+  return formatUpdateOperationLines(operation);
+}
+
+function formatUpdateOperationLines(operation) {
+  const patchFields = Object.keys(operation.patch).join(", ");
+
+  return [
+    `- update task: ${operation.taskName} (${operation.taskId})`,
+    `  fields: ${patchFields}`,
+    `  reason: ${operation.reason}`
+  ];
 }
 
 export function validateEnvironment(env = process.env) {
@@ -594,24 +680,40 @@ export function loadDotEnvFile(rootDir = repoRoot) {
   const lines = readFileSync(envPath, "utf8").split(/\r?\n/);
 
   for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-
-    const separatorIndex = trimmed.indexOf("=");
-    if (separatorIndex === -1) {
-      continue;
-    }
-
-    const key = trimmed.slice(0, separatorIndex).trim();
-    const value = trimmed.slice(separatorIndex + 1).trim();
-    if (key) {
-      values[key] = stripOptionalQuotes(value);
-    }
+    assignDotEnvLine(values, line);
   }
 
   return values;
+}
+
+function assignDotEnvLine(values, line) {
+  const parsed = parseDotEnvLine(line);
+
+  if (parsed) {
+    values[parsed.key] = parsed.value;
+  }
+}
+
+function parseDotEnvLine(line) {
+  const trimmed = line.trim();
+
+  if (shouldSkipDotEnvLine(trimmed)) {
+    return null;
+  }
+
+  const separatorIndex = trimmed.indexOf("=");
+  if (separatorIndex === -1) {
+    return null;
+  }
+
+  const key = trimmed.slice(0, separatorIndex).trim();
+  const value = stripOptionalQuotes(trimmed.slice(separatorIndex + 1).trim());
+
+  return key ? { key, value } : null;
+}
+
+function shouldSkipDotEnvLine(trimmed) {
+  return !trimmed || trimmed.startsWith("#");
 }
 
 export async function runProjectManager({
@@ -655,14 +757,25 @@ export async function runProjectManager({
 
   stdout.write(formatOperations({ project, operations, apply }) + "\n");
 
-  if (apply && operations.length > 0) {
-    const results = await applyOperations(client, operations);
-    stdout.write(`\nApplied ${results.length} ClickUp operation(s).\n`);
-  } else if (!apply) {
-    stdout.write("\nDry-run only. Re-run with `yarn pm -- --apply` to apply these operations.\n");
-  }
+  await writeRunResult({ apply, client, operations, stdout });
 
   return 0;
+}
+
+async function writeRunResult({ apply, client, operations, stdout }) {
+  if (shouldApplyOperations(apply, operations)) {
+    const results = await applyOperations(client, operations);
+    stdout.write(`\nApplied ${results.length} ClickUp operation(s).\n`);
+    return;
+  }
+
+  if (!apply) {
+    stdout.write("\nDry-run only. Re-run with `yarn pm -- --apply` to apply these operations.\n");
+  }
+}
+
+function shouldApplyOperations(apply, operations) {
+  return apply && operations.length > 0;
 }
 
 function findDoneStatus(tasks) {
@@ -685,14 +798,19 @@ function formatYesNo(value) {
 }
 
 function stripOptionalQuotes(value) {
-  if (
-    (value.startsWith('"') && value.endsWith('"')) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
+  if (isQuotedValue(value)) {
     return value.slice(1, -1);
   }
 
   return value;
+}
+
+function isQuotedValue(value) {
+  return hasMatchingQuotes(value, '"') || hasMatchingQuotes(value, "'");
+}
+
+function hasMatchingQuotes(value, quote) {
+  return value.startsWith(quote) && value.endsWith(quote);
 }
 
 function fileIncludesText(rootDir, relativePath, text) {
@@ -720,28 +838,43 @@ function listProjectFiles(rootDir) {
 
   function walk(currentDir) {
     for (const entry of readdirSync(currentDir)) {
-      if (ignoredDirectories.has(entry)) {
-        continue;
-      }
-
-      const absolutePath = path.join(currentDir, entry);
-      const relativePath = path.relative(rootDir, absolutePath).replaceAll(path.sep, "/");
-      const stat = statSync(absolutePath);
-
-      if (stat.isDirectory()) {
-        if (relativePath === "src/generated" || relativePath.startsWith("src/generated/")) {
-          continue;
-        }
-
-        walk(absolutePath);
-      } else if (stat.isFile() && !ignoredFiles.some((pattern) => pattern.test(relativePath))) {
-        files.push(relativePath);
-      }
+      visitProjectFileEntry({ currentDir, entry, files, ignoredDirectories, ignoredFiles, rootDir, walk });
     }
   }
 
   walk(rootDir);
   return files.sort();
+}
+
+function visitProjectFileEntry({ currentDir, entry, files, ignoredDirectories, ignoredFiles, rootDir, walk }) {
+  if (ignoredDirectories.has(entry)) {
+    return;
+  }
+
+  const absolutePath = path.join(currentDir, entry);
+  const relativePath = path.relative(rootDir, absolutePath).replaceAll(path.sep, "/");
+  const stat = statSync(absolutePath);
+
+  if (shouldWalkDirectory(stat, relativePath)) {
+    walk(absolutePath);
+    return;
+  }
+
+  if (shouldIncludeProjectFile(stat, relativePath, ignoredFiles)) {
+    files.push(relativePath);
+  }
+}
+
+function shouldWalkDirectory(stat, relativePath) {
+  return stat.isDirectory() && !isGeneratedSourcePath(relativePath);
+}
+
+function isGeneratedSourcePath(relativePath) {
+  return relativePath === "src/generated" || relativePath.startsWith("src/generated/");
+}
+
+function shouldIncludeProjectFile(stat, relativePath, ignoredFiles) {
+  return stat.isFile() && !ignoredFiles.some((pattern) => pattern.test(relativePath));
 }
 
 function readGitStatus(rootDir) {

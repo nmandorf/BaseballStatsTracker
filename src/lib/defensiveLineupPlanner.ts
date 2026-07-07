@@ -52,63 +52,22 @@ export function buildFullGameDefensiveLineupPlan(
 
   const inningCount = input.inningCount ?? defaultDefensiveInningCount;
   const protectedPlayerIds = getProtectedFemalePlayerIds(input.players);
-  const firstAlignment = resolveFirstAlignment({
-    players: input.players,
-    inning: input.firstInning,
-    half: input.half,
-    startingAlignment: input.startingAlignment,
-    protectedPlayerIds,
-  });
-  const lockedPitcherPlayerId = firstAlignment.slots.P?.status === "ASSIGNED"
-    ? firstAlignment.slots.P.playerId
-    : null;
+  const firstAlignment = getFirstDefensiveLineupAlignment(input, protectedPlayerIds);
+  const lockedPitcherPlayerId = getLockedPitcherPlayerId(firstAlignment);
   const canBenchEachPlayerAtMostOnce = canAvoidRepeatBenchSits(
     input.players,
     inningCount,
     protectedPlayerIds,
     lockedPitcherPlayerId,
   );
-  const alignments = [firstAlignment];
-
-  for (let inningOffset = 1; inningOffset < inningCount; inningOffset += 1) {
-    const inning = input.firstInning + inningOffset;
-    const requiredPlayerIds = getRequiredPlayerIdsForInning({
-      players: input.players,
-      priorAlignments: alignments,
-      protectedPlayerIds,
-      lockedPitcherPlayerId,
-      canBenchEachPlayerAtMostOnce,
-    });
-
-    alignments.push(generateDefensiveAlignment({
-      players: input.players,
-      priorAlignments: alignments,
-      inning,
-      half: input.half,
-      lockedPitcherPlayerId,
-      requiredPlayerIds,
-    }));
-  }
-
-  const rows = input.players.map((player, index) => {
-    const cells = alignments.map((alignment) => {
-      const assignedPosition = getAssignedPositionForPlayer(alignment, player.id);
-
-      return {
-        inning: alignment.inning,
-        value: assignedPosition ?? "B",
-        isBench: !assignedPosition,
-      };
-    });
-
-    return {
-      playerId: player.id,
-      playerName: player.name,
-      battingOrderPosition: index + 1,
-      cells,
-      benchCount: cells.filter((cell) => cell.isBench).length,
-    };
+  const alignments = buildDefensiveLineupAlignments({
+    input,
+    firstAlignment,
+    protectedPlayerIds,
+    lockedPitcherPlayerId,
+    canBenchEachPlayerAtMostOnce,
   });
+  const rows = buildDefensiveLineupRows(input.players, alignments);
 
   return {
     inningCount,
@@ -124,6 +83,119 @@ export function buildFullGameDefensiveLineupPlan(
     protectedPlayerIds: Array.from(protectedPlayerIds),
     lockedPitcherPlayerId,
     canBenchEachPlayerAtMostOnce,
+  };
+}
+
+function getFirstDefensiveLineupAlignment(
+  input: BuildFullGameDefensiveLineupPlanInput,
+  protectedPlayerIds: Set<string>,
+) {
+  return resolveFirstAlignment({
+    players: input.players,
+    inning: input.firstInning,
+    half: input.half,
+    startingAlignment: input.startingAlignment,
+    protectedPlayerIds,
+  });
+}
+
+function getLockedPitcherPlayerId(firstAlignment: DefensiveAlignment) {
+  return firstAlignment.slots.P?.status === "ASSIGNED"
+    ? firstAlignment.slots.P.playerId
+    : null;
+}
+
+function buildDefensiveLineupAlignments({
+  input,
+  firstAlignment,
+  protectedPlayerIds,
+  lockedPitcherPlayerId,
+  canBenchEachPlayerAtMostOnce,
+}: {
+  input: Required<Pick<BuildFullGameDefensiveLineupPlanInput, "players" | "firstInning" | "half">> & Pick<BuildFullGameDefensiveLineupPlanInput, "inningCount" | "startingAlignment">;
+  firstAlignment: DefensiveAlignment;
+  protectedPlayerIds: Set<string>;
+  lockedPitcherPlayerId: string | null;
+  canBenchEachPlayerAtMostOnce: boolean;
+}) {
+  const inningCount = input.inningCount ?? defaultDefensiveInningCount;
+  const alignments = [firstAlignment];
+
+  for (let inningOffset = 1; inningOffset < inningCount; inningOffset += 1) {
+    alignments.push(buildNextDefensiveLineupAlignment({
+      input,
+      inningOffset,
+      priorAlignments: alignments,
+      protectedPlayerIds,
+      lockedPitcherPlayerId,
+      canBenchEachPlayerAtMostOnce,
+    }));
+  }
+
+  return alignments;
+}
+
+function buildNextDefensiveLineupAlignment({
+  input,
+  inningOffset,
+  priorAlignments,
+  protectedPlayerIds,
+  lockedPitcherPlayerId,
+  canBenchEachPlayerAtMostOnce,
+}: {
+  input: Pick<BuildFullGameDefensiveLineupPlanInput, "players" | "firstInning" | "half">;
+  inningOffset: number;
+  priorAlignments: DefensiveAlignment[];
+  protectedPlayerIds: Set<string>;
+  lockedPitcherPlayerId: string | null;
+  canBenchEachPlayerAtMostOnce: boolean;
+}) {
+  const inning = input.firstInning + inningOffset;
+  const requiredPlayerIds = getRequiredPlayerIdsForInning({
+    players: input.players,
+    priorAlignments,
+    protectedPlayerIds,
+    lockedPitcherPlayerId,
+    canBenchEachPlayerAtMostOnce,
+  });
+
+  return generateDefensiveAlignment({
+    players: input.players,
+    priorAlignments,
+    inning,
+    half: input.half,
+    lockedPitcherPlayerId,
+    requiredPlayerIds,
+  });
+}
+
+function buildDefensiveLineupRows(players: Player[], alignments: DefensiveAlignment[]) {
+  return players.map((player, index) => buildDefensiveLineupRow(player, index, alignments));
+}
+
+function buildDefensiveLineupRow(
+  player: Player,
+  index: number,
+  alignments: DefensiveAlignment[],
+): FullGameDefensiveLineupRow {
+  const cells = alignments.map((alignment) => buildDefensiveLineupCell(player.id, alignment));
+
+  return {
+    playerId: player.id,
+    playerName: player.name,
+    battingOrderPosition: index + 1,
+    cells,
+    benchCount: cells.filter((cell) => cell.isBench).length,
+  };
+}
+
+function buildDefensiveLineupCell(playerId: string, alignment: DefensiveAlignment) {
+  const assignedPosition = getAssignedPositionForPlayer(alignment, playerId);
+
+  return {
+    inning: alignment.inning,
+    value: assignedPosition ?? "B",
+    isBench: !assignedPosition,
   };
 }
 

@@ -1,59 +1,63 @@
 import type { GameRules } from "@/types/game";
 import { defaultGameRules } from "./seedTeam.ts";
 
+const homeRunLimitOutcomes = new Set<GameRules["afterHomeRunLimit"]>(["Out", "Single", "Other"]);
+const booleanRuleKeys = [
+  "homeRunLimitEnabled",
+  "courtesyRunnersAllowed",
+  "walksAllowed",
+  "sacFliesTracked",
+  "errorsTracked",
+  "fieldersChoicesTracked",
+] as const;
+
 export function normalizeGameRules(rules: Partial<GameRules> | undefined): GameRules {
+  const normalizedRules = rules ?? {};
+
   return {
-    homeRunLimitEnabled:
-      typeof rules?.homeRunLimitEnabled === "boolean"
-        ? rules.homeRunLimitEnabled
-        : defaultGameRules.homeRunLimitEnabled,
-    homeRunLimit: normalizePositiveInteger(rules?.homeRunLimit, defaultGameRules.homeRunLimit),
-    afterHomeRunLimit: isHomeRunLimitOutcome(rules?.afterHomeRunLimit)
-      ? rules.afterHomeRunLimit
-      : defaultGameRules.afterHomeRunLimit,
-    runLimitPerInning:
-      rules?.runLimitPerInning === null
-        ? null
-        : normalizeNullablePositiveInteger(rules?.runLimitPerInning, defaultGameRules.runLimitPerInning),
-    mercyRule:
-      typeof rules?.mercyRule === "string" && rules.mercyRule.trim()
-        ? rules.mercyRule.trim()
-        : defaultGameRules.mercyRule,
-    courtesyRunnersAllowed:
-      typeof rules?.courtesyRunnersAllowed === "boolean"
-        ? rules.courtesyRunnersAllowed
-        : defaultGameRules.courtesyRunnersAllowed,
-    walksAllowed:
-      typeof rules?.walksAllowed === "boolean"
-        ? rules.walksAllowed
-        : defaultGameRules.walksAllowed,
-    sacFliesTracked:
-      typeof rules?.sacFliesTracked === "boolean"
-        ? rules.sacFliesTracked
-        : defaultGameRules.sacFliesTracked,
-    errorsTracked:
-      typeof rules?.errorsTracked === "boolean"
-        ? rules.errorsTracked
-        : defaultGameRules.errorsTracked,
-    fieldersChoicesTracked:
-      typeof rules?.fieldersChoicesTracked === "boolean"
-        ? rules.fieldersChoicesTracked
-        : defaultGameRules.fieldersChoicesTracked,
+    ...normalizeBooleanRules(normalizedRules),
+    homeRunLimit: normalizePositiveInteger(normalizedRules.homeRunLimit, defaultGameRules.homeRunLimit),
+    afterHomeRunLimit: normalizeHomeRunLimitOutcome(normalizedRules.afterHomeRunLimit),
+    runLimitPerInning: normalizeRunLimitPerInning(normalizedRules.runLimitPerInning),
+    mercyRule: normalizeMercyRule(normalizedRules.mercyRule),
   };
 }
 
-function normalizePositiveInteger(value: unknown, fallback: number) {
+function normalizeBooleanRules(rules: Partial<GameRules>) {
+  return Object.fromEntries(
+    booleanRuleKeys.map((key) => [
+      key,
+      normalizeBooleanSetting(rules[key], defaultGameRules[key]),
+    ]),
+  ) as Pick<GameRules, (typeof booleanRuleKeys)[number]>;
+}
+
+function normalizeBooleanSetting(value: unknown, fallback: boolean) {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+function normalizePositiveInteger(value: unknown, fallback: number): number;
+function normalizePositiveInteger(value: unknown, fallback: number | null): number | null;
+function normalizePositiveInteger(value: unknown, fallback: number | null) {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
-function normalizeNullablePositiveInteger(value: unknown, fallback: number | null) {
-  if (typeof value === "number" && Number.isInteger(value) && value > 0) {
-    return value;
-  }
+function normalizeRunLimitPerInning(value: unknown) {
+  return value === null
+    ? null
+    : normalizePositiveInteger(value, defaultGameRules.runLimitPerInning);
+}
 
-  return fallback;
+function normalizeMercyRule(value: unknown) {
+  return typeof value === "string" && value.trim()
+    ? value.trim()
+    : defaultGameRules.mercyRule;
+}
+
+function normalizeHomeRunLimitOutcome(value: unknown) {
+  return isHomeRunLimitOutcome(value) ? value : defaultGameRules.afterHomeRunLimit;
 }
 
 function isHomeRunLimitOutcome(value: unknown): value is GameRules["afterHomeRunLimit"] {
-  return value === "Out" || value === "Single" || value === "Other";
+  return homeRunLimitOutcomes.has(value as GameRules["afterHomeRunLimit"]);
 }

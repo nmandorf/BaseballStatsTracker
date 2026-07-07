@@ -39,53 +39,123 @@ export function HomeAuthEntry() {
   const activeTeam = useActiveTeam();
   const { schedule, isLoading: isScheduleLoading, error: scheduleError, reload: reloadSchedule } = useTeamSchedule(activeTeam?.id ?? null);
 
-  if (isLoading) {
-    return <HomeLoadingState />;
-  }
+  return renderHomeAuthState({
+    activeTeam,
+    isLoading,
+    isScheduleLoading,
+    reloadSchedule,
+    schedule,
+    scheduleError,
+    user,
+  });
+}
 
-  if (!user) {
-    return (
-      <Suspense fallback={<HomeLoadingState />}>
-        <FirebaseLogin
-          defaultRedirect="/"
-          showHomeLink={false}
-        />
-      </Suspense>
-    );
-  }
+function renderHomeAuthState({
+  activeTeam,
+  isLoading,
+  isScheduleLoading,
+  reloadSchedule,
+  schedule,
+  scheduleError,
+  user,
+}: {
+  activeTeam: ReturnType<typeof useActiveTeam>;
+  isLoading: boolean;
+  isScheduleLoading: boolean;
+  reloadSchedule: () => void;
+  schedule: ReturnType<typeof useTeamSchedule>["schedule"];
+  scheduleError: string | null;
+  user: ReturnType<typeof useAuth>["user"];
+}) {
+  if (isLoading) return <HomeLoadingState />;
+  if (!hasSignedInSelectedTeam(user, activeTeam)) return <HomeLoginState />;
+  return renderSelectedTeamHomeState({ activeTeam, isScheduleLoading, reloadSchedule, schedule, scheduleError });
+}
 
-  const hasSelectedTeam = activeTeam?.ownerUid === user.uid && Boolean(activeTeam.id);
+function renderSelectedTeamHomeState({
+  activeTeam,
+  isScheduleLoading,
+  reloadSchedule,
+  schedule,
+  scheduleError,
+}: {
+  activeTeam: NonNullable<ReturnType<typeof useActiveTeam>>;
+  isScheduleLoading: boolean;
+  reloadSchedule: () => void;
+  schedule: ReturnType<typeof useTeamSchedule>["schedule"];
+  scheduleError: string | null;
+}) {
+  if (!activeTeam.scheduleSetupCompleted) return <FinishScheduleState activeTeam={activeTeam} />;
+  return renderCompletedScheduleHomeState({ isScheduleLoading, reloadSchedule, schedule, scheduleError });
+}
 
-  if (!hasSelectedTeam) {
-    return (
-      <Suspense fallback={<HomeLoadingState />}>
-        <FirebaseLogin
-          defaultRedirect="/"
-          showHomeLink={false}
-        />
-      </Suspense>
-    );
-  }
-
-  if (!activeTeam.scheduleSetupCompleted) {
-    return <section className="bg-background py-6"><div className="mx-auto w-full max-w-4xl px-4"><h1 className="text-2xl font-black text-foreground">Finish your team schedule</h1><div className="mt-4"><ScheduleEditor teamId={activeTeam.id} onSaved={(saved) => saveActiveTeam({ ...activeTeam, timeZone: saved.timeZone, scheduleSetupCompleted: true })} /></div></div></section>;
-  }
-
+function renderCompletedScheduleHomeState({
+  isScheduleLoading,
+  reloadSchedule,
+  schedule,
+  scheduleError,
+}: {
+  isScheduleLoading: boolean;
+  reloadSchedule: () => void;
+  schedule: ReturnType<typeof useTeamSchedule>["schedule"];
+  scheduleError: string | null;
+}) {
   if (isScheduleLoading) return <HomeLoadingState />;
-
-  if (scheduleError || !schedule) {
-    return (
-      <section className="bg-background py-8">
-        <div className="mx-auto grid w-full max-w-4xl gap-4 px-4 sm:px-6">
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-5">
-            <h1 className="text-xl font-black text-foreground">Your schedule could not load</h1>
-            <p className="mt-2 text-sm font-semibold text-[var(--muted-foreground)]">{scheduleError ?? "The schedule service did not return your team schedule."}</p>
-            <button className="btn-base btn-primary mt-4 min-h-11 px-4 text-sm" onClick={() => void reloadSchedule()} type="button">Try Again</button>
-          </div>
-        </div>
-      </section>
-    );
-  }
-
+  if (!schedule || scheduleError) return <ScheduleLoadErrorState onReload={reloadSchedule} scheduleError={scheduleError} />;
   return <HomeHeroSection schedule={schedule} />;
+}
+
+function HomeLoginState() {
+  return (
+    <Suspense fallback={<HomeLoadingState />}>
+      <FirebaseLogin defaultRedirect="/" showHomeLink={false} />
+    </Suspense>
+  );
+}
+
+function FinishScheduleState({ activeTeam }: { activeTeam: NonNullable<ReturnType<typeof useActiveTeam>> }) {
+  return (
+    <section className="bg-background py-6">
+      <div className="mx-auto w-full max-w-4xl px-4">
+        <h1 className="text-2xl font-black text-foreground">Finish your team schedule</h1>
+        <div className="mt-4">
+          <ScheduleEditor
+            teamId={activeTeam.id}
+            onSaved={(saved) => saveActiveTeam({ ...activeTeam, timeZone: saved.timeZone, scheduleSetupCompleted: true })}
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ScheduleLoadErrorState({
+  onReload,
+  scheduleError,
+}: {
+  onReload: () => void;
+  scheduleError: string | null;
+}) {
+  return (
+    <section className="bg-background py-8">
+      <div className="mx-auto grid w-full max-w-4xl gap-4 px-4 sm:px-6">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--card)] p-5">
+          <h1 className="text-xl font-black text-foreground">Your schedule could not load</h1>
+          <p className="mt-2 text-sm font-semibold text-[var(--muted-foreground)]">
+            {scheduleError ?? "The schedule service did not return your team schedule."}
+          </p>
+          <button className="btn-base btn-primary mt-4 min-h-11 px-4 text-sm" onClick={() => void onReload()} type="button">
+            Try Again
+          </button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function hasSignedInSelectedTeam(
+  user: ReturnType<typeof useAuth>["user"],
+  activeTeam: ReturnType<typeof useActiveTeam>,
+): activeTeam is NonNullable<ReturnType<typeof useActiveTeam>> {
+  return Boolean(user && activeTeam?.ownerUid === user.uid && activeTeam.id);
 }

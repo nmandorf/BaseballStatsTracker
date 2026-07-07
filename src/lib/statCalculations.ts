@@ -107,10 +107,27 @@ export function derivePriorStats(stats: PlayerStats): PlayerStats {
 }
 
 export function getPriorStatsValidationError(stats: PlayerStats): string | null {
+  return firstStatsValidationError([
+    getSacFliesValidationError(stats),
+    getClassifiedOutsValidationError(stats),
+    getDoublePlaysValidationError(stats),
+    getProductiveOutsValidationError(stats),
+  ]);
+}
+
+function firstStatsValidationError(errors: Array<string | null>) {
+  return errors.find(Boolean) ?? null;
+}
+
+function getSacFliesValidationError(stats: PlayerStats) {
   if (stats.sacFlies > stats.outs) {
     return "Sac flies cannot be greater than total outs.";
   }
 
+  return null;
+}
+
+function getClassifiedOutsValidationError(stats: PlayerStats) {
   const classifiedOuts =
     stats.groundouts +
     stats.flyouts +
@@ -124,10 +141,18 @@ export function getPriorStatsValidationError(stats: PlayerStats): string | null 
     return `Total outs must be at least ${classifiedOuts + stats.sacFlies} to preserve saved out types and sac flies.`;
   }
 
+  return null;
+}
+
+function getDoublePlaysValidationError(stats: PlayerStats) {
   if (stats.doublePlays > stats.outs) {
     return "Double plays cannot be greater than total outs.";
   }
 
+  return null;
+}
+
+function getProductiveOutsValidationError(stats: PlayerStats) {
   if (stats.productiveOuts > stats.outs) {
     return "Productive outs cannot be greater than total outs.";
   }
@@ -168,43 +193,103 @@ export function addBatterResult(
     rbis: normalized.rbis + rbis,
   };
 
-  if (result !== "BB" && result !== "SF") {
+  if (countsAsAtBat(result)) {
     next.atBats += 1;
   }
 
-  if (result === "1B") {
-    next.hits += 1;
-    next.singles += 1;
-  } else if (result === "2B") {
-    next.hits += 1;
-    next.doubles += 1;
-  } else if (result === "3B") {
-    next.hits += 1;
-    next.triples += 1;
-  } else if (result === "HR") {
-    next.hits += 1;
-    next.homeRuns += 1;
-  } else if (result === "BB") {
-    next.walks += 1;
-  } else if (result === "ROE") {
-    next.reachedOnError += 1;
-  } else if (result === "FC") {
-    next.fieldersChoice += 1;
-  } else if (result === "SF") {
-    next.sacFlies += 1;
-    next.outs += 1;
-    if (productiveOut) next.productiveOuts += 1;
-  } else if (result === "Out" || result === "DP") {
-    next.outs += 1;
-    if (result === "Out") {
-      addOutTypeCounter(next, outType);
-      if (productiveOut) next.productiveOuts += 1;
-    } else {
-      next.doublePlays += 1;
-    }
-  }
+  applyBatterResultCounters(next, result, outType, productiveOut);
 
   return next;
+}
+
+function countsAsAtBat(result: BatterResult) {
+  return result !== "BB" && result !== "SF";
+}
+
+function applyBatterResultCounters(
+  stats: PlayerStats,
+  result: BatterResult,
+  outType: OutType | undefined,
+  productiveOut: boolean,
+) {
+  const resultCounter = batterResultCounters[result];
+
+  if (resultCounter) {
+    resultCounter(stats);
+    return;
+  }
+
+  applyOutResultCounters(stats, result, outType, productiveOut);
+}
+
+const batterResultCounters: Partial<Record<BatterResult, (stats: PlayerStats) => void>> = {
+  "1B": (stats) => {
+    stats.hits += 1;
+    stats.singles += 1;
+  },
+  "2B": (stats) => {
+    stats.hits += 1;
+    stats.doubles += 1;
+  },
+  "3B": (stats) => {
+    stats.hits += 1;
+    stats.triples += 1;
+  },
+  HR: (stats) => {
+    stats.hits += 1;
+    stats.homeRuns += 1;
+  },
+  BB: (stats) => {
+    stats.walks += 1;
+  },
+  ROE: (stats) => {
+    stats.reachedOnError += 1;
+  },
+  FC: (stats) => {
+    stats.fieldersChoice += 1;
+  },
+};
+
+function applyOutResultCounters(
+  stats: PlayerStats,
+  result: BatterResult,
+  outType: OutType | undefined,
+  productiveOut: boolean,
+) {
+  outResultCounters[result]?.(stats, outType, productiveOut);
+}
+
+type OutResultCounter = (
+  stats: PlayerStats,
+  outType: OutType | undefined,
+  productiveOut: boolean,
+) => void;
+
+const outResultCounters: Partial<Record<BatterResult, OutResultCounter>> = {
+  SF: addSacFlyCounter,
+  Out: addNormalOutCounter,
+  DP: addDoublePlayCounter,
+};
+
+function addSacFlyCounter(stats: PlayerStats, _outType: OutType | undefined, productiveOut: boolean) {
+  stats.sacFlies += 1;
+  stats.outs += 1;
+  addProductiveOutCounter(stats, productiveOut);
+}
+
+function addNormalOutCounter(stats: PlayerStats, outType: OutType | undefined, productiveOut: boolean) {
+  stats.outs += 1;
+  addOutTypeCounter(stats, outType);
+  addProductiveOutCounter(stats, productiveOut);
+}
+
+function addDoublePlayCounter(stats: PlayerStats) {
+  stats.outs += 1;
+  stats.doublePlays += 1;
+}
+
+function addProductiveOutCounter(stats: PlayerStats, productiveOut: boolean) {
+  if (productiveOut) stats.productiveOuts += 1;
 }
 
 export function addRunnerOut(stats: PlayerStats): PlayerStats {
@@ -230,20 +315,18 @@ export function divide(numerator: number, denominator: number) {
 }
 
 function addOutTypeCounter(stats: PlayerStats, outType: OutType | undefined) {
-  if (outType === "GROUNDOUT") {
-    stats.groundouts += 1;
-  } else if (outType === "FLYOUT") {
-    stats.flyouts += 1;
-  } else if (outType === "LINEOUT") {
-    stats.lineouts += 1;
-  } else if (outType === "STRIKEOUT_LOOKING") {
-    stats.strikeoutsLooking += 1;
-  } else if (outType === "STRIKEOUT_SWINGING") {
-    stats.strikeoutsSwinging += 1;
-  } else {
-    stats.otherOuts += 1;
-  }
+  const outCounterKey = outTypeCounterKeys[outType ?? "OTHER_OUT"];
+  stats[outCounterKey] += 1;
 }
+
+const outTypeCounterKeys = {
+  GROUNDOUT: "groundouts",
+  FLYOUT: "flyouts",
+  LINEOUT: "lineouts",
+  STRIKEOUT_LOOKING: "strikeoutsLooking",
+  STRIKEOUT_SWINGING: "strikeoutsSwinging",
+  OTHER_OUT: "otherOuts",
+} as const satisfies Record<OutType, keyof PlayerStats>;
 
 function statValue(stats: PlayerStats, key: keyof PlayerStats) {
   return stats[key] ?? 0;

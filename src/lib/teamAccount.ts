@@ -12,35 +12,32 @@ export const legacyTeamAccount: TeamAccount = {
 };
 
 export async function readVerifiedTeamAccountFromRequest(request: Request): Promise<TeamAccount> {
-  const authorization = request.headers.get("authorization") ?? "";
-  const idToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
-  const apiKey = firebaseConfig.apiKey;
-
-  if (!idToken || !apiKey) {
-    throw new AppError("AUTH_REQUIRED", "Sign in again before changing team data.", 401);
-  }
-
-  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ idToken }),
-    cache: "no-store",
-  });
+  const { apiKey, idToken } = getFirebaseLookupCredentials(request);
+  const response = await fetchFirebaseAccountLookup(apiKey, idToken);
   const payload = await response.json() as { users?: Array<{ localId?: string; email?: string }> };
   const user = payload.users?.[0];
 
-  if (!response.ok || !user?.localId) {
+  if (!isVerifiedFirebaseUser(response, user)) {
     throw new AppError("AUTH_REQUIRED", "Your sign-in could not be verified. Sign in again.", 401);
   }
 
   return normalizeTeamAccount(user.localId, user.email);
 }
 
+function getFirebaseLookupCredentials(request: Request) {
+  const idToken = getBearerToken(request);
+  const apiKey = firebaseConfig.apiKey;
+
+  if (!idToken || !apiKey) {
+    throw new AppError("AUTH_REQUIRED", "Sign in again before changing team data.", 401);
+  }
+
+  return { apiKey, idToken };
+}
+
 export function normalizeTeamAccount(uid: unknown, email: unknown): TeamAccount {
-  const normalizedUid = typeof uid === "string" ? uid.trim() : "";
-  const normalizedEmail = typeof email === "string" && email.trim()
-    ? email.trim()
-    : null;
+  const normalizedUid = normalizeAccountUid(uid);
+  const normalizedEmail = normalizeAccountEmail(email);
 
   if (!normalizedUid) {
     return legacyTeamAccount;
@@ -50,6 +47,40 @@ export function normalizeTeamAccount(uid: unknown, email: unknown): TeamAccount 
     uid: normalizedUid,
     email: normalizedEmail,
   };
+}
+
+function getBearerToken(request: Request) {
+  const authorization = request.headers.get("authorization") ?? "";
+  return authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
+}
+
+function fetchFirebaseAccountLookup(apiKey: string, idToken: string) {
+  return fetch(`https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(apiKey)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ idToken }),
+    cache: "no-store",
+  });
+}
+
+function isVerifiedFirebaseUser(
+  response: Response,
+  user: { localId?: string; email?: string } | undefined,
+): user is { localId: string; email?: string } {
+  return response.ok && Boolean(user?.localId);
+}
+
+function normalizeAccountUid(uid: unknown) {
+  return typeof uid === "string" ? uid.trim() : "";
+}
+
+function normalizeAccountEmail(email: unknown) {
+  if (typeof email !== "string") {
+    return null;
+  }
+
+  const normalizedEmail = email.trim();
+  return normalizedEmail || null;
 }
 
 export function canUseStoredTeam(

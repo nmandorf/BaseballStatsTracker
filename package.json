@@ -10,6 +10,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "fallow:health": "fallow health --min-score 80",
+    "fallow:audit": "fallow audit --base main",
     "postinstall": "prisma generate",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma validate",
@@ -43,6 +45,7 @@
     "dotenv": "^17.4.2",
     "eslint": "^9",
     "eslint-config-next": "16.2.7",
+    "fallow": "^2.103.0",
     "prisma": "^7.8.0",
     "tailwindcss": "^4",
     "typescript": "^5"

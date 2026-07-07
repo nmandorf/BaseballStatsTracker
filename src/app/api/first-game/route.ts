@@ -80,8 +80,8 @@ async function parseJson(request: Request) {
 }
 
 function parseFirstGameSyncPayload(payload: unknown): FirstGameSyncPayload {
-  const state = isRecord(payload) && "state" in payload ? payload.state : payload;
-  const team = isRecord(payload) && "state" in payload && isActiveTeam(payload.team) ? payload.team : undefined;
+  const state = getFirstGameStatePayload(payload);
+  const team = getFirstGameTeamPayload(payload);
 
   if (!isGameState(state)) {
     throw validationError("FIRST_GAME_STATE_INVALID", "First game state is required.", { field: "state" });
@@ -91,20 +91,9 @@ function parseFirstGameSyncPayload(payload: unknown): FirstGameSyncPayload {
 }
 
 function isGameState(value: unknown): value is GameState {
-  return (
-    isRecord(value) &&
-    typeof value.status === "string" &&
-    Array.isArray(value.lineup) &&
-    typeof value.currentBatterIndex === "number" &&
-    typeof value.inning === "number" &&
-    typeof value.outs === "number" &&
-    typeof value.teamScore === "number" &&
-    typeof value.opponentScore === "number" &&
-    isRecord(value.bases) &&
-    isRecord(value.statsByPlayerId) &&
-    Array.isArray(value.plays) &&
-    Array.isArray(value.history)
-  );
+  return isRecord(value)
+    && hasGameStateScalars(value)
+    && hasGameStateCollections(value);
 }
 
 function isActiveTeam(value: unknown): value is ActiveTeam {
@@ -118,6 +107,39 @@ function isActiveTeam(value: unknown): value is ActiveTeam {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function getFirstGameStatePayload(payload: unknown) {
+  return hasStatePayload(payload) ? payload.state : payload;
+}
+
+function getFirstGameTeamPayload(payload: unknown) {
+  return hasStatePayload(payload) && isActiveTeam(payload.team) ? payload.team : undefined;
+}
+
+function hasStatePayload(payload: unknown): payload is Record<string, unknown> & { state: unknown } {
+  return isRecord(payload) && "state" in payload;
+}
+
+function hasGameStateScalars(value: Record<string, unknown>) {
+  return [
+    typeof value.status === "string",
+    typeof value.currentBatterIndex === "number",
+    typeof value.inning === "number",
+    typeof value.outs === "number",
+    typeof value.teamScore === "number",
+    typeof value.opponentScore === "number",
+  ].every(Boolean);
+}
+
+function hasGameStateCollections(value: Record<string, unknown>) {
+  return [
+    Array.isArray(value.lineup),
+    isRecord(value.bases),
+    isRecord(value.statsByPlayerId),
+    Array.isArray(value.plays),
+    Array.isArray(value.history),
+  ].every(Boolean);
 }
 
 function firstGameError(error: unknown) {
