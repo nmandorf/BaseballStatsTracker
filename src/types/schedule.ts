@@ -26,6 +26,7 @@ export type ScheduleWeek =
       opponentScore: number;
       result: "WIN" | "LOSS" | "TIE" | null;
       playCount: number;
+      hasBoxScore: boolean;
     };
 
 export type TeamSchedule = {

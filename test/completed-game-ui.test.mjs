@@ -30,6 +30,12 @@ test("season stats page owns the game history card", () => {
   assert.match(seasonStatsSource, /<GameHistoryCard games=\{gameHistory\}/);
 });
 
+test("game history carries backend box score state for imported finals", () => {
+  assert.match(seasonStatsSource, /hasBoxScore: week\.hasBoxScore/);
+  assert.match(statsEntrySource, /Box score saved/);
+  assert.match(statsEntrySource, /No plays saved/);
+});
+
 test("season and roster overall stats trust persisted player season rows", () => {
   assert.match(seasonStatsSource, /const stats = player\.seasonStats/);
   assert.match(seasonStatsSource, /getTeamSeasonTotals\(activeTeam\.players\)/);

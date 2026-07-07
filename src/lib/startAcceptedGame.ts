@@ -49,8 +49,8 @@ export async function startAcceptedGame(input: StartAcceptedGameInput): Promise<
     startingDefense,
   );
 
-  const preparationError = await saveAcceptedPreparation(gameId, acceptedSetup);
-  const startedSetup = await startScheduledGame(gameId, acceptedSetup, preparationError);
+  await saveAcceptedPreparation(gameId, acceptedSetup);
+  const startedSetup = await startScheduledGame(gameId, acceptedSetup);
   const startedPlayers = resolveStartedPlayers(startedSetup, input.activeTeam);
   const gameState = initializeStartingDefense(
     createStartedGameState(gameId, startedSetup, startedPlayers),
@@ -99,16 +99,15 @@ async function saveAcceptedPreparation(gameId: string, acceptedSetup: PregameSet
   });
 
   if (preparationResponse.ok) {
-    return null;
+    return;
   }
 
-  return readApiErrorMessage(preparationResponse, "Unable to save the accepted lineup.");
+  throw new Error(await readApiErrorMessage(preparationResponse, "Unable to save the accepted lineup."));
 }
 
 async function startScheduledGame(
   gameId: string,
   acceptedSetup: PregameSetup,
-  preparationError: string | null,
 ) {
   const startResponse = await fetch(`/api/games/${encodeURIComponent(gameId)}/start`, {
     method: "POST",
@@ -117,7 +116,7 @@ async function startScheduledGame(
 
   if (!startResponse.ok) {
     const startErrorMessage = await readApiErrorMessage(startResponse, "Unable to start this game.");
-    throw new Error(preparationError ? `${startErrorMessage} ${preparationError}` : startErrorMessage);
+    throw new Error(startErrorMessage);
   }
 
   const startPayload = await startResponse.json() as { preparation?: PregameSetup };

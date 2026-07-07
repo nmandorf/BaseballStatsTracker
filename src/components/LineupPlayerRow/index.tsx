@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, GripVertical } from "lucide-react";
 import type { RecommendedLineupRow } from "@/lib/lineupRules";
 
 type LineupPlayerRowProps = {
+  controlsDisabled?: boolean;
   index: number;
   isFirst: boolean;
   isLast: boolean;
@@ -11,7 +12,7 @@ type LineupPlayerRowProps = {
   row: RecommendedLineupRow;
 };
 
-export function LineupPlayerRow({ index, isFirst, isLast, onMovePlayer, row }: LineupPlayerRowProps) {
+export function LineupPlayerRow({ controlsDisabled = false, index, isFirst, isLast, onMovePlayer, row }: LineupPlayerRowProps) {
   return (
     <div
       className="grid grid-cols-[auto_1fr_auto] items-center gap-3 rounded-lg bg-[var(--surface)] px-3 py-2.5"
@@ -34,7 +35,7 @@ export function LineupPlayerRow({ index, isFirst, isLast, onMovePlayer, row }: L
         <button
           aria-label={`Move ${row.player.name} up`}
           className="btn-base btn-secondary size-9 min-h-0 p-0 text-[var(--accent)]"
-          disabled={isFirst}
+          disabled={controlsDisabled || isFirst}
           onClick={() => onMovePlayer(index, -1)}
           type="button"
         >
@@ -43,7 +44,7 @@ export function LineupPlayerRow({ index, isFirst, isLast, onMovePlayer, row }: L
         <button
           aria-label={`Move ${row.player.name} down`}
           className="btn-base btn-secondary size-9 min-h-0 p-0 text-[var(--accent)]"
-          disabled={isLast}
+          disabled={controlsDisabled || isLast}
           onClick={() => onMovePlayer(index, 1)}
           type="button"
         >

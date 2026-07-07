@@ -1,4 +1,4 @@
-import { Save } from "lucide-react";
+import { CheckCircle2, RotateCcw, Sparkles } from "lucide-react";
 import { DefensiveAlignmentEditor } from "@/components/DefensiveAlignmentEditor";
 import { StatusPill } from "@/components/StatusPill";
 import type { DefensiveAlignment, InningHalf } from "@/types/defense";
@@ -10,30 +10,40 @@ type DefenseIssue = {
 };
 
 type StartingDefenseCardProps = {
-  canStartGame: boolean;
+  acceptIsPrimaryAction: boolean;
   defenseAlignment: DefensiveAlignment | null;
+  defenseAccepted: boolean;
+  defenseActionsDisabled: boolean;
   defenseIssues: DefenseIssue[];
+  defenseSaveError: string | null;
   defenseStatusLabel: string;
   firstDefensiveHalf: {
     half: InningHalf;
     inning: number;
   };
+  isSavingStartingDefense: boolean;
   lineupPlayers: Player[];
+  onAcceptDefense: () => void;
   onDefenseChange: (alignment: DefensiveAlignment) => void;
-  onSaveStartingDefense: () => void;
-  startingDefenseSaved: boolean;
+  onGenerateDefense: () => void;
+  onResetDefense: () => void;
 };
 
 export function StartingDefenseCard({
-  canStartGame,
+  acceptIsPrimaryAction,
   defenseAlignment,
+  defenseAccepted,
+  defenseActionsDisabled,
   defenseIssues,
+  defenseSaveError,
   defenseStatusLabel,
   firstDefensiveHalf,
+  isSavingStartingDefense,
   lineupPlayers,
+  onAcceptDefense,
   onDefenseChange,
-  onSaveStartingDefense,
-  startingDefenseSaved,
+  onGenerateDefense,
+  onResetDefense,
 }: StartingDefenseCardProps) {
   return (
     <article className="order-4 rounded-lg border border-[var(--border)] bg-[var(--card)] p-4 shadow-sm shadow-foreground/[0.035] lg:col-span-2">
@@ -46,7 +56,7 @@ export function StartingDefenseCard({
             {firstDefensiveHalf.half} {firstDefensiveHalf.inning}
           </h2>
         </div>
-        <StatusPill tone={canStartGame ? "ready" : "review"}>
+        <StatusPill tone={defenseAccepted ? "done" : "review"}>
           {defenseStatusLabel}
         </StatusPill>
       </div>
@@ -62,18 +72,43 @@ export function StartingDefenseCard({
         ))}
         {defenseAlignment ? (
           <div className="grid gap-3">
-            <button
-              className="btn-base btn-secondary min-h-11 px-4 text-sm sm:w-fit"
-              disabled={defenseIssues.length > 0}
-              onClick={onSaveStartingDefense}
-              type="button"
-            >
-              <Save className="size-4" aria-hidden="true" />
-              Save Defense
-            </button>
-            {startingDefenseSaved ? (
+            <div className="grid gap-2 sm:grid-cols-3">
+              <button
+                className="btn-base btn-secondary min-h-11 px-3 text-sm"
+                disabled={defenseActionsDisabled || !lineupPlayers.length}
+                onClick={onGenerateDefense}
+                type="button"
+              >
+                <Sparkles className="size-4" aria-hidden="true" />
+                Generate
+              </button>
+              <button
+                className="btn-base btn-secondary min-h-11 px-3 text-sm"
+                disabled={defenseActionsDisabled}
+                onClick={onResetDefense}
+                type="button"
+              >
+                <RotateCcw className="size-4" aria-hidden="true" />
+                Reset
+              </button>
+              <button
+                className={getActionButtonClassName(acceptIsPrimaryAction)}
+                disabled={defenseActionsDisabled || defenseIssues.length > 0}
+                onClick={onAcceptDefense}
+                type="button"
+              >
+                <CheckCircle2 className="size-4" aria-hidden="true" />
+                {isSavingStartingDefense ? "Accepting..." : "Accept"}
+              </button>
+            </div>
+            {defenseSaveError ? (
+              <p className="rounded-lg bg-[var(--danger-soft)] px-3 py-2 text-sm font-bold text-[var(--danger)]" role="alert">
+                {defenseSaveError}
+              </p>
+            ) : null}
+            {defenseAccepted && !defenseSaveError ? (
               <p className="rounded-lg bg-[var(--success-soft)] px-3 py-2 text-sm font-bold text-[var(--success)]">
-                Starting defense saved.
+                Starting defense accepted.
               </p>
             ) : null}
             <DefensiveAlignmentEditor
@@ -90,4 +125,10 @@ export function StartingDefenseCard({
       </div>
     </article>
   );
+}
+
+function getActionButtonClassName(isPrimary: boolean) {
+  return isPrimary
+    ? "btn-base btn-primary min-h-11 px-3 text-sm"
+    : "btn-base btn-secondary min-h-11 px-3 text-sm";
 }
