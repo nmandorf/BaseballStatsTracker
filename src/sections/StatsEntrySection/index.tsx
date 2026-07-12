@@ -1389,6 +1389,7 @@ export function GameHistoryCard({
                 <p className="mt-3 break-words text-lg font-semibold text-foreground">
                   Us {game.teamScore} - Them {game.opponentScore}
                 </p>
+                <GameHistoryBreakdownGrid breakdown={game.matchBreakdown} />
                 <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">
                   {getGameHistorySavedLabel(game)}
                 </p>
@@ -1402,6 +1403,36 @@ export function GameHistoryCard({
         )}
       </div>
     </article>
+  );
+}
+
+function GameHistoryBreakdownGrid({
+  breakdown,
+}: {
+  breakdown: CompletedGameSummary["matchBreakdown"];
+}) {
+  if (!breakdown) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 grid grid-cols-3 gap-1.5">
+      <GameHistoryBreakdownStat label="PA" value={String(breakdown.plateAppearances)} />
+      <GameHistoryBreakdownStat label="H" value={String(breakdown.hits)} />
+      <GameHistoryBreakdownStat label="BB" value={String(breakdown.walks)} />
+      <GameHistoryBreakdownStat label="RBI" value={String(breakdown.rbis)} />
+      <GameHistoryBreakdownStat label="AVG" value={formatRate(breakdown.battingAverage)} />
+      <GameHistoryBreakdownStat label="OBP" value={formatRate(breakdown.onBasePercentage)} />
+    </div>
+  );
+}
+
+function GameHistoryBreakdownStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md bg-[var(--card)] px-2 py-1.5">
+      <p className="text-[0.62rem] font-bold uppercase text-[var(--muted-foreground)]">{label}</p>
+      <p className="mt-0.5 text-sm font-bold text-foreground">{value}</p>
+    </div>
   );
 }
 

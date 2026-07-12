@@ -336,7 +336,7 @@ test("team game totals include every tracked offensive stat", () => {
 
 test("completed game history exposes a stable first-game link after a final game", () => {
   const batter = player("maya-johnson");
-  const state = savePlay(createInitialGameState([batter], { status: "IN_PROGRESS" }), "HR", {}, {}, false);
+  const state = savePlay(createInitialGameState([batter], { status: "IN_PROGRESS" }), "HR", {}, {}, true);
   const finalState = endGame(state, "2026-06-11T12:00:00.000Z", "Kobe's Peeps");
   const games = getCompletedGameHistory(finalState);
 
@@ -345,6 +345,10 @@ test("completed game history exposes a stable first-game link after a final game
   assert.equal(games[0].href, `/stats/games/${firstGameHistoryId}`);
   assert.equal(games[0].opponent, finalState.opponent);
   assert.equal(games[0].teamScore, finalState.teamScore);
+  assert.equal(games[0].matchBreakdown.plateAppearances, 1);
+  assert.equal(games[0].matchBreakdown.hits, 1);
+  assert.equal(games[0].matchBreakdown.rbis, 1);
+  assert.equal(games[0].matchBreakdown.battingAverage, 1);
   assert.equal(getCompletedGameById(finalState, firstGameHistoryId), finalState);
 });
 

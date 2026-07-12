@@ -41,3 +41,13 @@ export type CalculatedStats = {
   ballInPlayRate: number;
   productiveOutRate: number;
 };
+
+export type GameHistoryBreakdown = {
+  plateAppearances: number;
+  hits: number;
+  walks: number;
+  rbis: number;
+  outs: number;
+  battingAverage: number;
+  onBasePercentage: number;
+};

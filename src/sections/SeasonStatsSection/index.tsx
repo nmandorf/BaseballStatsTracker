@@ -80,6 +80,7 @@ function getBackendGameHistoryItem(
     endedAt: week.scheduledStartAt,
     href: `/stats/games/${week.gameId}`,
     id: week.gameId,
+    matchBreakdown: week.matchBreakdown,
     opponent: week.opponent,
     opponentScore: week.opponentScore,
     hasBoxScore: week.hasBoxScore,

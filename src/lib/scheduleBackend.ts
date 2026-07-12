@@ -7,13 +7,17 @@ import {
 } from "@/generated/prisma/enums";
 import { AppError, notFoundError, validationError } from "@/lib/appErrors";
 import { defensivePositions, minimumFemaleDefenders } from "@/lib/defenseEngine";
+import { createGameHistoryBreakdown, createGameHistoryBreakdownFromPlayerStats } from "@/lib/gameHistoryBreakdown";
+import type { GameState } from "@/lib/gameEngine";
 import { normalizeGameRules } from "@/lib/gameRules";
 import { getPrisma } from "@/lib/prisma";
+import { buildFinalGameStateFromPersistedStats } from "@/lib/scheduledGameStatsFallback";
 import { allowedGameStartTimes, getGameStartEligibility, validateScheduleInput, zonedGameStart } from "@/lib/scheduleRules";
 import type { TeamAccount } from "@/lib/teamAccount";
 import type { GameRules } from "@/types/game";
 import type { DefensiveAlignment, DefensivePosition, DefensiveSlot } from "@/types/defense";
 import type { ScheduleWeekInput, TeamSchedule } from "@/types/schedule";
+import type { PlayerStats } from "@/types/stats";
 
 type GameScheduleWeekInput = Extract<ScheduleWeekInput, { kind: "GAME" }>;
 
@@ -30,7 +34,8 @@ export async function loadTeamSchedule(teamId: string, account: TeamAccount): Pr
           game: {
             include: {
               _count: { select: { lineup: true, atBats: true } },
-              teamStats: { select: { plateAppearances: true } },
+              stats: true,
+              teamStats: true,
             },
           },
         },
@@ -74,10 +79,30 @@ export async function loadTeamSchedule(teamId: string, account: TeamAccount): Pr
         opponentScore: week.game.opponentScore,
         result: week.game.result,
         playCount: week.game._count.atBats,
-        hasBoxScore: Boolean(week.game.teamStats?.plateAppearances),
+        matchBreakdown: getScheduledGameHistoryBreakdown(week.game),
+        hasBoxScore: getScheduledGameHasBoxScore(week.game),
       };
     }),
   };
+}
+
+function getScheduledGameHistoryBreakdown(
+  game: {
+    stats: Array<Partial<PlayerStats>>;
+    teamStats: Partial<PlayerStats> | null;
+  },
+) {
+  return createGameHistoryBreakdown(game.teamStats)
+    ?? createGameHistoryBreakdownFromPlayerStats(game.stats);
+}
+
+function getScheduledGameHasBoxScore(
+  game: {
+    stats: Array<Partial<PlayerStats>>;
+    teamStats: Partial<PlayerStats> | null;
+  },
+) {
+  return Boolean(getScheduledGameHistoryBreakdown(game)?.plateAppearances);
 }
 
 export async function saveTeamSchedule(input: {
@@ -380,13 +405,80 @@ export async function cancelScheduledGame(gameId: string, account: TeamAccount) 
 }
 
 export async function loadScheduledGameSnapshot(gameId: string, account: TeamAccount) {
+  const savedGame = await findScheduledGameSnapshot(gameId, account);
+
+  if (!savedGame) {
+    throw notFoundError("TEAM_NOT_FOUND", "Game not found.", { gameId });
+  }
+
+  const snapshot = getGameStateSnapshot(savedGame.snapshot);
+
+  if (snapshot?.status === "FINAL") {
+    return { state: snapshot, status: savedGame.status };
+  }
+
+  const gameDetail = await findScheduledGameDetail(gameId, account);
+  return {
+    state: gameDetail ? buildFinalGameStateFromPersistedStats(gameDetail) : null,
+    status: savedGame.status,
+  };
+}
+
+async function findScheduledGameSnapshot(gameId: string, account: TeamAccount) {
   const prisma = getPrisma();
-  const game = await prisma.game.findFirst({
+  return prisma.game.findFirst({
     where: { id: gameId, team: { ownerUid: account.uid } },
     select: { snapshot: true, status: true },
   });
-  if (!game) throw notFoundError("TEAM_NOT_FOUND", "Game not found.", { gameId });
-  return { state: game.snapshot, status: game.status };
+}
+
+async function findScheduledGameDetail(gameId: string, account: TeamAccount) {
+  const prisma = getPrisma();
+  return prisma.game.findFirst({
+    where: { id: gameId, team: { ownerUid: account.uid } },
+    include: {
+      atBats: {
+        orderBy: { createdAt: "asc" },
+        include: {
+          batter: { select: { name: true } },
+          runnerAdvancements: {
+            include: { player: { select: { name: true } } },
+          },
+        },
+      },
+      lineup: {
+        orderBy: [{ battingOrderPosition: "asc" }, { createdAt: "asc" }],
+        include: {
+          player: {
+            include: {
+              seasonStats: {
+                where: { season: currentSeasonYear },
+                take: 1,
+              },
+            },
+          },
+        },
+      },
+      rules: true,
+      stats: true,
+    },
+  });
+}
+
+function getGameStateSnapshot(snapshot: Prisma.JsonValue | null): GameState | null {
+  return isGameStateSnapshot(snapshot) ? snapshot as unknown as GameState : null;
+}
+
+function isGameStateSnapshot(snapshot: Prisma.JsonValue | null) {
+  return isRecord(snapshot)
+    && typeof snapshot.status === "string"
+    && Array.isArray(snapshot.lineup)
+    && isRecord(snapshot.statsByPlayerId)
+    && Array.isArray(snapshot.plays);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 export type GamePreparationInput = {
@@ -647,7 +739,7 @@ function getAcceptedLoadedLineupIds(status: GamePreparationInput["status"], orde
   return status === "ACCEPTED" ? orderedIds : [];
 }
 
-function getLoadedGameRules(rules: LoadedGamePreparation["rules"]) {
+function getLoadedGameRules(rules: Parameters<typeof fromRuleData>[0] | null) {
   return rules ? fromRuleData(rules) : normalizeGameRules(undefined);
 }
 
