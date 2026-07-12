@@ -8,8 +8,9 @@ import type {
   RunnerSlot,
   UiRunnerDestination,
 } from "@/types/runner";
-import type { PlayerStats } from "@/types/stats";
+import type { GameHistoryBreakdown, PlayerStats } from "@/types/stats";
 import type { DefensiveAlignment, DefensiveEvent } from "@/types/defense";
+import { createGameHistoryBreakdown } from "./gameHistoryBreakdown.ts";
 import {
   createDefensiveEvent,
   createDefaultDefensiveAlignment,
@@ -152,6 +153,7 @@ export type CompletedGameSummary = {
   opponentScore: number;
   result: "Win" | "Loss" | "Tie";
   playCount: number;
+  matchBreakdown: GameHistoryBreakdown | null;
   href: string;
 };
 
@@ -368,6 +370,8 @@ export function upsertCompletedGame(games: GameState[], game: GameState): GameSt
 }
 
 function getCompletedGameSummary(state: GameState): CompletedGameSummary {
+  const teamTotals = getTeamGameTotals(state);
+
   return {
     id: getCompletedGameId(state),
     opponent: state.opponent,
@@ -376,6 +380,7 @@ function getCompletedGameSummary(state: GameState): CompletedGameSummary {
     opponentScore: state.opponentScore,
     result: getGameOutcomeLabel(state.teamScore, state.opponentScore),
     playCount: state.plays.length,
+    matchBreakdown: createGameHistoryBreakdown(teamTotals),
     href: `/stats/games/${getCompletedGameId(state)}`,
   };
 }

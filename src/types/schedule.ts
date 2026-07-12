@@ -1,3 +1,5 @@
+import type { GameHistoryBreakdown } from "@/types/stats";
+
 export type AllowedGameStartTime = "19:00" | "20:00" | "21:00";
 export type ScheduleGameStatus = "SCHEDULED" | "IN_PROGRESS" | "FINAL" | "CANCELLED";
 export type GamePreparationStatus = "SETUP" | "GENERATED" | "ACCEPTED" | "STARTED";
@@ -26,6 +28,7 @@ export type ScheduleWeek =
       opponentScore: number;
       result: "WIN" | "LOSS" | "TIE" | null;
       playCount: number;
+      matchBreakdown: GameHistoryBreakdown | null;
     };
 
 export type TeamSchedule = {
