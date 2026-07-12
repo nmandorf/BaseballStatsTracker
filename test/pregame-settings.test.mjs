@@ -1,14 +1,17 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { installLocalStorage } from "./helpers/local-storage.mjs";
 import { createInitialGameState } from "../src/lib/gameEngine.ts";
 import { normalizeGameRules } from "../src/lib/gameRules.ts";
 import {
   buildAcceptedPregameSetup,
+  buildDefenseAcceptedPregameSetup,
   buildPregamePlayerPool,
   createDefaultPregameSetup,
   isStartingDefenseSavedForFirstFieldingHalf,
   resolveSuggestedLineupIds,
+  savePregameSetupWithBackendConfirmation,
 } from "../src/lib/pregameSetupStorage.ts";
 import { validateLineupGenderRules } from "../src/lib/lineupRules.ts";
 import { createDefaultDefensiveAlignment } from "../src/lib/defenseEngine.ts";
@@ -22,8 +25,24 @@ const battingOrderSource = readFileSync(
   new URL("../src/sections/BattingOrderSection/index.tsx", import.meta.url),
   "utf8",
 );
+const suggestedLineupCardSource = readFileSync(
+  new URL("../src/components/SuggestedLineupCard/index.tsx", import.meta.url),
+  "utf8",
+);
+const startingDefenseCardSource = readFileSync(
+  new URL("../src/components/StartingDefenseCard/index.tsx", import.meta.url),
+  "utf8",
+);
+const pregameSetupStorageSource = readFileSync(
+  new URL("../src/lib/pregameSetupStorage.ts", import.meta.url),
+  "utf8",
+);
 const scheduleBackendSource = readFileSync(
   new URL("../src/lib/scheduleBackend.ts", import.meta.url),
+  "utf8",
+);
+const startAcceptedGameSource = readFileSync(
+  new URL("../src/lib/startAcceptedGame.ts", import.meta.url),
   "utf8",
 );
 
@@ -99,6 +118,26 @@ test("buildAcceptedPregameSetup persists the accepted lineup and starting defens
   assert.equal(acceptedSetup.startingDefense, startingDefense);
 });
 
+test("buildDefenseAcceptedPregameSetup validates defense against the displayed lineup", () => {
+  const team = activeTeam();
+  const setup = createDefaultPregameSetup(team);
+  const displayedLineupIds = seedPlayers.slice(0, 10).map((player) => player.id);
+  const startingDefense = createDefaultDefensiveAlignment(seedPlayers.slice(0, 10), 1, "Top");
+  const defenseFirstSetup = buildDefenseAcceptedPregameSetup(setup, displayedLineupIds, startingDefense, false);
+
+  assert.equal(defenseFirstSetup.status, "GENERATED");
+  assert.deepEqual(defenseFirstSetup.generatedLineupIds, displayedLineupIds);
+  assert.deepEqual(defenseFirstSetup.acceptedLineupIds, []);
+  assert.equal(defenseFirstSetup.startingDefense, startingDefense);
+
+  const offenseAcceptedSetup = buildDefenseAcceptedPregameSetup(setup, displayedLineupIds, startingDefense, true);
+
+  assert.equal(offenseAcceptedSetup.status, "ACCEPTED");
+  assert.deepEqual(offenseAcceptedSetup.generatedLineupIds, displayedLineupIds);
+  assert.deepEqual(offenseAcceptedSetup.acceptedLineupIds, displayedLineupIds);
+  assert.equal(offenseAcceptedSetup.startingDefense, startingDefense);
+});
+
 test("isStartingDefenseSavedForFirstFieldingHalf requires a saved current defense", () => {
   const startingDefense = createDefaultDefensiveAlignment(seedPlayers.slice(0, 10), 1, "Top");
   const editedDefense = {
@@ -134,11 +173,74 @@ test("start route returns canonical preparation after authorizing start", () => 
 });
 
 test("pregame start ignores stale wrong-half defensive alignments", () => {
-  assert.match(battingOrderSource, /startingDefense: startingDefenseSaved \? defenseAlignment : null/);
+  assert.match(battingOrderSource, /scheduledGameIsHome = selectedScheduledGame\?\.kind === "GAME" \? selectedScheduledGame\.isHome : setup\.isHome/);
+  assert.match(battingOrderSource, /const firstDefensiveHalf = getFirstDefensiveHalf\(scheduledGameIsHome\)/);
+  assert.match(battingOrderSource, /startingDefense: startingDefenseSaved \? setup\.startingDefense : null/);
   assert.match(battingOrderSource, /startingDefense\.inning !== firstDefensiveHalf\.inning/);
   assert.match(scheduleBackendSource, /getPrismaFirstDefensiveHalf\(game\.isHome\)/);
   assert.match(scheduleBackendSource, /alignment\.inning === 1 && alignment\.half === firstDefensiveHalf/);
   assert.doesNotMatch(scheduleBackendSource, /defensiveAlignments: \{[^}]*take: 1/s);
+});
+
+test("pregame offense and defense use matching accept actions", () => {
+  assert.match(suggestedLineupCardSource, />\s*Generate\s*</);
+  assert.match(suggestedLineupCardSource, />\s*Reset\s*</);
+  assert.match(suggestedLineupCardSource, /isSavingLineup \? "Accepting\.\.\." : "Accept"/);
+  assert.doesNotMatch(suggestedLineupCardSource, /Start Game|startGameLabel|onStartGame/);
+
+  assert.match(startingDefenseCardSource, />\s*Generate\s*</);
+  assert.match(startingDefenseCardSource, />\s*Reset\s*</);
+  assert.match(startingDefenseCardSource, /isSavingStartingDefense \? "Accepting\.\.\." : "Accept"/);
+  assert.doesNotMatch(startingDefenseCardSource, /Save Defense|Starting defense saved/);
+});
+
+test("accepted pregame preparation waits for backend confirmation", () => {
+  assert.match(pregameSetupStorageSource, /export async function savePregameSetupWithBackendConfirmation/);
+  assert.match(pregameSetupStorageSource, /await savePregameSetupToBackend\(nextSetup\)/);
+  assert.match(
+    battingOrderSource,
+    /await savePregameSetupWithBackendConfirmation\(buildDefenseAcceptedPregameSetup\(/,
+  );
+  assert.match(
+    battingOrderSource,
+    /await savePregameSetupWithBackendConfirmation\(\{\s*\.\.\.setup,\s*isHome: scheduledGameIsHome,\s*generatedLineupIds: acceptedLineupIds,\s*acceptedLineupIds,/s,
+  );
+  assert.match(battingOrderSource, /defenseSaveError/);
+  assert.match(battingOrderSource, /lineupSaveError/);
+  assert.match(battingOrderSource, /function StartGameAction/);
+});
+
+test("failed confirmed preparation save does not mark local setup saved", async () => {
+  const restoreStorage = installLocalStorage();
+  const previousFetch = global.fetch;
+  global.fetch = async () => new Response(
+    JSON.stringify({ error: { message: "Defense rejected by server." } }),
+    { status: 409 },
+  );
+
+  try {
+    const setup = {
+      ...createDefaultPregameSetup(activeTeam()),
+      gameId: "game-1",
+      startingDefense: createDefaultDefensiveAlignment(seedPlayers.slice(0, 10), 1, "Top"),
+      status: "GENERATED",
+    };
+
+    await assert.rejects(
+      savePregameSetupWithBackendConfirmation(setup),
+      /Defense rejected by server\./,
+    );
+    assert.equal(window.localStorage.getItem("baseball-tracker:pregame-setup-by-game:v2"), null);
+  } finally {
+    global.fetch = previousFetch;
+    restoreStorage();
+  }
+});
+
+test("start game stops when accepted preparation cannot be saved", () => {
+  assert.match(startAcceptedGameSource, /await saveAcceptedPreparation\(gameId, acceptedSetup\);\s*const startedSetup = await startScheduledGame/s);
+  assert.match(startAcceptedGameSource, /throw new Error\(await readApiErrorMessage\(preparationResponse, "Unable to save the accepted lineup\."\)\)/);
+  assert.doesNotMatch(startAcceptedGameSource, /preparationError/);
 });
 
 test("resolveSuggestedLineupIds derives a reviewable lineup without saved generated ids", () => {

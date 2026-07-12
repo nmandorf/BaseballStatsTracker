@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { CheckCircle2, Play, RotateCcw, Sparkles } from "lucide-react";
+import { CheckCircle2, RotateCcw, Sparkles } from "lucide-react";
 import { LineupPlayerRow } from "@/components/LineupPlayerRow";
 import { StatusPill } from "@/components/StatusPill";
 import { cn } from "@/lib/utils";
@@ -9,20 +9,16 @@ type SuggestedLineupCardProps = {
   acceptedMatchesLineup: boolean;
   acceptIsPrimaryAction: boolean;
   canGenerateLineup: boolean;
-  canStartGame: boolean;
-  isStarting: boolean;
+  isSavingLineup: boolean;
+  lineupActionsDisabled: boolean;
   lineupGenderOptimized: boolean;
   lineup: RecommendedLineupRow[];
+  lineupSaveError: string | null;
   lineupWarnings: string[];
   onAcceptLineup: () => void;
   onGenerateLineup: () => void;
   onMovePlayer: (index: number, direction: -1 | 1) => void;
   onResetLineup: () => void;
-  onStartGame: () => void;
-  selectedScheduledGameExists: boolean;
-  startError: string | null;
-  startGameLabel: string;
-  startIsPrimaryAction: boolean;
   suggestedLineupEmptyReason: string | null | undefined;
 };
 
@@ -30,20 +26,16 @@ export function SuggestedLineupCard({
   acceptedMatchesLineup,
   acceptIsPrimaryAction,
   canGenerateLineup,
-  canStartGame,
-  isStarting,
+  isSavingLineup,
+  lineupActionsDisabled,
   lineupGenderOptimized,
   lineup,
+  lineupSaveError,
   lineupWarnings,
   onAcceptLineup,
   onGenerateLineup,
   onMovePlayer,
   onResetLineup,
-  onStartGame,
-  selectedScheduledGameExists,
-  startError,
-  startGameLabel,
-  startIsPrimaryAction,
   suggestedLineupEmptyReason,
 }: SuggestedLineupCardProps) {
   return (
@@ -53,23 +45,20 @@ export function SuggestedLineupCard({
         acceptIsPrimaryAction={acceptIsPrimaryAction}
         canAcceptLineup={Boolean(lineup.length && lineupGenderOptimized)}
         canGenerateLineup={canGenerateLineup}
-        canStartGame={canStartGame}
-        isStarting={isStarting}
+        isSavingLineup={isSavingLineup}
+        lineupActionsDisabled={lineupActionsDisabled}
         onAcceptLineup={onAcceptLineup}
         onGenerateLineup={onGenerateLineup}
         onResetLineup={onResetLineup}
-        onStartGame={onStartGame}
-        startGameLabel={startGameLabel}
-        startIsPrimaryAction={startIsPrimaryAction}
       />
       <SuggestedLineupAlerts
+        lineupSaveError={lineupSaveError}
         lineupWarnings={lineupWarnings}
-        selectedScheduledGameExists={selectedScheduledGameExists}
-        startError={startError}
       />
       <div className="mt-4 space-y-2">
         <SuggestedLineupRows
           emptyReason={suggestedLineupEmptyReason}
+          lineupActionsDisabled={lineupActionsDisabled}
           lineup={lineup}
           onMovePlayer={onMovePlayer}
         />
@@ -101,14 +90,11 @@ type SuggestedLineupActionsProps = Pick<
   SuggestedLineupCardProps,
   | "acceptIsPrimaryAction"
   | "canGenerateLineup"
-  | "canStartGame"
-  | "isStarting"
+  | "isSavingLineup"
+  | "lineupActionsDisabled"
   | "onAcceptLineup"
   | "onGenerateLineup"
   | "onResetLineup"
-  | "onStartGame"
-  | "startGameLabel"
-  | "startIsPrimaryAction"
 > & {
   canAcceptLineup: boolean;
 };
@@ -117,20 +103,17 @@ function SuggestedLineupActions({
   acceptIsPrimaryAction,
   canAcceptLineup,
   canGenerateLineup,
-  canStartGame,
-  isStarting,
+  isSavingLineup,
+  lineupActionsDisabled,
   onAcceptLineup,
   onGenerateLineup,
   onResetLineup,
-  onStartGame,
-  startGameLabel,
-  startIsPrimaryAction,
 }: SuggestedLineupActionsProps) {
   return (
-    <div className="mt-4 grid gap-2 sm:grid-cols-4">
+    <div className="mt-4 grid gap-2 sm:grid-cols-3">
       <button
         className="btn-base btn-secondary min-h-11 px-3 text-sm"
-        disabled={!canGenerateLineup}
+        disabled={lineupActionsDisabled || !canGenerateLineup}
         onClick={onGenerateLineup}
         type="button"
       >
@@ -139,6 +122,7 @@ function SuggestedLineupActions({
       </button>
       <button
         className="btn-base btn-secondary min-h-11 px-3 text-sm"
+        disabled={lineupActionsDisabled}
         onClick={onResetLineup}
         type="button"
       >
@@ -147,21 +131,12 @@ function SuggestedLineupActions({
       </button>
       <button
         className={getActionButtonClassName(acceptIsPrimaryAction)}
-        disabled={!canAcceptLineup}
+        disabled={lineupActionsDisabled || !canAcceptLineup}
         onClick={onAcceptLineup}
         type="button"
       >
         <CheckCircle2 className="size-4" aria-hidden="true" />
-        Accept
-      </button>
-      <button
-        className={getActionButtonClassName(startIsPrimaryAction)}
-        disabled={!canStartGame}
-        onClick={onStartGame}
-        type="button"
-      >
-        <Play className="size-4" aria-hidden="true" />
-        {isStarting ? "Starting..." : startGameLabel}
+        {isSavingLineup ? "Accepting..." : "Accept"}
       </button>
     </div>
   );
@@ -169,25 +144,16 @@ function SuggestedLineupActions({
 
 type SuggestedLineupAlertsProps = Pick<
   SuggestedLineupCardProps,
-  "lineupWarnings" | "selectedScheduledGameExists" | "startError"
+  "lineupSaveError" | "lineupWarnings"
 >;
 
 function SuggestedLineupAlerts({
+  lineupSaveError,
   lineupWarnings,
-  selectedScheduledGameExists,
-  startError,
 }: SuggestedLineupAlertsProps) {
   return (
     <>
-      {selectedScheduledGameExists ? null : (
-        <Link
-          className="btn-base btn-secondary mt-3 min-h-11 px-4 text-sm"
-          href="/game-setup"
-        >
-          Select Scheduled Game
-        </Link>
-      )}
-      {startError ? <SuggestedLineupWarning>{startError}</SuggestedLineupWarning> : null}
+      {lineupSaveError ? <SuggestedLineupWarning>{lineupSaveError}</SuggestedLineupWarning> : null}
       {lineupWarnings.map((warning) => (
         <SuggestedLineupWarning key={warning}>{warning}</SuggestedLineupWarning>
       ))}
@@ -203,17 +169,18 @@ function SuggestedLineupWarning({ children }: { children: string }) {
   );
 }
 
-type SuggestedLineupRowsProps = Pick<SuggestedLineupCardProps, "lineup" | "onMovePlayer"> & {
+type SuggestedLineupRowsProps = Pick<SuggestedLineupCardProps, "lineup" | "lineupActionsDisabled" | "onMovePlayer"> & {
   emptyReason: SuggestedLineupCardProps["suggestedLineupEmptyReason"];
 };
 
-function SuggestedLineupRows({ emptyReason, lineup, onMovePlayer }: SuggestedLineupRowsProps) {
+function SuggestedLineupRows({ emptyReason, lineupActionsDisabled, lineup, onMovePlayer }: SuggestedLineupRowsProps) {
   if (!lineup.length) {
     return <SuggestedLineupEmptyState reason={emptyReason} />;
   }
 
   return lineup.map((row, index) => (
     <LineupPlayerRow
+      controlsDisabled={lineupActionsDisabled}
       index={index}
       isFirst={index === 0}
       isLast={index === lineup.length - 1}

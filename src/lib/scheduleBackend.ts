@@ -80,6 +80,7 @@ export async function loadTeamSchedule(teamId: string, account: TeamAccount): Pr
         result: week.game.result,
         playCount: week.game._count.atBats,
         matchBreakdown: getScheduledGameHistoryBreakdown(week.game),
+        hasBoxScore: getScheduledGameHasBoxScore(week.game),
       };
     }),
   };
@@ -93,6 +94,15 @@ function getScheduledGameHistoryBreakdown(
 ) {
   return createGameHistoryBreakdown(game.teamStats)
     ?? createGameHistoryBreakdownFromPlayerStats(game.stats);
+}
+
+function getScheduledGameHasBoxScore(
+  game: {
+    stats: Array<Partial<PlayerStats>>;
+    teamStats: Partial<PlayerStats> | null;
+  },
+) {
+  return Boolean(getScheduledGameHistoryBreakdown(game)?.plateAppearances);
 }
 
 export async function saveTeamSchedule(input: {

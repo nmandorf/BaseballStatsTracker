@@ -154,6 +154,7 @@ export type CompletedGameSummary = {
   result: "Win" | "Loss" | "Tie";
   playCount: number;
   matchBreakdown: GameHistoryBreakdown | null;
+  hasBoxScore?: boolean;
   href: string;
 };
 
@@ -381,6 +382,7 @@ function getCompletedGameSummary(state: GameState): CompletedGameSummary {
     result: getGameOutcomeLabel(state.teamScore, state.opponentScore),
     playCount: state.plays.length,
     matchBreakdown: createGameHistoryBreakdown(teamTotals),
+    hasBoxScore: teamTotals.plateAppearances > 0,
     href: `/stats/games/${getCompletedGameId(state)}`,
   };
 }

@@ -1391,7 +1391,7 @@ export function GameHistoryCard({
                 </p>
                 <GameHistoryBreakdownGrid breakdown={game.matchBreakdown} />
                 <p className="mt-1 text-xs font-bold text-[var(--muted-foreground)]">
-                  {game.playCount} play{game.playCount === 1 ? "" : "s"} saved
+                  {getGameHistorySavedLabel(game)}
                 </p>
               </Link>
             );
@@ -1434,6 +1434,14 @@ function GameHistoryBreakdownStat({ label, value }: { label: string; value: stri
       <p className="mt-0.5 text-sm font-bold text-foreground">{value}</p>
     </div>
   );
+}
+
+function getGameHistorySavedLabel(game: CompletedGameSummary) {
+  if (game.playCount > 0) {
+    return `${game.playCount} play${game.playCount === 1 ? "" : "s"} saved`;
+  }
+
+  return game.hasBoxScore ? "Box score saved" : "No plays saved";
 }
 
 function PregameStatsEntryPrompt({ teamName, eligibleAt }: { teamName: string; eligibleAt: string | null }) {
