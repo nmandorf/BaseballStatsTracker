@@ -2,9 +2,22 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-const headerSource = readFileSync(new URL("../src/sections/HeaderSection/index.tsx", import.meta.url), "utf8");
+const headerSource = [
+  readFileSync(
+    new URL("../src/sections/HeaderSection/HeaderNavigation.tsx", import.meta.url),
+    "utf8",
+  ),
+  readFileSync(
+    new URL("../src/sections/HeaderSection/useHeaderNavigation.ts", import.meta.url),
+    "utf8",
+  ),
+  readFileSync(
+    new URL("../src/sections/HeaderSection/index.tsx", import.meta.url),
+    "utf8",
+  ),
+].join("\n");
 const schedulePageSource = readFileSync(new URL("../src/pages/Schedule/index.tsx", import.meta.url), "utf8");
-const offenseSource = readFileSync(new URL("../src/sections/StatsEntrySection/index.tsx", import.meta.url), "utf8");
+const offenseSource = readFileSync(new URL("../src/sections/StatsEntrySection/useLiveStatsEntry.ts", import.meta.url), "utf8");
 const defenseSource = readFileSync(new URL("../src/sections/DefenseSection/index.tsx", import.meta.url), "utf8");
 
 test("primary navigation excludes pregame and live game routes", () => {
@@ -35,7 +48,7 @@ test("responsive navigation keeps the active mobile tab visible", () => {
 
 test("both game modes follow saved phase transitions and can end the game", () => {
   assert.match(offenseSource, /router\.replace\(getLiveGameHref\(nextState\)\)/);
-  assert.match(offenseSource, /persistNextState\(previous, true\)/);
+  assert.match(offenseSource, /persistNextState\(undoLastPlay\(gameState\), true\)/);
   assert.match(offenseSource, /endGame\(gameState, undefined, teamName\)/);
   assert.match(defenseSource, /router\.replace\(getLiveGameHref\(nextState\)\)/);
   assert.match(defenseSource, /router\.replace\(getLiveGameHref\(previousState\)\)/);

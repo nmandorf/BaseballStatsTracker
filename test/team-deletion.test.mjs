@@ -7,6 +7,19 @@ const rosterSource = readFileSync(
   new URL("../src/sections/RosterSection/index.tsx", import.meta.url),
   "utf8",
 );
+const rosterDialogsSource = [
+  readFileSync(
+    new URL(
+      "../src/sections/RosterSection/ClearTeamConfirmationDialog.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    new URL("../src/sections/RosterSection/PlayerDialogs.tsx", import.meta.url),
+    "utf8",
+  ),
+].join("\n");
 const backendSource = readFileSync(
   new URL("../src/lib/teamBackend.ts", import.meta.url),
   "utf8",
@@ -52,9 +65,9 @@ test("permanent team deletion exposes the safe backend error", async () => {
 });
 
 test("roster requires confirmation and clears local state only after backend deletion", () => {
-  assert.match(rosterSource, /role="alertdialog"/);
-  assert.match(rosterSource, /Delete Team Permanently/);
-  assert.match(rosterSource, /This action cannot be undone\./);
+  assert.match(rosterDialogsSource, /role="alertdialog"/);
+  assert.match(rosterDialogsSource, /Delete Team Permanently/);
+  assert.match(rosterDialogsSource, /This action cannot be undone\./);
 
   const backendDeletion = rosterSource.indexOf("await deleteTeamPermanently(activeTeam.id)");
   const localGameReset = rosterSource.indexOf("resetFirstGameState();", backendDeletion);

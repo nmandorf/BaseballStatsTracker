@@ -1,34 +1,33 @@
 import { Prisma } from "@/generated/prisma/client";
-import {
-  BattingSide as PrismaBattingSide,
-  DefensiveRating as PrismaDefensiveRating,
-  PlayerGender as PrismaPlayerGender,
-  SpeedRating as PrismaSpeedRating,
-  ThrowingSide as PrismaThrowingSide,
-} from "@/generated/prisma/enums";
 import { notFoundError, validationError } from "@/lib/appErrors";
-import { normalizeDefensivePositionPreference, normalizeDefensiveProfile } from "@/lib/defenseEngine";
-import { toPlayerPersistenceData } from "@/lib/playerPersistenceData";
 import { createPlayerFromProfileInput, createSlug } from "@/lib/playerProfileInput";
-import { fromPersistedStatsData, toPersistedStatsData } from "@/lib/playerStatsPersistence";
+import { toPersistedStatsData } from "@/lib/playerStatsPersistence";
 import { getPrisma } from "@/lib/prisma";
 import { getSeasonStatsProgress } from "@/lib/seasonStatRules";
 import { legacyTeamAccount, type TeamAccount } from "@/lib/teamAccount";
-import type { ActiveTeam, BattingSide, Player, PlayerGender, PlayerProfileInput, SpeedRating, ThrowingSide } from "@/types/player";
-import type { DefensiveRatingValue } from "@/types/defense";
+import {
+  fromStatsData,
+  getDefaultBackendRoleHint,
+  serializeTeam,
+  teamInclude,
+  toPlayerCreate,
+  toPlayerUpdate,
+} from "./teamBackendMappers.ts";
+import type {
+  ActiveTeam,
+  Player,
+  PlayerProfileInput,
+} from "@/types/player";
 import type { PlayerStats } from "@/types/stats";
 
 const defaultSeasonYear = new Date().getFullYear();
-
-type TeamWithPlayers = Awaited<ReturnType<typeof fetchTeamById>>;
-type TeamPlayerRecord = NonNullable<TeamWithPlayers>["players"][number];
 
 export async function listTeamsFromBackend(account: TeamAccount = legacyTeamAccount) {
   const prisma = getPrisma();
   const teams = await prisma.team.findMany({
     where: { ownerUid: account.uid },
     orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }],
-    include: teamInclude(),
+    include: teamInclude,
   });
 
   return teams.map((team) => serializeTeam(team));
@@ -44,7 +43,7 @@ export async function loadTeamFromBackend(
     : await prisma.team.findFirst({
         where: { ownerUid: account.uid },
         orderBy: { updatedAt: "desc" },
-        include: teamInclude(),
+        include: teamInclude,
       });
 
   return team ? serializeTeam(team) : null;
@@ -374,7 +373,8 @@ export async function addPlayerToTeamInBackend(
 
 function createBackendPlayerFromInput(input: PlayerProfileInput, seedOrder: number): Player {
   const name = input.name.trim();
-  const roleHint = input.roleHint.trim() || defaultRoleHint(seedOrder);
+  const roleHint =
+    input.roleHint.trim() || getDefaultBackendRoleHint(seedOrder);
   return createPlayerFromProfileInput({ ...input, roleHint }, seedOrder, createPlayerId(name, seedOrder));
 }
 
@@ -389,186 +389,12 @@ async function fetchTeamById(
       id: teamId,
       ownerUid: account.uid,
     },
-    include: teamInclude(),
+    include: teamInclude,
   });
-}
-
-function teamInclude() {
-  return {
-    players: {
-      orderBy: [{ seedOrder: "asc" as const }, { createdAt: "asc" as const }],
-      include: {
-        seasonStats: {
-          where: { season: defaultSeasonYear },
-          take: 1,
-        },
-      },
-    },
-  };
-}
-
-function serializeTeam(team: NonNullable<TeamWithPlayers>): ActiveTeam {
-  return {
-    id: team.id,
-    ownerUid: team.ownerUid,
-    ownerEmail: team.ownerEmail,
-    name: team.name,
-    timeZone: team.timeZone,
-    scheduleSetupCompleted: team.scheduleSetupCompleted,
-    players: team.players.map(serializeTeamPlayer),
-    createdAt: team.createdAt.toISOString(),
-    updatedAt: team.updatedAt.toISOString(),
-  };
-}
-
-function serializeTeamPlayer(player: TeamPlayerRecord, index: number): Player {
-  const seedOrder = getSerializedPlayerSeedOrder(player, index);
-
-  return {
-    id: player.id,
-    name: player.name,
-    gender: fromPrismaPlayerGender(player.gender),
-    bats: fromPrismaBattingSide(player.bats),
-    throws: fromPrismaThrowingSide(player.throws),
-    primaryPosition: normalizeDefensivePositionPreference(player.primaryPosition),
-    speedRating: fromPrismaSpeedRating(player.speedRating),
-    notes: player.notes ?? "Player profile ready for game-day tracking.",
-    contactNotes: player.contactNotes,
-    defensiveProfile: normalizeDefensiveProfile({
-      ratings: getSerializedDefensiveRatings(player),
-      notes: getSerializedDefensiveNotes(player),
-    }),
-    roleHint: player.roleHint ?? defaultRoleHint(seedOrder),
-    isActive: player.isActive,
-    seedOrder,
-    seasonStats: fromStatsData(player.seasonStats[0]),
-  };
-}
-
-function getSerializedPlayerSeedOrder(player: TeamPlayerRecord, index: number) {
-  return player.seedOrder ?? index + 1;
-}
-
-function getSerializedDefensiveRatings(player: TeamPlayerRecord) {
-  return {
-    armStrength: fromPrismaDefensiveRating(player.armStrength),
-    throwAccuracy: fromPrismaDefensiveRating(player.throwAccuracy),
-    gloveSkill: fromPrismaDefensiveRating(player.gloveSkill),
-    range: fromPrismaDefensiveRating(player.rangeRating),
-    positionConfidence: fromPrismaDefensiveRating(player.positionConfidence),
-  };
-}
-
-function getSerializedDefensiveNotes(player: TeamPlayerRecord) {
-  return {
-    strengths: emptyString(player.defenseStrengths),
-    weaknesses: emptyString(player.defenseWeaknesses),
-    bestPosition: emptyString(player.bestDefensePosition),
-    avoidPosition: emptyString(player.avoidDefensePosition),
-    backupPosition: emptyString(player.backupDefensePosition),
-    communication: emptyString(player.defenseCommunicationNotes),
-    health: emptyString(player.defenseHealthNotes),
-  };
-}
-
-function emptyString(value: string | null) {
-  return value ?? "";
-}
-
-function toPlayerCreate(teamId: string, player: Player) {
-  return {
-    id: player.id,
-    teamId,
-    ...toPlayerUpdate(player),
-  };
-}
-
-function toPlayerUpdate(player: Player) {
-  return toPlayerPersistenceData(player, {
-    gender: toPrismaPlayerGender,
-    bats: toPrismaBattingSide,
-    throws: toPrismaThrowingSide,
-    speedRating: toPrismaSpeedRating,
-    defensiveRating: toPrismaDefensiveRating,
-  });
-}
-
-function fromStatsData(stats: Partial<PlayerStats> | null | undefined): PlayerStats {
-  return fromPersistedStatsData(stats);
-}
-
-function toPrismaBattingSide(value: BattingSide) {
-  if (value === "Right") return PrismaBattingSide.RIGHT;
-  if (value === "Left") return PrismaBattingSide.LEFT;
-  if (value === "Switch") return PrismaBattingSide.SWITCH;
-  return PrismaBattingSide.UNKNOWN;
-}
-
-function toPrismaThrowingSide(value: ThrowingSide) {
-  if (value === "Right") return PrismaThrowingSide.RIGHT;
-  if (value === "Left") return PrismaThrowingSide.LEFT;
-  return PrismaThrowingSide.UNKNOWN;
-}
-
-function toPrismaSpeedRating(value: SpeedRating) {
-  if (value === "Fast") return PrismaSpeedRating.FAST;
-  if (value === "Slow") return PrismaSpeedRating.SLOW;
-  return PrismaSpeedRating.AVERAGE;
-}
-
-function toPrismaPlayerGender(value: PlayerGender) {
-  if (value === "Female") return PrismaPlayerGender.FEMALE;
-  if (value === "Male") return PrismaPlayerGender.MALE;
-  return PrismaPlayerGender.UNKNOWN;
-}
-
-function fromPrismaBattingSide(value: PrismaBattingSide): BattingSide {
-  if (value === PrismaBattingSide.RIGHT) return "Right";
-  if (value === PrismaBattingSide.LEFT) return "Left";
-  if (value === PrismaBattingSide.SWITCH) return "Switch";
-  return "Unknown";
-}
-
-function fromPrismaThrowingSide(value: PrismaThrowingSide): ThrowingSide {
-  if (value === PrismaThrowingSide.RIGHT) return "Right";
-  if (value === PrismaThrowingSide.LEFT) return "Left";
-  return "Unknown";
-}
-
-function fromPrismaSpeedRating(value: PrismaSpeedRating): SpeedRating {
-  if (value === PrismaSpeedRating.FAST) return "Fast";
-  if (value === PrismaSpeedRating.SLOW) return "Slow";
-  return "Average";
-}
-
-function fromPrismaPlayerGender(value: PrismaPlayerGender): PlayerGender {
-  if (value === PrismaPlayerGender.FEMALE) return "Female";
-  if (value === PrismaPlayerGender.MALE) return "Male";
-  return "Unknown";
-}
-
-function toPrismaDefensiveRating(value: DefensiveRatingValue) {
-  if (value === "Low") return PrismaDefensiveRating.LOW;
-  if (value === "Medium") return PrismaDefensiveRating.MEDIUM;
-  if (value === "High") return PrismaDefensiveRating.HIGH;
-  return null;
-}
-
-function fromPrismaDefensiveRating(value: PrismaDefensiveRating | null): DefensiveRatingValue {
-  if (value === PrismaDefensiveRating.LOW) return "Low";
-  if (value === PrismaDefensiveRating.MEDIUM) return "Medium";
-  if (value === PrismaDefensiveRating.HIGH) return "High";
-  return "Unknown";
 }
 
 function createPlayerId(name: string, seedOrder: number) {
   const slug = createSlug(name);
 
   return slug ? `${slug}-${seedOrder}` : `player-${seedOrder}`;
-}
-
-function defaultRoleHint(seedOrder: number) {
-  if (seedOrder === 1) return "Table-setter";
-  if (seedOrder <= 5) return "Run producer";
-  return "Contact depth";
 }

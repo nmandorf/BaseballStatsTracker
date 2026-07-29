@@ -1,6 +1,8 @@
 "use client";
 
+import { GameHistoryCard } from "@/components/GameHistoryCard";
 import { StatTile } from "@/components/StatTile";
+import { StatsPlayerTable, type StatsPlayerRow } from "@/components/StatsPlayerTable";
 import { TeamSetupGate } from "@/components/TeamSetupGate";
 import {
   getCompletedGameHistory,
@@ -10,7 +12,6 @@ import { calculateStats, formatPercent, formatRate } from "@/lib/statCalculation
 import { useBackendSyncedActiveTeam } from "@/lib/teamStorage";
 import { useTeamSchedule } from "@/lib/scheduleClient";
 import { useCompletedGameStates } from "@/lib/useCompletedGameStates";
-import { GameHistoryCard, StatsPlayerTable, type StatsPlayerRow } from "@/sections/StatsEntrySection";
 import type { TeamSchedule } from "@/types/schedule";
 
 type FinalScheduleGameWeek = Extract<TeamSchedule["weeks"][number], { kind: "GAME" }> & { status: "FINAL" };

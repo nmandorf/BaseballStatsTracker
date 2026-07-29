@@ -2,23 +2,45 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-const defenseSource = readFileSync(
-  new URL("../src/sections/DefenseSection/index.tsx", import.meta.url),
+const defenseCompositionSource = readFileSync(
+  new URL("../src/sections/DefenseSection/DefenseView.tsx", import.meta.url),
+  "utf8",
+);
+const defensiveEventSource = [
+  readFileSync(
+    new URL(
+      "../src/sections/DefenseSection/DefensiveEventCard.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    new URL(
+      "../src/sections/DefenseSection/DefensiveEventIdentityFields.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+].join("\n");
+const defensiveEventFormSource = readFileSync(
+  new URL("../src/sections/DefenseSection/useDefensiveEventForm.ts", import.meta.url),
   "utf8",
 );
 
 test("defensive event entry appears before alignment controls", () => {
-  const eventHeading = defenseSource.indexOf("{defensiveEventLabels[eventType]}");
-  const alignmentHeading = defenseSource.indexOf("{alignmentHalf.half} {alignmentHalf.inning}");
+  const eventCard = defenseCompositionSource.indexOf("<DefensiveEventCard");
+  const alignmentCard = defenseCompositionSource.indexOf(
+    "<DefensiveAlignmentCard",
+  );
 
-  assert.notEqual(eventHeading, -1);
-  assert.notEqual(alignmentHeading, -1);
-  assert.ok(eventHeading < alignmentHeading);
+  assert.notEqual(eventCard, -1);
+  assert.notEqual(alignmentCard, -1);
+  assert.ok(eventCard < alignmentCard);
 });
 
 test("defensive entry controls use linked suggestion handlers", () => {
-  assert.match(defenseSource, /onChange=\{\(event\) => changeBallType/);
-  assert.match(defenseSource, /onChange=\{\(event\) => changeFielder/);
-  assert.match(defenseSource, /onChange=\{\(event\) => changePosition/);
-  assert.match(defenseSource, /defenderSelectionWasEdited\.current/);
+  assert.match(defensiveEventSource, /handlers\.changeBallType/);
+  assert.match(defensiveEventSource, /handlers\.changeFielder/);
+  assert.match(defensiveEventSource, /handlers\.changePosition/);
+  assert.match(defensiveEventFormSource, /defenderSelectionWasEdited\.current/);
 });

@@ -252,13 +252,31 @@ test("inspectProject detects functional first-game MVP signals", () => {
 test("inspectProject detects end-game stats summary signal", () => {
   const rootDir = createProjectFixture();
   mkdirSync(path.join(rootDir, "openspec", "changes", "add-end-game-summary"), { recursive: true });
+  mkdirSync(path.join(rootDir, "src", "components", "FinalGameStatsView"), { recursive: true });
   mkdirSync(path.join(rootDir, "src", "lib"), { recursive: true });
   mkdirSync(path.join(rootDir, "src", "sections", "StatsEntrySection"), { recursive: true });
   writeFileSync(path.join(rootDir, "openspec", "changes", "add-end-game-summary", "proposal.md"), "# End Game\n");
+  writeFileSync(
+    path.join(rootDir, "src", "components", "FinalGameStatsView", "index.tsx"),
+    "export function FinalGameStatsView() {}\n",
+  );
   writeFileSync(path.join(rootDir, "src", "lib", "gameEngine.ts"), "export function endGame() {}\n");
-  writeFileSync(path.join(rootDir, "src", "sections", "StatsEntrySection", "index.tsx"), "function EndGameSummary() {}\n");
+  writeFileSync(
+    path.join(rootDir, "src", "sections", "StatsEntrySection", "index.tsx"),
+    "import { FinalGameStatsView } from '../../../components/FinalGameStatsView';\n",
+  );
 
   assert.equal(inspectProject(rootDir).hasEndGameSummary, true);
+});
+
+test("inspectProject recognizes the repository end-game summary after component extraction", () => {
+  const project = inspectProject(process.cwd());
+  const endGameWork = buildPlannedWork(project).find(
+    (item) => item.name === "Build end-game stats summary",
+  );
+
+  assert.equal(project.hasEndGameSummary, true);
+  assert.equal(endGameWork?.complete, true);
 });
 
 test("proposeOperations does not duplicate the UI intake roadmap item", () => {

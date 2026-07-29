@@ -1,68 +1,30 @@
 "use client";
 
 import { useEffect, useSyncExternalStore } from "react";
-import { createZeroStats } from "./statCalculations.ts";
-import {
-  createDefaultDefensiveProfile,
-  normalizeDefensivePositionPreference,
-  normalizeDefensiveProfile,
-} from "./defenseEngine.ts";
 import { subscribeBrowserStore } from "./browserStoreSubscription.ts";
 import { getFirebaseAuth, isFirebaseConfigured } from "./firebase.ts";
-import {
-  createPlayerFromProfileInput,
-  createSlug,
-  normalizeBattingSide,
-  normalizePlayerGender,
-  normalizePlayerStats,
-  normalizeSpeedRating,
-  normalizeThrowingSide,
-} from "./playerProfileInput.ts";
+import { createSlug } from "./playerProfileInput.ts";
+import { createPlayerFromInput } from "./playerFactory.ts";
 import { getSeasonStatsProgress } from "./seasonStatRules.ts";
 import { canUseStoredTeam, normalizeTeamAccount, type TeamAccount } from "./teamAccount.ts";
+import { normalizeActiveTeam as normalizeTeam } from "./teamNormalization.ts";
 import type { ActiveTeam, Player, PlayerProfileInput } from "@/types/player";
 import type { PlayerStats } from "@/types/stats";
+
+export {
+  createEmptyPlayerInput,
+  createPlayerFromInput,
+  createZeroPlayerStats,
+} from "./playerFactory.ts";
 
 const storageKey = "baseball-tracker:active-team:v1";
 const storageEventName = "baseball-tracker:active-team-updated";
 const activeTeamBackendSyncTimeoutMs = 10_000;
-const defaultRoleHints = [
-  { maximumSeedOrder: 1, roleHint: "High OBP table-setter" },
-  { maximumSeedOrder: 3, roleHint: "Contact hitter" },
-  { maximumSeedOrder: 5, roleHint: "Power hitter" },
-] as const;
 
 let cachedRaw: string | null | undefined;
 let cachedAccountUid: string | null | undefined;
 let cachedTeam: ActiveTeam | null | undefined;
 let activeTeamBackendSyncQueue = Promise.resolve();
-
-export function createZeroPlayerStats(): PlayerStats {
-  return createZeroStats();
-}
-
-export function createEmptyPlayerInput(seedOrder = 1): PlayerProfileInput {
-  return {
-    name: "",
-    gender: "Unknown",
-    bats: "Unknown",
-    throws: "Unknown",
-    primaryPosition: "",
-    speedRating: "Average",
-    notes: "",
-    contactNotes: "",
-    defensiveProfile: createDefaultDefensiveProfile(),
-    roleHint: defaultRoleHint(seedOrder),
-    isActive: true,
-    startingStats: createZeroPlayerStats(),
-  };
-}
-
-export function createPlayerFromInput(input: PlayerProfileInput, seedOrder: number): Player {
-  const name = input.name.trim();
-  const roleHint = input.roleHint.trim() || defaultRoleHint(seedOrder);
-  return createPlayerFromProfileInput({ ...input, roleHint }, seedOrder, createPlayerId(name, seedOrder));
-}
 
 export function createActiveTeam(name: string, players: Player[]): ActiveTeam {
   const now = new Date().toISOString();
@@ -611,51 +573,8 @@ function withTimeout<T>(
   });
 }
 
-function normalizeActiveTeam(team: Partial<ActiveTeam>): ActiveTeam | null {
-  if (!isNormalizableTeam(team)) {
-    return null;
-  }
-
-  const now = new Date().toISOString();
-  const signedInAccount = getSignedInTeamAccount();
-  const normalizedPlayers = normalizeTeamPlayers(team.players);
-
-  return {
-    id: getNonEmptyString(team.id, createSlug(team.name)),
-    ownerUid: getNonEmptyString(team.ownerUid, signedInAccount?.uid),
-    ownerEmail: getNonEmptyString(team.ownerEmail, signedInAccount?.email),
-    name: team.name.trim(),
-    timeZone: getNonEmptyString(team.timeZone, null),
-    scheduleSetupCompleted: getScheduleSetupCompleted(team.scheduleSetupCompleted),
-    players: normalizedPlayers,
-    createdAt: getNonEmptyString(team.createdAt, now),
-    updatedAt: getNonEmptyString(team.updatedAt, now),
-  };
-}
-
-function normalizeTeamPlayers(players: Partial<Player>[]) {
-  return players
-    .map((player, index) => normalizePlayer(player, index + 1))
-    .filter((player): player is Player => Boolean(player));
-}
-
-function getScheduleSetupCompleted(value: unknown) {
-  return typeof value === "boolean" ? value : true;
-}
-
-function isNormalizableTeam(team: Partial<ActiveTeam>): team is Partial<ActiveTeam> & Pick<ActiveTeam, "name" | "players"> {
-  return Boolean(team)
-    && typeof team.name === "string"
-    && Boolean(team.name.trim())
-    && Array.isArray(team.players);
-}
-
-function getNonEmptyString(value: unknown, fallback: string): string;
-function getNonEmptyString(value: unknown, fallback: string | undefined): string | undefined;
-function getNonEmptyString(value: unknown, fallback: string | null): string | null;
-function getNonEmptyString(value: unknown, fallback: string | null | undefined): string | null | undefined;
-function getNonEmptyString(value: unknown, fallback: string | null | undefined) {
-  return typeof value === "string" && value ? value : fallback;
+function normalizeActiveTeam(team: Partial<ActiveTeam>) {
+  return normalizeTeam(team, getSignedInTeamAccount());
 }
 
 function getSignedInTeamAccount(): TeamAccount | null {
@@ -682,61 +601,4 @@ function canReadSignedInTeamAccount() {
     typeof document !== "undefined",
     isFirebaseConfigured(),
   ].every(Boolean);
-}
-
-function normalizePlayer(player: Partial<Player>, seedOrder: number): Player | null {
-  if (!isNormalizablePlayer(player)) {
-    return null;
-  }
-
-  const fallbackId = createPlayerId(player.name, seedOrder);
-  const trimmedName = player.name.trim();
-
-  return {
-    id: getNonEmptyString(player.id, fallbackId),
-    name: trimmedName,
-    gender: normalizePlayerGender(player.gender),
-    bats: normalizeBattingSide(player.bats),
-    throws: normalizeThrowingSide(player.throws),
-    primaryPosition: normalizeDefensivePositionPreference(player.primaryPosition),
-    speedRating: normalizeSpeedRating(player.speedRating),
-    notes: getPlayerNotes(player.notes),
-    contactNotes: normalizeContactNotes(player.contactNotes),
-    defensiveProfile: normalizeDefensiveProfile(player.defensiveProfile),
-    roleHint: getPlayerRoleHint(player.roleHint, seedOrder),
-    isActive: typeof player.isActive === "boolean" ? player.isActive : true,
-    seedOrder,
-    seasonStats: normalizePlayerStats(player.seasonStats),
-  };
-}
-
-function isNormalizablePlayer(player: Partial<Player>): player is Partial<Player> & Pick<Player, "name"> {
-  return Boolean(player) && typeof player.name === "string" && Boolean(player.name.trim());
-}
-
-function getPlayerNotes(notes: unknown) {
-  return typeof notes === "string" && notes.trim()
-    ? notes.trim()
-    : "Player profile ready for game-day tracking.";
-}
-
-function normalizeContactNotes(contactNotes: unknown) {
-  return Array.isArray(contactNotes) ? contactNotes.filter(Boolean) : [];
-}
-
-function getPlayerRoleHint(roleHint: unknown, seedOrder: number) {
-  return typeof roleHint === "string" && roleHint.trim()
-    ? roleHint.trim()
-    : defaultRoleHint(seedOrder);
-}
-
-function createPlayerId(name: string, seedOrder: number) {
-  const suffix = Date.now().toString(36);
-  const slug = createSlug(name) || `player-${seedOrder}`;
-
-  return `${slug}-${suffix}`;
-}
-
-function defaultRoleHint(seedOrder: number) {
-  return defaultRoleHints.find((hint) => seedOrder <= hint.maximumSeedOrder)?.roleHint ?? "Roster hitter";
 }

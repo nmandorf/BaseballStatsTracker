@@ -14,6 +14,10 @@ type TeamsState =
   | { status: "ready"; teams: ActiveTeam[] }
   | { status: "unavailable"; teams: ActiveTeam[] };
 
+/**
+ * Shows every team associated with the signed-in account and identifies the
+ * team that is currently active in this browser.
+ */
 export function AccountTeamsCard() {
   const activeTeam = useActiveTeam();
   const teamsState = useAccountTeams();
@@ -21,6 +25,10 @@ export function AccountTeamsCard() {
   return <AccountTeamsCardLayout activeTeamId={activeTeam?.id ?? null} teamsState={teamsState} />;
 }
 
+/**
+ * Loads the account's teams when the card mounts and exposes an explicit state
+ * for each UI outcome: loading, ready, or temporarily unavailable.
+ */
 function useAccountTeams() {
   const [teamsState, setTeamsState] = useState<TeamsState>(getInitialTeamsState);
 
@@ -28,6 +36,7 @@ function useAccountTeams() {
     let isMounted = true;
 
     void loadAccountTeamsState((nextState) => {
+      // Ignore a late backend response after the card has been removed.
       if (isMounted) setTeamsState(nextState);
     });
 
@@ -43,8 +52,14 @@ function getInitialTeamsState(): TeamsState {
   return { status: "loading", teams: [] };
 }
 
+/**
+ * Converts the backend request into the small state model consumed by the UI.
+ * Load failures are intentionally represented as an unavailable state so the
+ * card can present a recoverable message.
+ */
 async function loadAccountTeamsState(setTeamsState: (state: TeamsState) => void) {
   try {
+    // This card must show only account-backed teams, not a locally active fallback.
     const teams = await loadAvailableTeamsFromBackend({ fallbackToActiveTeam: false });
     setTeamsState({ status: "ready", teams });
   } catch {
@@ -153,6 +168,7 @@ function ReadyAccountTeams({
   activeTeamId: string | null;
   teams: ActiveTeam[];
 }) {
+  // An empty successful response is distinct from a failed request.
   if (!teams.length) {
     return (
       <div className="flex min-h-20 items-center justify-center rounded-lg bg-[var(--surface)] px-3 text-center text-sm font-semibold text-[var(--muted-foreground)]">

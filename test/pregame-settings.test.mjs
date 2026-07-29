@@ -18,14 +18,52 @@ const startRouteSource = readFileSync(
   new URL("../src/app/api/games/[gameId]/start/route.ts", import.meta.url),
   "utf8",
 );
-const battingOrderSource = readFileSync(
-  new URL("../src/sections/BattingOrderSection/index.tsx", import.meta.url),
-  "utf8",
-);
-const scheduleBackendSource = readFileSync(
-  new URL("../src/lib/scheduleBackend.ts", import.meta.url),
-  "utf8",
-);
+const battingOrderSource = [
+  readFileSync(
+    new URL(
+      "../src/sections/BattingOrderSection/useBattingOrderModel.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    new URL(
+      "../src/sections/BattingOrderSection/useBattingOrderActions.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    new URL("../src/sections/BattingOrderSection/index.tsx", import.meta.url),
+    "utf8",
+  ),
+].join("\n");
+const battingOrderDecisionsSource = [
+  readFileSync(
+    new URL(
+      "../src/sections/BattingOrderSection/battingOrderDefenseDecisions.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+  readFileSync(
+    new URL(
+      "../src/sections/BattingOrderSection/battingOrderLineupDecisions.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+].join("\n");
+const scheduleBackendSource = [
+  readFileSync(
+    new URL("../src/lib/scheduleBackend.ts", import.meta.url),
+    "utf8",
+  ),
+  readFileSync(
+    new URL("../src/lib/gamePreparationBackend.ts", import.meta.url),
+    "utf8",
+  ),
+].join("\n");
 
 function activeTeam(players = seedPlayers) {
   return {
@@ -134,8 +172,11 @@ test("start route returns canonical preparation after authorizing start", () => 
 });
 
 test("pregame start ignores stale wrong-half defensive alignments", () => {
-  assert.match(battingOrderSource, /startingDefense: startingDefenseSaved \? defenseAlignment : null/);
-  assert.match(battingOrderSource, /startingDefense\.inning !== firstDefensiveHalf\.inning/);
+  assert.match(
+    battingOrderSource,
+    /startingDefense: model\.startingDefenseSaved[\s\S]*?\? model\.defenseAlignment[\s\S]*?: null/,
+  );
+  assert.match(battingOrderDecisionsSource, /startingDefense\.inning !== firstDefensiveHalf\.inning/);
   assert.match(scheduleBackendSource, /getPrismaFirstDefensiveHalf\(game\.isHome\)/);
   assert.match(scheduleBackendSource, /alignment\.inning === 1 && alignment\.half === firstDefensiveHalf/);
   assert.doesNotMatch(scheduleBackendSource, /defensiveAlignments: \{[^}]*take: 1/s);

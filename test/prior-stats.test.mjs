@@ -17,6 +17,20 @@ import {
 } from "../src/lib/statCalculations.ts";
 
 const rosterSource = readFileSync(new URL("../src/sections/RosterSection/index.tsx", import.meta.url), "utf8");
+const rosterDialogsSource = [
+  readFileSync(
+    new URL("../src/sections/RosterSection/PlayerDialogs.tsx", import.meta.url),
+    "utf8",
+  ),
+  readFileSync(
+    new URL(
+      "../src/sections/RosterSection/ClearTeamConfirmationDialog.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+].join("\n");
+const rosterDecisionsSource = readFileSync(new URL("../src/sections/RosterSection/rosterDecisions.ts", import.meta.url), "utf8");
 const editorSource = readFileSync(new URL("../src/components/PriorStatsEditor/index.tsx", import.meta.url), "utf8");
 
 function player(id) {
@@ -117,8 +131,8 @@ test("updating a season baseline leaves saved game actions and game stats unchan
 });
 
 test("roster exposes a populated prior stats editor and persistence actions", () => {
-  assert.match(rosterSource, /Edit Prior Stats/);
-  assert.match(rosterSource, /editingStatsPlayer\.seasonStats/);
+  assert.match(rosterDialogsSource, /Edit Prior Stats/);
+  assert.match(rosterDecisionsSource, /editingStatsPlayer\.seasonStats/);
   assert.match(rosterSource, /editingStatsBaseline/);
   assert.match(rosterSource, /updateActiveTeamPlayers/);
   assert.match(rosterSource, /updatePlayerSeasonStatsBaseline/);

@@ -29,10 +29,19 @@ const seasonStatsSource = readFileSync(
   new URL("../src/sections/SeasonStatsSection/index.tsx", import.meta.url),
   "utf8",
 );
-const battingOrderSource = readFileSync(
-  new URL("../src/sections/BattingOrderSection/index.tsx", import.meta.url),
-  "utf8",
-);
+const battingOrderSource = [
+  readFileSync(
+    new URL("../src/sections/BattingOrderSection/index.tsx", import.meta.url),
+    "utf8",
+  ),
+  readFileSync(
+    new URL(
+      "../src/sections/BattingOrderSection/useBattingOrderModel.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+].join("\n");
 const gameSetupSource = readFileSync(
   new URL("../src/sections/GameSetupSection/index.tsx", import.meta.url),
   "utf8",

@@ -2,8 +2,26 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-const offenseSource = readFileSync(new URL("../src/sections/StatsEntrySection/index.tsx", import.meta.url), "utf8");
-const defenseSource = readFileSync(new URL("../src/sections/DefenseSection/index.tsx", import.meta.url), "utf8");
+const offenseSource = [
+  readFileSync(new URL("../src/sections/StatsEntrySection/LiveStatsEntry.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/sections/StatsEntrySection/StatsEntryUnavailableStates.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/sections/StatsEntrySection/useLiveStatsEntry.ts", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/sections/StatsEntrySection/components/EditingPlayBanner/index.tsx", import.meta.url), "utf8"),
+  readFileSync(new URL("../src/sections/StatsEntrySection/components/StickyPlayActions/index.tsx", import.meta.url), "utf8"),
+].join("\n");
+const defenseSource = [
+  readFileSync(
+    new URL("../src/sections/DefenseSection/DefenseView.tsx", import.meta.url),
+    "utf8",
+  ),
+  readFileSync(
+    new URL(
+      "../src/sections/DefenseSection/DefenseAlignmentPanel.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  ),
+].join("\n");
 const headerSource = readFileSync(new URL("../src/components/LiveGameHeader/index.tsx", import.meta.url), "utf8");
 
 test("offense and defense use the same live game score card", () => {

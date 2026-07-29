@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ArrowRight, Trophy } from "lucide-react";
 import { AppShell } from "@/components/AppShell";
+import { FinalGameStatsView } from "@/components/FinalGameStatsView";
 import { ScreenHeader } from "@/components/ScreenHeader";
 import { TeamSetupGate } from "@/components/TeamSetupGate";
 import { getCompletedGameById } from "@/lib/gameEngine";
@@ -11,7 +12,6 @@ import { useActiveTeam } from "@/lib/teamStorage";
 import { getVerifiedTeamAccountHeaders } from "@/lib/teamStorage";
 import { useCompletedGameStates } from "@/lib/useCompletedGameStates";
 import { useFirstGameState } from "@/lib/useFirstGameState";
-import { FinalGameStatsView } from "@/sections/StatsEntrySection";
 import type { GameState } from "@/lib/gameEngine";
 
 type FinalGamePageState =
